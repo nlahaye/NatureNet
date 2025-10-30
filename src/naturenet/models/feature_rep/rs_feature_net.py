@@ -11,7 +11,7 @@ from naturenet.models.feature_rep.rs_feature_reduce import RSFeatureReduc
 
 
 class RSFeatureNet(nn.Module):
-    def __init__(self, in_chans, graph_max_scale):
+    def __init__(self, in_chans, graph_max_scale): #TODO - figure out graph scaling / tiliing resolutions
         self.in_chans = in_chans
         self.reduc = False
 
