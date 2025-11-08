@@ -28,9 +28,10 @@ class RSFeatureNet(nn.Module):
 
 
     def forward(self, x):
-        x1, x2, x3 = getattr(self, "reduc")(x)
+        x1, x2, x3, grid_size = getattr(self, "reduc")(x)
         x1,x2,x3 = getattr(self, "fpn")([x1,x2,x3])
 
+        return x1,x2,x3, grid_size
 
 
 

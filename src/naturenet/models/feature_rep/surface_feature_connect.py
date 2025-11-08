@@ -15,6 +15,7 @@ def run_surface_feature_connect(yml_fpath):
     rsfns = {}
 
     scenes ={}
+    grid_size = None
 
     scene_count = -1
     for key in yml_conf["instruments"].keys():
@@ -39,24 +40,38 @@ def run_surface_feature_connect(yml_fpath):
                 scenes[instrument] = []
                 if "combined" not in scenes:
                     scenes[instrument]["combined"] = None
-            scenes[instrument].append(rsfns[instrument](embed))
+            x1, x2, x3, grid_sz = rsfns[instrument](embed)
+            if grid_size is None:
+                grid_size = grid_sz
+ 
+            if x1.ndim == 3:
+                x1 = x1.reshape((grid_size[0], grid_size[1], x1.shape[1], x1.shape[2],1))
+                x2 = x2.reshape((grid_size[0], grid_size[1], x2.shape[1], x2.shape[2],1))
+                x3 = x3.reshape((grid_size[0], grid_size[1], x3.shape[1], x3.shape[2],1))
+            elif x1.ndim == 3:
+                x1 = x1.reshape((grid_size[0], grid_size[1], x1.shape[1], x1.shape[2], x1.shape[3]))
+                x2 = x2.reshape((grid_size[0], grid_size[1], x2.shape[1], x2.shape[2], x2.shape[3]))
+                x3 = x3.reshape((grid_size[0], grid_size[1], x3.shape[1], x3.shape[2], x3.shape[3]))
+
+            grids[instrument].append(grid_size)
+            scenes[instrument].append([x1, x2, x3])
             if i == 0:
                 actual_total_chans += rsfns[instrument].out_chans
             if len(scenes["combined"]) < 1:
                 scenes["combined"] = embed
             else:
-                scenes["combined"] = np.concatenate((scenes["combined"], embed), axis=1)
+                scenes["combined"] = np.concatenate((scenes["combined"], embed), axis=4)
         if actual_total_chans > 10:
             if i == 0:
                 msrffr = MultiSourceRSFeatureReduc(actual_total_chans)
                 scenes["combined_final"] = msrffr(scenes["combined"])
             else:
-                scenes["combined_final"] = np.concatenate((scenes["combined_final"], msrffr(scenes["combined"])),  axis=1)
+                scenes["combined_final"] = np.concatenate((scenes["combined_final"], msrffr(scenes["combined"])),  axis=4)
         else:
             if i == 0:
                 scenes["combined_final"] = scenes["combined"]
             else:
-                scenes["combined_final"] = np.concatenate((scenes["combined_final"], scenes["combined_final"]),  axis=1)
+                scenes["combined_final"] = np.concatenate((scenes["combined_final"], scenes["combined_final"]),  axis=4)
 
     return scenes, rsfns, msrffr
 

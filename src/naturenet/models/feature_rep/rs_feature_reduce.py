@@ -4,6 +4,8 @@ import torch
 import torchvision
 import torch.nn as nn
 
+from skimage.util import view_as_windows
+
 #1x1 Convolutions per pixel to reduce to < 50
 
 
@@ -97,7 +99,11 @@ class RSFeatureReduc(nn.Module):
         i = 0
         x = getattr(self, "batch_norm")(x)
 
-        tiled_data = patchify(x, (self.tile_size, self.tile_size, x.shape[2]), self.tile_size)
+
+
+        #Tile 0,0 is top left of image, tile N,N is bottom right
+        tiled_data = torch.squeeze(view_as_windows(x, (self.tile_size, self.tile_size, x.shape[2]), (self.tile_size, self.tile_size, x.shape[2])))
+        grid_size = [tiled_data.shape[0], tiled_data.shape[1]]
         tiled_data = torch.flatten(tiled_data, start_dim=0, end_dim = 2) #Flattening number of samples (H,W,Chan)
         print(tiled_data.shape)
 
@@ -120,7 +126,7 @@ class RSFeatureReduc(nn.Module):
                 x3_out.append(x3)
 
 
-        return x1_out, x2_out, x3_out
+        return x1_out, x2_out, x3_out, grid_size
 
 
 
