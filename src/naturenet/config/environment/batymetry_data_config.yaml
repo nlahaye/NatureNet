@@ -1,0 +1,47 @@
+data:
+  chan_dim: 0
+  delete_chans: []
+  files_test:
+  files_train:
+  fill_value: -32767.0
+  num_loader_workers: 10
+  number_channels: 1
+  output_subset_count: 1
+  pixel_padding: 1
+  reader_kwargs:
+   none: "none"
+  reader_type: "gtiff"
+  geo_reader_type: "gtiff_geo"
+  geo_reader_kwargs:
+   none: "none"
+  scale_data: true
+  subset_count: 1
+  tile: false
+  tile_size:
+  - 3
+  - 3
+  - 32
+  tile_step:
+  - 1
+  - 1
+  - 32
+  transform_default:
+    chans: []
+    transform: []
+  val_percent: 0.1
+  valid_max: 64000000
+  valid_min: -32000.0
+
+logger:
+  log_model: true
+  log_out_dir: wandb_dbn
+  project: SIT-FUSE
+  use_wandb: true
+
+output:
+  generate_intermediate_output: true
+  generate_train_output: true
+  out_dir: "/opt/dlami/nvme/NatureNet_Env/output"
+
+scaler:
+  name: standard
