@@ -2,7 +2,7 @@
 
 movement_csv: "/mnt/data/NatureNet/Hammerhead_In/Data_aniMotum_CTCRW_output_predicted_rerouted_non-projected_with_Argosfilter_data.csv"
 
-grid_res_lon: 0.027
-grid_res_lat: 0.027
+grid_res_lon: 0.27 #0.027
+grid_res_lat: 0.27 #0.027
 out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
 run_uid: "hammerhead_v1"

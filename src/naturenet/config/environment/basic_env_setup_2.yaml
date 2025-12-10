@@ -13,6 +13,24 @@ instruments:
 
   resample_config: "../../config/environment/bathymetry_resample_config.yaml"
   #encoder_conf: "NA"
+ SSS: 
+  data_config: "../../config/environment/"
+  multi_chan: True
+  filenames: []
+  resample_config: "../../config/environment/sss_resample_config.yaml"
+  #encoder_conf: "NA" 
+ 
+ SST:
+   data_config: "../../config/environment/sst_resample_config.yaml"
+   multi_chan: True
+   filenames: []
+   resample_config: "../../config/environment/sst_resample_config.yaml"
+   #encoder_conf: "NA" 
+ Coatal_Dist:
+   data_config: "../../config/environment/distance_to_coast.yaml"   
+   multi_chan: False
+   filenames: []
+   resample_config: "../../config/environment/distance_to_coast_resample_config.yaml"
 
 final_grid_res_deg: 0.027 #0.0108000108
 
@@ -20,18 +38,16 @@ datetimes: ['01062024T00:00:00Z', '02062024T00:00:00Z']
 
 out_dir: "/opt/dlami/nvme/NatureNet_Env/output"
 
-update_stats: False
+update_stats: True
 
 save_prelim_scene_maps: True
 save_intermediate_maps: True
 
 run_uid: "batymetry_only"
- 
-df_run_uid: "hammerhead_v1"
-df_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
+
 #No encoder data streams??
 
-n_clusters: 40
+
 
 
 

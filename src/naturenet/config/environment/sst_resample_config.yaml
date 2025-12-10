@@ -1,12 +1,12 @@
 
 low_res:
  data:
-  valid_min: -32000.0
+  valid_min: -300.0
   valid_max: 100000000
-  reader_type: "gtiff"
+  reader_type: "noaa_oiss"
   reader_kwargs:
    no_arg: ''
-  geo_reader_type: "gtiff"
+  geo_reader_type: "nc_geo"
   geo_reader_kwargs:
    no_arg: "no_arg"
   filenames: [
@@ -16,7 +16,7 @@ low_res:
 ]
 
   chan_dim: 2
-  geo_coord_dim: 2
+  geo_coord_dim: 0
   geo_lat_index: 0
   geo_lon_index: 1
 
@@ -46,7 +46,7 @@ fusion:
  projection_proj4:
   proj: "longlat"
   datum: "WGS84" 
- final_resolution: 0.009000090001 #1km
+ final_resolution: 0.027
  projection_units: "degrees"
  resample_radius: 5000
  resample_n_neighbors: 64

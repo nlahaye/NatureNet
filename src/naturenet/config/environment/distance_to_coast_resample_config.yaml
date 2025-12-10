@@ -1,8 +1,8 @@
 
 low_res:
  data:
-  valid_min: -32000.0
-  valid_max: 100000000
+  valid_min: -2513.0
+  valid_max: 2695.0
   reader_type: "gtiff"
   reader_kwargs:
    no_arg: ''

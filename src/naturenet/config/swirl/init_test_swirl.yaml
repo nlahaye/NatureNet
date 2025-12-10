@@ -1,0 +1,16 @@
+
+seed: 12345
+n_hidden_init: 2
+n_hidden: 3
+emission_dim: 1
+latent_state_dim: 1
+n_states: 780 #26245800
+out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
+run_uid: "SWIRL_TEST"
+trans_probs: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_183623_1_trans_prob.npz"
+actions: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_183623_1_actions.pkl"
+positions: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_183623_1_single_unit_coords.pkl"
+run_arhmm: False #True
+run_swirl_init: True
+run_swirl_final: True
+
