@@ -4,6 +4,10 @@ import torch
 import torchvision
 import torch.nn as nn
 
+import numpy as np
+
+from tqdm import tqdm
+
 from skimage.util import view_as_windows
 
 #1x1 Convolutions per pixel to reduce to < 50
@@ -11,8 +15,7 @@ from skimage.util import view_as_windows
 
 class MultiSourceRSFeatureReduc(nn.Module):
     def __init__(self, in_chans):
-        super(RSFeatureReduc, self).__init__()
-
+        super(MultiSourceRSFeatureReduc, self).__init__()
         od = in_chans
         self.in_chans = in_chans
  
@@ -23,18 +26,18 @@ class MultiSourceRSFeatureReduc(nn.Module):
         self.out_chans = in_chans
 
         while current_chans > 10:
-            self.add_module("reduc" + str(i), torchvision.ops.FeaturePyramidNetwork(od, int(od/2)))
+            self.add_module("reduc" + str(layer_ind), torchvision.ops.FeaturePyramidNetwork(od, int(od/2)))
 
             self.out_chans = od
             od = int(od/2)
             layer_ind = layer_ind+1
 
+        self.n_layers = layer_ind
 
 
     def forward(self, x):
-        self.n_layers = layer_ind
         for j in range(1,self.n_layers+1):
-             x = getattr(self, "reduc" + str(i))(tiled_data[j])
+             x = getattr(self, "reduc" + str(j))(x)
         return x
 
 
@@ -45,6 +48,7 @@ class RSFeatureReduc(nn.Module):
         self.in_chans = in_chans
         self.mean = mean
         self.std = std
+        self.tile_size = tile_size
 
         #Assuming image has been reconstructed before being passed through
 
@@ -55,14 +59,14 @@ class RSFeatureReduc(nn.Module):
  
         if in_chans > 50:
             while current_chans > 50:
-                self.add_module("reduc" + str(i), nn.Conv2d(od, int(od/5), kernel_size=1))
-                self.add_module("reduc" + str(i) + "_act" + str(j), nn.LeakyReLU(0.1, inplace=True))
+                self.add_module("reduc" + str(layer_ind), nn.Conv2d(od, int(od/5), kernel_size=1))
+                self.add_module("reduc" + str(layer_ind) + "_act", nn.LeakyReLU(0.1, inplace=True))
 
-                self.add_module("reduc" + str(i) + "_2", nn.Conv2d(od, int(od/5), kernel_size=3, stride=2))
-                self.add_module("reduc" + str(i) + "2_act" + str(j), nn.LeakyReLU(0.1, inplace=True))
+                self.add_module("reduc" + str(layer_ind) + "_2", nn.Conv2d(od, int(od/5), kernel_size=2, stride=2))
+                self.add_module("reduc" + str(layer_ind) + "2_act", nn.LeakyReLU(0.1, inplace=True))
 
-                self.add_module("reduc" + str(i) + "_3", nn.Conv2d(od, int(od/5), kernel_size=5, stride=4))
-                self.add_module("reduc" + str(i) + "3_act" + str(j), nn.LeakyReLU(0.1, inplace=True))
+                self.add_module("reduc" + str(layer_ind) + "_3", nn.Conv2d(od, int(od/5), kernel_size=4, stride=4))
+                self.add_module("reduc" + str(layer_ind) + "3_act", nn.LeakyReLU(0.1, inplace=True))
  
 
                 self.out_chans = od
@@ -73,13 +77,13 @@ class RSFeatureReduc(nn.Module):
 
         else:
             self.add_module("reduc1", nn.Conv2d(self.in_chans, self.in_chans, kernel_size=1))
-            self.add_module("reduc1_act" + str(j), nn.LeakyReLU(0.1, inplace=True))
+            self.add_module("reduc1_act", nn.LeakyReLU(0.1, inplace=True))
 
-            self.add_module("reduc1_2", nn.Conv2d(self.in_chans, self.in_chans, kernel_size=3, stride=2))
-            self.add_module("reduc12_act" + str(j), nn.LeakyReLU(0.1, inplace=True))
+            self.add_module("reduc1_2", nn.Conv2d(self.in_chans, self.in_chans, kernel_size=2, stride=2))
+            self.add_module("reduc12_act", nn.LeakyReLU(0.1, inplace=True))
 
-            self.add_module("reduc1_3", nn.Conv2d(self.in_chans, self.in_chans, kernel_size=5, stride=4))
-            self.add_module("reduc13_act" + str(j), nn.LeakyReLU(0.1, inplace=True))
+            self.add_module("reduc1_3", nn.Conv2d(self.in_chans, self.in_chans, kernel_size=4, stride=4))
+            self.add_module("reduc13_act", nn.LeakyReLU(0.1, inplace=True))
             self.n_layers = 1 
            
 
@@ -97,37 +101,39 @@ class RSFeatureReduc(nn.Module):
 
     def forward(self, x):
         i = 0
-        x = getattr(self, "batch_norm")(x)
-
-
-
+        #x = getattr(self, "batch_norm")(x)
         #Tile 0,0 is top left of image, tile N,N is bottom right
-        normalize(x, self.mean, self.std, inplace=True)
-        tiled_data = torch.squeeze(view_as_windows(x, (self.tile_size, self.tile_size, x.shape[2]), (self.tile_size, self.tile_size, x.shape[2])))
-        grid_size = [tiled_data.shape[0], tiled_data.shape[1]]
-        tiled_data = torch.flatten(tiled_data, start_dim=0, end_dim = 2) #Flattening number of samples (H,W,Chan)
-        print(tiled_data.shape)
+        torchvision.transforms.functional.normalize(x, self.mean, self.std, inplace=True)
+        x = x.numpy()
+        #Batch x Channel x Y x X
+
+        tiled_data = torch.squeeze(torch.from_numpy(view_as_windows(x, (x.shape[0], x.shape[1], self.tile_size, self.tile_size),\
+            (x.shape[0], x.shape[1], self.tile_size, self.tile_size)).astype(np.float32)))
+        grid_size = [tiled_data.shape[-4], tiled_data.shape[-3]]
+        tiled_data = torch.flatten(tiled_data, start_dim=0, end_dim = 1) #Flattening number of samples (H,W,Chan)
+        tiled_data = torch.unsqueeze(tiled_data, 1)
 
         x1_out = []
         x2_out = []
         x3_out = []
         for j in range(1,self.n_layers+1):
-            for k in range(tiled_data.shape):
-                x = getattr(self, "reduc" + str(i))(tiled_data[k])
-                x = getattr(self, "reduc" + str(i) + "_act")(x)
+            for k in tqdm(range(tiled_data.shape[0])):
+                x = getattr(self, "reduc" + str(j))(tiled_data[k])
+                x = getattr(self, "reduc" + str(j) + "_act")(x)
 
-                x2 = getattr(self, "reduc" + str(i) + "_2")(tiled_data[k])
-                x2 = getattr(self, "reduc" + str(i) + "2_act")(x2)
+                x2 = getattr(self, "reduc" + str(j) + "_2")(tiled_data[k])
+                x2 = getattr(self, "reduc" + str(j) + "2_act")(x2)
 
-                x3 = getattr(self, "reduc" + str(i) + "_3")(tiled_data[k])
-                x3 = getattr(self, "reduc" + str(i) + "3_act")(x3)
+                x3 = getattr(self, "reduc" + str(j) + "_3")(tiled_data[k])
+                x3 = getattr(self, "reduc" + str(j) + "3_act")(x3)
+ 
+                if j == self.n_layers:
+                    x1_out.append(x)
+                    x2_out.append(x2)
+                    x3_out.append(x3)
 
-                x1_out.append(x)
-                x2_out.append(x2)
-                x3_out.append(x3)
 
-
-        return x1_out, x2_out, x3_out, grid_size
+        return torch.stack(x1_out, dim=0), torch.stack(x2_out, dim=0), torch.stack(x3_out, dim=0), grid_size
 
 
 
