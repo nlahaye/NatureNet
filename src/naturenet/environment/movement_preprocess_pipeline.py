@@ -27,7 +27,6 @@ def run_movement_track_preprocess(yml_conf):
     for key in movement_dfs.keys():
 
         movement_sub_df = movement_dfs[key]
-        print(len(movement_sub_df), movement_sub_df[0].info)
 
         total_count = {}
         min_lon = 1000
@@ -43,12 +42,19 @@ def run_movement_track_preprocess(yml_conf):
 
         total_count = {}
         points = None
+        single_unit_coords_full = []
+        actions_full = []
+        distances_full = []       
+ 
         for i in range(len(movement_sub_df)):
-            checked, total_count, points, trans_prob = compute_transition_probabilities(movement_sub_df[i], grid, checked = {}, total_count = total_count, points = points)
+            total_count, points, trans_prob, actions, single_unit_coords, distances  = compute_transition_probabilities(movement_sub_df[i], grid, total_count = total_count, points = points)
+
+            single_unit_coords_full.append(single_unit_coords) 
+            actions_full.append(actions)
+            distances_full.append(distances)
 
         run_uid = yml_conf["run_uid"] + "_" + key
-        print(run_uid)
-        sparse.save_npz(os.path.join(yml_conf["out_dir"], run_uid + "_grid.pkl"), trans_prob)
+        sparse.save_npz(os.path.join(yml_conf["out_dir"], run_uid + "_trans_prob"), trans_prob)
 
         with open(os.path.join(yml_conf["out_dir"], run_uid + "_grid.pkl"), "wb") as f:
              pickle.dump(grid, f, protocol=pickle.HIGHEST_PROTOCOL) 
@@ -57,8 +63,16 @@ def run_movement_track_preprocess(yml_conf):
              pickle.dump(total_count, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         with open(os.path.join(yml_conf["out_dir"], run_uid + "_points.pkl"), "wb") as f:
-                     pickle.dump(points, f, protocol=pickle.HIGHEST_PROTOCOL)
+             pickle.dump(points, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+        with open(os.path.join(yml_conf["out_dir"], run_uid + "_actions.pkl"), "wb") as f:
+             pickle.dump(actions_full, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        with open(os.path.join(yml_conf["out_dir"], run_uid + "_single_unit_coords.pkl"), "wb") as f:
+             pickle.dump(single_unit_coords_full, f, protocol=pickle.HIGHEST_PROTOCOL)      
+
+        with open(os.path.join(yml_conf["out_dir"], run_uid + "_distances.pkl"), "wb") as f:
+             pickle.dump(distances_full, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__ == '__main__':
 
