@@ -3,26 +3,31 @@
 
 import numpy as np
 import numpy.random as npr
+import os
 
 from ssm.swirl import ARHMMs 
 
 from sit_fuse.utils import read_yaml
 
 
-def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, out_dir, run_uid):
+def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, positions, out_dir, run_uid):
 
     arhmm_s = ARHMMs( emission_dim, n_hidden_states, latent_state_dim, n_states,\
         transitions="mlprecurrent", dynamics="arcategorical",\
         single_subspace=True) 
 
-    list_x = [row for row in train_xs[:, :, np.newaxis].astype(int)]
+    #positions = np.array(positions)
+    positions = np.array(positions[:-1])
+    
+    print("POSITIONS", positions.shape)
+    list_x = [row for row in positions[:, :, np.newaxis].astype(int)]
     lls_arhmm = arhmm_s.initialize(list_x, num_init_iters=100)
     init_start = arhmm_s.init_state_distn.initial_state_distn
     logpi0_start = arhmm_s.init_state_distn.log_pi0
     log_Ps_start = arhmm_s.transitions.log_Ps
     Rs_start = arhmm_s.transitions.W1, arhmm_s.transitions.b1, arhmm_s.transitions.W2, arhmm_s.transitions.b2
 
-    fname = run_uid + "_" + str(n_hidden_states) + "_hidden_" + + str(seed) + '_seed_arhmm_s.npz'
+    fname = run_uid + "_" + str(n_hidden_states) + "_hidden_" + str(seed) + '_seed_arhmm_s.npz'
     fname = os.path.join(out_dir, fname) 
 
     np.savez(fname, init_start=init_start, logpi0_start=logpi0_start, log_Ps_start=log_Ps_start, W1_start=Rs_start[0], b1_start=Rs_start[1], W2_start=Rs_start[2], b2_start=Rs_start[3])
@@ -38,7 +43,10 @@ def run_arhmm(yml_conf):
     out_dir = yml_conf["out_dir"]
     run_uid = yml_conf["run_uid"]
 
-    run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, out_dir, run_uid)
+    positions_fpath = yml_conf["positions"]
+    positions = np.load(positions_fpath, allow_pickle=True)
+ 
+    run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, positions, out_dir, run_uid)
 
 
 if __name__ == '__main__':

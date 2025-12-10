@@ -18,7 +18,7 @@ from naturenet.models.swirl.swirl_training import *
 from naturenet.models.swirl.swirl_utils import *
 
 jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_platform_name", "gpu")
+#jax.config.update("jax_platform_name", "gpu")
 
 def em_train_temp(logpi0, log_Ps, Rs, rewards, temps, iter=100, init=True, trans=True, emit=True):
     LL_list = []

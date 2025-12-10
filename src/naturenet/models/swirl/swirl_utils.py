@@ -15,7 +15,7 @@ from jax.scipy.special import logsumexp as jax_logsumexp
 import optax
  
 jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_platform_name", "gpu")
+jax.config.update("jax_platform_name", "cpu")
 
 
 def compute_next_state_map(trans_probs, n_state, n_action):
@@ -41,7 +41,7 @@ def compute_prev_state_map(trans_probs, n_state, n_action):
     
     return prev_state_map
 
-def preprocess_xs_prev_np(xs_list, xs_prev_list, prev_state_map):
+def preprocess_xs_prev_np(xs_list, xs_prev_list, prev_state_map, n_action, n_state):
     prev_indices_list = []
     for xs, xs_prev in zip(xs_list, xs_prev_list):
         prev_indices = []
@@ -49,9 +49,9 @@ def preprocess_xs_prev_np(xs_list, xs_prev_list, prev_state_map):
             try:
                 prev_indices.append(prev_state_map[x].index(prev_x))
             except ValueError:
-                print(x, prev_x)
+                print("HERE BAD INDS", x, prev_x, n_action, n_state)
         prev_indices_list.append(prev_indices)
-    return np.array(prev_indices_list)
+    return prev_indices_list
 
 
 def one_hot_jax(hidden_states, n_hidden_states):
