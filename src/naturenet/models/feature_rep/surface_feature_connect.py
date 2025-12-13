@@ -387,13 +387,14 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
                     row["date"] = row["date"][:10]
                 df_st_str = datetime.datetime.strptime(row['date'][0:10],"%Y-%m-%d")
                 st_str = prelim_scene_map["times"][scene_ind]
+
                 while st_str < df_st_str and scene_ind < len(prelim_scene_map["times"])-1:
                     scene_ind = scene_ind + 1
                     st_str = prelim_scene_map["times"][scene_ind]
                 if st_str - df_st_str > datetime.timedelta(hours=15) or df_st_str - st_str > datetime.timedelta(hours=15):
                     if len(scenes_per_df) < act_index + 1:
                         scenes_per_df.append([])
-                        continue
+                    continue
                 if scene_ind >= len(prelim_scene_map["times"]):
                     break
                 distance_grid = distance_grids[act_index]
