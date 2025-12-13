@@ -109,9 +109,21 @@ class RSFeatureReduc(nn.Module):
 
         tiled_data = torch.squeeze(torch.from_numpy(view_as_windows(x, (x.shape[0], x.shape[1], self.tile_size, self.tile_size),\
             (x.shape[0], x.shape[1], self.tile_size, self.tile_size)).astype(np.float32)))
-        grid_size = [tiled_data.shape[-4], tiled_data.shape[-3]]
-        tiled_data = torch.flatten(tiled_data, start_dim=0, end_dim = 1) #Flattening number of samples (H,W,Chan)
-        tiled_data = torch.unsqueeze(tiled_data, 1)
+
+        first_ind = -4
+        last_ind = -3
+        start_dim = 0
+        end_dim = 1
+        if tiled_data.ndim == 5:
+            first_ind = -5
+            last_ind = -4
+        grid_size = [tiled_data.shape[first_ind], tiled_data.shape[last_ind]]
+        tiled_data = torch.flatten(tiled_data, start_dim=start_dim, end_dim = end_dim) #Flattening number of samples (H,W,Chan)
+        if last_ind == -3:
+            tiled_data = torch.unsqueeze(tiled_data, 1)
+
+        if torch.cuda.is_available():
+            tiled_data = tiled_data.cuda()
 
         x1_out = []
         x2_out = []
@@ -132,6 +144,9 @@ class RSFeatureReduc(nn.Module):
                     x2_out.append(x2)
                     x3_out.append(x3)
 
+        if torch.cuda.is_available():
+            tiled_data = tiled_data.detach().cpu()
+ 
 
         return torch.stack(x1_out, dim=0), torch.stack(x2_out, dim=0), torch.stack(x3_out, dim=0), grid_size
 

@@ -19,6 +19,7 @@ class RSFeatureNet(nn.Module):
     def __init__(self, in_chans, tile_size, mean, std):
         super(RSFeatureNet, self).__init__()
         self.in_chans = in_chans
+        self.tile_size = tile_size
         #self.reduc = False
 
         self.add_module("reduc", RSFeatureReduc(in_chans, tile_size, mean, std))
@@ -35,7 +36,10 @@ class RSFeatureNet(nn.Module):
 
     def forward(self, x):
         x = torch.from_numpy(x) 
+        #if torch.cuda.is_available():
+        #    x = x.cuda()
         x1, x2, x3, grid_size = getattr(self, "reduc")(x)
+  
         dct = OrderedDict()
         dct["x1"] = x1
         dct["x2"] = x2
@@ -45,6 +49,12 @@ class RSFeatureNet(nn.Module):
         x1 = dct["x1"]
         x2 = dct["x2"]
         x3 = dct["x3"]
+
+        if torch.cuda.is_available():
+            x1 = x1.detach().cpu()
+            x2 = x2.detach().cpu()
+            x3 = x3.detach().cpu()
+
 
         return x1,x2,x3, grid_size
 
