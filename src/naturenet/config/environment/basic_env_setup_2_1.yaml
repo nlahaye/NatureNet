@@ -1,0 +1,190 @@
+datetimes:
+- 01012022T00:00:00Z
+- 02012022T00:00:00Z
+- 03012022T00:00:00Z
+- 04012022T00:00:00Z
+- 05012022T00:00:00Z
+- 06012022T00:00:00Z
+- 07012022T00:00:00Z
+- 08012022T00:00:00Z
+- 09012022T00:00:00Z
+- 10012022T00:00:00Z
+- 11012022T00:00:00Z
+- 12012022T00:00:00Z
+- 13012022T00:00:00Z
+- 14012022T00:00:00Z
+- 15012022T00:00:00Z
+- 16012022T00:00:00Z
+- 17012022T00:00:00Z
+- 18012022T00:00:00Z
+- 19012022T00:00:00Z
+- 20012022T00:00:00Z
+- 21012022T00:00:00Z
+- 22012022T00:00:00Z
+- 23012022T00:00:00Z
+- 24012022T00:00:00Z
+- 25012022T00:00:00Z
+- 26012022T00:00:00Z
+- 27012022T00:00:00Z
+- 28012022T00:00:00Z
+- 29012022T00:00:00Z
+- 30012022T00:00:00Z
+- 31012022T00:00:00Z
+df_dir: /mnt/data/NatureNet/Hammerhead_Out_v1/
+df_run_uid: hammerhead_v1
+final_grid_res_deg: 0.027
+instruments:
+  Bathymetry:
+    data_config: ../../config/environment/bathymetry_data_config.yaml
+    filenames:
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2022_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    multi_chan: false
+    resample_config: ../../config/environment/bathymetry_resample_config.yaml
+  Coastal_Dist:
+    data_config: ../../config/environment/distance_to_coast.yaml
+    filenames:
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    multi_chan: false
+    resample_config: ../../config/environment/distance_to_coast_resample_config.yaml
+  SSS:
+    data_config: ../../config/environment/sss_data_config.yaml
+    filenames:
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220101T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220102T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220103T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220104T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220105T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220106T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220107T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220108T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220109T1200Z_P20240726T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220110T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220111T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220112T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220113T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220114T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220115T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220116T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220117T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220118T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220119T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220120T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220121T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220122T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220123T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220124T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220125T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220126T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220127T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220128T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220129T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220130T1200Z_P20240727T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20220131T1200Z_P20240727T0000Z.nc
+    multi_chan: true
+    resample_config: ../../config/environment/sss_resample_config.yaml
+  SST:
+    data_config: ../../config/environment/sst_data_config.yaml
+    filenames:
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220101.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220102.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220103.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220104.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220105.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220106.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220107.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220108.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220109.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220110.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220111.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220112.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220113.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220114.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220115.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220116.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220117.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220118.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220119.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220120.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220121.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220122.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220123.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220124.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220125.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220126.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220127.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220128.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220129.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220130.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20220131.nc
+    multi_chan: true
+    resample_config: ../../config/environment/sst_resample_config.yaml
+n_clusters: 40
+out_dir: /mnt/data/NatureNet_Env/output
+run_env_gen: True
+run_final_env_gen: false
+run_uid: simple_env
+save_intermediate_maps: false
+save_prelim_scene_maps: false
+scenes_by_uid: false
+update_stats: False
+

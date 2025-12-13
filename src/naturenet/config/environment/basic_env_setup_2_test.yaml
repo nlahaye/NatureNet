@@ -1,0 +1,45 @@
+datetimes:
+- 01012024T00:00:00Z
+- 02012024T00:00:00Z
+df_dir: /mnt/data/NatureNet/Hammerhead_Out_v1/
+df_run_uid: hammerhead_v1
+final_grid_res_deg: 0.027
+instruments:
+  Bathymetry:
+    data_config: ../../config/environment/bathymetry_data_config.yaml
+    filenames:
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2024_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    - - /mnt/data/NatureNet_Env/Bath/gebco_2024_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif
+    multi_chan: false
+    resample_config: ../../config/environment/bathymetry_resample_config.yaml
+  Coastal_Dist:
+    data_config: ../../config/environment/distance_to_coast.yaml
+    filenames:
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    - - /mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif
+    multi_chan: false
+    resample_config: ../../config/environment/distance_to_coast_resample_config.yaml
+  SSS:
+    data_config: ../../config/environment/sss_data_config.yaml
+    filenames:
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20240101T1200Z_P20250722T0000Z.nc
+    - - /mnt/data/NatureNet_Env/SSS/dataset-sss-ssd-rep-daily_20240102T1200Z_P20250722T0000Z.nc
+    multi_chan: true
+    resample_config: ../../config/environment/sss_resample_config.yaml
+  SST:
+    data_config: ../../config/environment/sst_data_config.yaml
+    filenames:
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20240101.nc
+    - - /mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01.20240102.nc
+    multi_chan: true
+    resample_config: ../../config/environment/sst_resample_config.yaml
+n_clusters: 40
+out_dir: /mnt/data/NatureNet_Env/output
+run_env_gen: true
+run_final_env_gen: false
+run_uid: simple_env
+save_intermediate_maps: false
+save_prelim_scene_maps: false
+scenes_by_uid: false
+update_stats: false
+#scenes_per_uid: true
