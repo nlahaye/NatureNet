@@ -24,8 +24,8 @@ class Grid(object):
         self.lon_size = (max_lon - min_lon + 1) / self.grid_res_lon_deg
         self.lat_size = (max_lat - min_lat + 1) / self.grid_res_lat_deg
  
-        self.lon_tiles = math.ceil(self.lon_size / self.grid_res_lon_deg)
-        self.lat_tiles = math.ceil(self.lat_size / self.grid_res_lat_deg)
+        self.lon_tiles = math.ceil(self.lon_size)
+        self.lat_tiles = math.ceil(self.lat_size)
 
 
 def grid_to_lat_lon(grid, x, y):
@@ -39,10 +39,86 @@ def lat_lon_to_grid(grid, lat, lon):
 
     x = int((lon - grid.min_lon)/ grid.grid_res_lon_deg)
     y = int((lat - grid.min_lat) / grid.grid_res_lat_deg)
-    return (x, y)
+    return (y, x)
 
-def grid_to_ind(grid, x, y):
+def grid_to_ind(grid, y, x):
     return (y*grid.lon_tiles) + x
+
+
+def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions, grid, n_clusters, total_count = {}, points = None):
+
+    if points is None:
+        points = {}
+    prev_state = None
+    current_state = None
+    prev_state_abs = None
+    current_state_abs = None
+    act_ind = 0
+
+    for index, row in movement_df.iterrows():
+        if abstract_grid[act_ind] is None:
+            prev_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            act_ind = act_ind + 1
+            continue
+        if act_ind == 0:
+            prev_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            prev_state_abs = abstract_grid[act_ind][prev_state[0], prev_state[1]]
+            current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            current_state_abs = abstract_grid[act_ind][current_state[0], current_state[1]]            
+        else:
+            current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            current_state_abs = abstract_grid[act_ind][current_state[0], current_state[1]]
+      
+            if current_state_abs is None or prev_state_abs is None:
+                prev_state = current_state
+                prev_state_abs = current_state_abs
+                act_ind = act_ind + 1                
+                continue
+ 
+            action = actions[act_ind]
+ 
+            if int(prev_state_abs) not in points:
+                points[int(prev_state_abs)] =  {int(current_state_abs) : {int(action) : 1}}
+            elif int(current_state_abs) not in points[int(prev_state_abs)]:
+                points[int(prev_state_abs)][int(current_state_abs)] = {int(action) : 1}
+            else:
+                points[prev_state_abs][current_state_abs][action] += 1
+
+            if prev_state_abs not in total_count:
+                total_count[prev_state_abs] = 1
+            else:
+                total_count[prev_state_abs] += 1
+        prev_state = current_state
+        prev_state_abs = current_state_abs
+        act_ind = act_ind + 1
+ 
+    #Account for final state
+    if current_state_abs not in total_count:
+        total_count[current_state_abs] = 1
+    else:
+        total_count[current_state_abs] += 1  
+
+    #final_points = [[],[],[],[],[]]
+    final_points = [[],[],[]]
+    final_data = []
+    for key in points:
+        for key2 in points[key]:
+            for key3 in points[key][key2]:
+                    final_points[0].append(key)
+                    final_points[1].append(key3)
+                    final_points[2].append(key2)
+
+                    final_data.append(points[key][key2][key3] / total_count[key])
+
+    n_states = n_clusters 
+
+    trans_prob = sparse.COO(final_points, final_data, shape=(n_states, N_ACTIONS, n_states))
+
+    return total_count, points, trans_prob
+
+
+
 
 #Not requiring adjacency for now, as animals can cross larger distances in some cases
 #   will grid based on stats on movement distances, etc.
@@ -60,11 +136,11 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
             deg_grid[lt,ln,0] = glat
             deg_grid[lt,ln,1] = glon
 
-    total_count = {}
     actions = []
     single_ind_positions = []
     distance = []
     prev_state = None
+    current_state = None
     act_ind = 0
     for index, row in movement_df.iterrows():
         if act_ind == 0:
@@ -99,28 +175,29 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
                   action = 7
           actions.append(action)
 
-          if prev_state[0] not in points:
-              points[prev_state[0]] = {prev_state[1] : {current_state[0] :\
-                      {current_state[1] : {action : 1}}}}
-          elif prev_state[1] not in points[prev_state[0]]:
-              points[prev_state[0]][prev_state[1]] = {current_state[0] :\
-                                            {current_state[1] : {action : 1}}}
-          elif current_state[0] not in points[prev_state[0]][prev_state[1]]:
-              points[prev_state[0]][prev_state[1]][current_state[0]] = {current_state[1] : {action : 1}}
-          elif current_state[1] not in points[prev_state[0]][prev_state[1]][current_state[0]]:
-              points[prev_state[0]][prev_state[1]][current_state[0]][current_state[1]] = {action : 1}
-          elif action not in points[prev_state[0]][prev_state[1]][current_state[0]][current_state[1]]:
-              points[prev_state[0]][prev_state[1]][current_state[0]][current_state[1]][action] = 1
+          if int(prev_state[0]) not in points:
+              points[int(prev_state[0])] = {int(prev_state[1]) : {int(current_state[0]) :\
+                      {int(current_state[1]) : {int(action) : 1}}}}
+          elif int(prev_state[1]) not in points[int(prev_state[0])]:
+              points[int(prev_state[0])][int(prev_state[1])] = {int(current_state[0]) :\
+                                            {int(current_state[1]) : {int(action) : 1}}}
+          elif int(current_state[0]) not in points[int(prev_state[0])][int(prev_state[1])]:
+              points[int(prev_state[0])][int(prev_state[1])][int(current_state[0])] = {int(current_state[1]) : {int(action) : 1}}
+          elif int(current_state[1]) not in points[int(prev_state[0])][int(prev_state[1])][int(current_state[0])]:
+              points[int(prev_state[0])][int(prev_state[1])][int(current_state[0])][int(current_state[1])] = {int(action) : 1}
+          elif action not in points[int(prev_state[0])][int(prev_state[1])][int(current_state[0])][int(current_state[1])]:
+              points[int(prev_state[0])][int(prev_state[1])][int(current_state[0])][int(current_state[1])][int(action)] = 1
           else:
-              points[prev_state[0]][prev_state[1]][current_state[0]][current_state[1]][action] += 1 
+              points[int(prev_state[0])][int(prev_state[1])][int(current_state[0])][int(current_state[1])][int(action)] += 1 
 
-          if prev_state[0] not in total_count:
-              total_count[prev_state[0]] = {prev_state[1] : 1}
-          elif prev_state[1] not in total_count[prev_state[0]]:
-              total_count[prev_state[0]][prev_state[1]] = 1
+          if int(prev_state[0]) not in total_count:
+              total_count[int(prev_state[0])] = {int(prev_state[1]) : 1}
+          elif int(prev_state[1]) not in total_count[int(prev_state[0])]:
+              total_count[int(prev_state[0])][int(prev_state[1])] = 1
           else:
-              total_count[prev_state[0]][prev_state[1]] += 1
-
+              total_count[int(prev_state[0])][int(prev_state[1])] += 1
+          prev_state = current_state
+ 
         single_ind_positions.append(grid_to_ind(grid, current_state[0], current_state[1]))
         distance_grid = np.zeros((grid.lat_tiles, grid.lon_tiles))
         lon, lat = grid_to_lat_lon(grid, current_state[1], current_state[0])
@@ -129,6 +206,14 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
                 distance_grid[lt,ln] = math.sqrt((lat - deg_grid[lt,ln,0])**2 + (lon - deg_grid[lt,ln,1])**2)
         distance.append(distance_grid)
         act_ind = act_ind + 1 
+
+    #Account for final state
+    if int(current_state[0]) not in total_count:
+        total_count[int(current_state[0])] = {int(current_state[1]) : 1}
+    elif int(current_state[1]) not in total_count[int(current_state[0])]:
+        total_count[int(current_state[0])][int(current_state[1])] = 1
+    else:
+        total_count[int(current_state[0])][int(current_state[1])] += 1
 
     #final_points = [[],[],[],[],[]]
     final_points = [[],[],[]]
@@ -152,8 +237,10 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
                         final_points[1].append(int(key5)) #action
                         final_points[2].append(flat_ind_2) #final position
                         
-                        final_data.append(points[key][key2][key3][key4][key5] / total_count[prev_state[0]][prev_state[1]])
-                        n_states = grid.lon_tiles * grid.lat_tiles
+                        final_data.append(points[key][key2][key3][key4][key5] / total_count[key][key2])
+
+    n_states = grid.lon_tiles * grid.lat_tiles
+
 
     trans_prob = sparse.COO(final_points, final_data, shape=(n_states, N_ACTIONS, n_states))
 
