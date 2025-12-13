@@ -6,7 +6,7 @@ low_res:
   reader_type: "copernicus_sss_ssd_daily"
   reader_kwargs:
    no_arg: ''
-  geo_reader_type: "nc_geo"
+  geo_reader_type: "nc_geo_sss"
   geo_reader_kwargs:
    no_arg: "no_arg"
   filenames: [
@@ -45,16 +45,16 @@ fusion:
  area_id: "GOES"
  projection_proj4:
   proj: "longlat"
-  datum: "WGS84" 
- final_resolution: 0.027
+  datum: "WGS84"
+ final_resolution: 0.009000090001 #1km
  projection_units: "degrees"
  resample_radius: 5000
  resample_n_neighbors: 64
  resample_n_procs: 10
  resample_epsilon: 1.6
- use_bilinear: True 
- lon_bounds: [-97.8985, -74.5301]
- lat_bounds: [18.1599, 30.4159]
+ use_bilinear: True
+ lon_bounds: [-100.0, -60.0]
+ lat_bounds: [20.0, 40.0]
 
 
        

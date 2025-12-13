@@ -10,8 +10,8 @@ data:
   pixel_padding: 1
   reader_kwargs:
    none: "none"
-  reader_type: "copernicus_sss_daily"
-  geo_reader_type: "nc_geo"
+  reader_type: "copernicus_sss_ssd_daily"
+  geo_reader_type: "nc_geo_sss"
   geo_reader_kwargs:
    none: "none"
   scale_data: true
@@ -41,7 +41,7 @@ logger:
 output:
   generate_intermediate_output: true
   generate_train_output: true
-  out_dir: "/opt/dlami/nvme/NatureNet_Env/output"
+  out_dir: "/mnt/data/NatureNet_Env/output"
 
 scaler:
   name: standard

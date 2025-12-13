@@ -6,13 +6,15 @@ low_res:
   reader_type: "gtiff"
   reader_kwargs:
    no_arg: ''
-  geo_reader_type: "gtiff"
+  geo_reader_type: "gtiff_geo"
   geo_reader_kwargs:
    no_arg: "no_arg"
   filenames: [
+"/mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
 ]
 
   geo_filenames: [
+"/mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
 ]
 
   chan_dim: 2
@@ -53,10 +55,10 @@ fusion:
  resample_n_procs: 10
  resample_epsilon: 1.6
  use_bilinear: True 
- lon_bounds: [-97.8985, -74.5301]
- lat_bounds: [18.1599, 30.4159]
-
+ lon_bounds: [-100.0, -60.0]
+ lat_bounds: [20.0, 40.0]
 
        
 output_files: [
+"/mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
 ]

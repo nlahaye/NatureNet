@@ -6,10 +6,10 @@
 
 instruments:
  Bathymetry:
-  data_config: "../../config/environment/batymetry_data_config.yaml"
+  data_config: "../../config/environment/bathymetry_data_config.yaml"
   multi_chan: False
   filenames: [
-['/opt/dlami/nvme/NatureNet_Env/Bath/gebco_2025_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif'], ['/opt/dlami/nvme/NatureNet_Env/Bath/gebco_2025_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif']]
+['/mnt/data/NatureNet_Env/Bath/gebco_2025_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif'], ['/mnt/data/NatureNet_Env/Bath/gebco_2025_sub_ice_n40.0_s20.0_w-100.0_e-60.0_geotiff.tif']]
 
   resample_config: "../../config/environment/bathymetry_resample_config.yaml"
   #encoder_conf: "NA"
@@ -18,7 +18,7 @@ final_grid_res_deg: 0.027 #0.0108000108
 
 datetimes: ['01062024T00:00:00Z', '02062024T00:00:00Z']
 
-out_dir: "/opt/dlami/nvme/NatureNet_Env/output"
+out_dir: "/mnt/data/NatureNet_Env/output"
 
 update_stats: False
 
