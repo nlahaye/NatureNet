@@ -27,8 +27,8 @@ sss_fglob_date_str = "%Y%m%d"
 sst_fglob_begin = "/mnt/data/NatureNet_Env/SST/oisst-avhrr-v02r01."
 sst_fglob_date_str = "%Y%m%d" 
  
-sdate = "03012024T00:00:00Z"
-edate = "31102024T23:59:59Z"
+sdate = "01012020T00:00:00Z"
+edate = "31102023T23:59:59Z"
   
 coastal_dist_fname = "/mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
  
@@ -77,7 +77,7 @@ while current_date < end_date:
 
     current_date = current_date + datetime.timedelta(days=1)
 
-    if date_ind >= 32:
+    if date_ind >= 10:
 
 
         yml_conf["instruments"]["Bathymetry"]["filenames"] = fnames["Bathymetry"]
@@ -87,7 +87,7 @@ while current_date < end_date:
         yml_conf["datetimes"] = dates
 
 
-        new_fname = os.path.splitext(yml_fname)[0] + "NEW_SET_" + str(file_ind) + ".yaml"
+        new_fname = os.path.splitext(yml_fname)[0] + "NEW_SET_PREV_YEARS_" + str(file_ind) + ".yaml"
         print(new_fname)
         with open(new_fname, 'w') as yml:
             yaml.dump(yml_conf, yml)
