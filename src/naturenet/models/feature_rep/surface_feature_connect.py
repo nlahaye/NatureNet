@@ -23,6 +23,8 @@ import pickle
 import math 
 import cv2
 
+import uuid
+
 from pprint import pprint
 
 def run_normalization_stats(yml_conf, stats = {}):
@@ -152,62 +154,75 @@ def get_datetime_info(yml_conf):
 def gen_prelim_scene_map(yml_conf, scene_count, per_channel_stats):
     
     prelim_scene_map = {}    #prelim info
+
+    bath = {"data" : None, "location" : None, "final_data":None}
+    coast = {"data" : None, "location" : None, "final_data":None}
+    sst = {"data" : None, "location" : None, "final_data":None}
+    sss = {"data" : None, "location" : None, "final_data":None}
+ 
+    pre_baked = { "Bathymetry" : bath, "Coastal_Dist" : coast, "SST" : sst, "SSS" : sss}
+
     for i in range(scene_count):
+
         for instrument in yml_conf["instruments"]:
+             
+            if instrument not in pre_baked.keys() or (instrument in pre_baked.keys() and pre_baked[instrument]["final_data"] is None):
+       
+                resample_config = read_yaml(yml_conf["instruments"][instrument]["resample_config"])
+                data_config = read_yaml(yml_conf["instruments"][instrument]["data_config"])
 
-            resample_config = read_yaml(yml_conf["instruments"][instrument]["resample_config"])
-            data_config = read_yaml(yml_conf["instruments"][instrument]["data_config"])
+                fnames = yml_conf["instruments"][instrument]["filenames"][i]
+                if not isinstance(fnames, list):
+                    fnames = [fnames]
 
-            fnames = yml_conf["instruments"][instrument]["filenames"][i]
-            if not isinstance(fnames, list):
-                fnames = [fnames]
-
-            print("Getting scene", instrument, i)
-            #Get data
-            scene, init_shape, init_location = get_scenes(data_config, fnames, stats = per_channel_stats[instrument])
-            for scn in range(len(scene)):
-                if scene[scn].ndim == 2:
-                    scene[scn] = np.expand_dims(scene[scn], 2) #Data preprocessing keeps channel dim at back of dims
+                print("Getting scene", instrument, i)
+                #Get data
+                scene, init_shape, init_location = get_scenes(data_config, fnames, stats = per_channel_stats[instrument])
+                for scn in range(len(scene)):
+                    if scene[scn].ndim == 2:
+                        scene[scn] = np.expand_dims(scene[scn], 2) #Data preprocessing keeps channel dim at back of dims
  
+                #For now all scene sets should be of size 1, and in the future stitching will enforce this in other cases
+                scene = scene[0]
+                init_location = init_location[0]
 
-            #For now all scene sets should be of size 1, and in the future stitching will enforce this in other cases
-            scene = scene[0]
-            init_location = init_location[0]
+                print("Resampling", instrument, i)
+                #Resample over grid - TODO I will need to add stitching prior to this for inputs in future iterations
+                #Process will be stitch, resample, impute
+                data, location = resample_or_fuse_scene(scene, init_location,  resample_config)
+                del scene
 
-            print("Resampling", instrument, i)
-            #Resample over grid - TODO I will need to add stitching prior to this for inputs in future iterations
-            #Process will be stitch, resample, impute
-            data, location = resample_or_fuse_scene(scene, init_location,  resample_config)
-            del scene
+                print("Post-resample data imputation", instrument, i)
+                #Impute across fill values for now - may want to change approach later on #TODO - revisit
+                for ch in range(data.shape[0]):
+                    subd = data[ch]
+                    inds = np.where(subd < -99990)
+                    subd[inds] = per_channel_stats[instrument]["mean"][ch]
+                    data[ch] = subd
 
-            print("Post-resample data imputation", instrument, i)
-            #Impute across fill values for now - may want to change approach later on #TODO - revisit
-            for ch in range(data.shape[0]):
-                subd = data[ch]
-                inds = np.where(subd < -99990)
-                subd[inds] = per_channel_stats[instrument]["mean"][ch]
-                data[ch] = subd
-
-            print("Generating grid info", instrument, i)
-            if instrument not in prelim_scene_map:
-                prelim_scene_map[instrument] = {"scenes" : []} 
-            #Generate inital grid info per-scene
-            if "final_grid" not in prelim_scene_map:
-                #Can ignore resampled lat/lon for now - may be useful later
-                final_data, final_loc, final_grid_steps, final_grid_coords = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = True) 
-                #tile size will vary relative to native resolution
-                prelim_scene_map["final_grid"] = final_grid_coords
-                prelim_scene_map[instrument]["tile_size"] = final_grid_steps
+                print("Generating grid info", instrument, i)
+                if instrument not in prelim_scene_map:
+                    prelim_scene_map[instrument] = {"scenes" : []} 
+                #Generate inital grid info per-scene
+                if "final_grid" not in prelim_scene_map:
+                    #Can ignore resampled lat/lon for now - may be useful later
+                    final_data, final_loc, final_grid_steps, final_grid_coords = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = True) 
+                    #tile size will vary relative to native resolution
+                    prelim_scene_map["final_grid"] = final_grid_coords
+                    prelim_scene_map[instrument]["tile_size"] = final_grid_steps
+                else:
+                    final_data, final_loc, final_grid_steps, _ = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = False)
+                prelim_scene_map[instrument]["scenes"].append(final_data)
+                if instrument in pre_baked:
+                    pre_baked[instrument]["final_data"] = final_data
             else:
-                final_data, final_loc, final_grid_steps, _ = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = False)
-                prelim_scene_map[instrument]["tile_size"] = final_grid_steps
-            prelim_scene_map[instrument]["scenes"].append(final_data)
+                prelim_scene_map[instrument]["scenes"].append(pre_baked[instrument]["final_data"])
 
- 
             print("Associating times to grid", instrument, i)
             if "times" not in prelim_scene_map:
                 #Get time info connected to scene
                 prelim_scene_map["times"] = get_datetime_info(yml_conf)
+
     return prelim_scene_map
     
 
@@ -270,58 +285,76 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
     print("Generating preliminary environment scene info")
     prelim_scene_map = gen_prelim_scene_map(yml_conf, scene_count, per_channel_stats)
 
+    bath = {"grid" : None, "scene" : None}
+    coast = {"grid" : None, "scene" : None}
+    sst = {"grid" : None, "scene" : None}
+    sss = {"grid" : None, "scene" : None}
+    pre_baked = { "Bathymetry" : bath, "Coastal_Dist" : coast, "SST" : sst, "SSS" : sss}
+
+
     #TODO parallelize
     for i in range(scene_count):
         for instrument in yml_conf["instruments"]:
-            #For reflectance or backscatter datasets
-            print("Generating features", instrument, i)
-            if "encoder_conf" in yml_conf["instruments"][instrument]:
-                encoder_conf_fpath = yml_conf["instruments"][instrument]["encoder_conf"]
-                encoder_conf = read_yaml(encoder_conf_fpath)
-                embed, _ = run_embed_gen_from_scene_arr(encoder_conf, [prelim_scene_map[instrument]["scenes"][i]], \
-                    [prelim_scene_map[instrument]["scenes"][i].shape[0:2]], gen_image_shaped = True)
-            else:
-                embed = prelim_scene_map[instrument]["scenes"][i]
 
-            if embed.ndim < 4: #Likely no sample dimension
-                while embed.ndim < 4:
-                    embed = np.expand_dims(embed, 0)
+            if instrument not in pre_baked or (instrument in pre_baked and pre_baked[instrument]["grid"] is None):
+
+                #For reflectance or backscatter datasets
+                print("Generating features", instrument, i)
+                if "encoder_conf" in yml_conf["instruments"][instrument]:
+                    encoder_conf_fpath = yml_conf["instruments"][instrument]["encoder_conf"]
+                    encoder_conf = read_yaml(encoder_conf_fpath)
+                    embed, _ = run_embed_gen_from_scene_arr(encoder_conf, [prelim_scene_map[instrument]["scenes"][i]], \
+                        [prelim_scene_map[instrument]["scenes"][i].shape[0:2]], gen_image_shaped = True)
+                else:
+                    embed = prelim_scene_map[instrument]["scenes"][i]
+
+                if embed.ndim < 4: #Likely no sample dimension
+                    while embed.ndim < 4:
+                        embed = np.expand_dims(embed, 0)
                 
-            print("Extracting multi-scale coarser features", i)
-            n_chans = 1
-            if isinstance(per_channel_stats[instrument]["mean"], Iterable):
-                n_chans = len(per_channel_stats[instrument]["mean"])
-            if instrument not in rsfns: #Assuming N_Samples X N_Channels X YDIM X XDIM
-                rsfns[instrument] = RSFeatureNet(n_chans, prelim_scene_map[instrument]["tile_size"], \
-                    per_channel_stats[instrument]["mean"], per_channel_stats[instrument]["std"])
-                scenes[instrument] = []
-                #if "combined" not in scenes:
-                #    scenes["combined"] = []
-                #    scenes["combined_final"] = []
+                print("Extracting multi-scale coarser features", i)
+                n_chans = 1
+                if isinstance(per_channel_stats[instrument]["mean"], Iterable):
+                    n_chans = len(per_channel_stats[instrument]["mean"])
+                if instrument not in rsfns: #Assuming N_Samples X N_Channels X YDIM X XDIM
+                    rsfns[instrument] = RSFeatureNet(n_chans, prelim_scene_map[instrument]["tile_size"], \
+                        per_channel_stats[instrument]["mean"], per_channel_stats[instrument]["std"])
+                    scenes[instrument] = []
+                    #if "combined" not in scenes:
+                    #    scenes["combined"] = []
+                    #    scenes["combined_final"] = []
+    
+                if i == 0:
+                    if torch.cuda.is_available():
+                        rsfns[instrument] = rsfns[instrument].cuda()
 
-            if i == 0:
-                if torch.cuda.is_available():
-                    rsfns[instrument] = rsfns[instrument].cuda()
+                x1, x2, x3, grid_size  = rsfns[instrument](embed)
 
-            x1, x2, x3, grid_size  = rsfns[instrument](embed)
+                if x1.ndim == 3:
+                    x1 = x1.reshape((grid_size[0], grid_size[1], 1, x1.shape[1], x1.shape[2]))
+                    x2 = x2.reshape((grid_size[0], grid_size[1], 1, x2.shape[1], x2.shape[2]))
+                    x3 = x3.reshape((grid_size[0], grid_size[1], 1, x3.shape[1], x3.shape[2]))
+                elif x1.ndim == 4:
+                    x1 = x1.reshape((grid_size[0], grid_size[1], x1.shape[1], x1.shape[2], x1.shape[3]))
+                    x2 = x2.reshape((grid_size[0], grid_size[1], x2.shape[1], x2.shape[2], x2.shape[3]))
+                    x3 = x3.reshape((grid_size[0], grid_size[1], x3.shape[1], x3.shape[2], x3.shape[3]))
 
-            if x1.ndim == 3:
-                x1 = x1.reshape((grid_size[0], grid_size[1], 1, x1.shape[1], x1.shape[2]))
-                x2 = x2.reshape((grid_size[0], grid_size[1], 1, x2.shape[1], x2.shape[2]))
-                x3 = x3.reshape((grid_size[0], grid_size[1], 1, x3.shape[1], x3.shape[2]))
-            elif x1.ndim == 4:
-                x1 = x1.reshape((grid_size[0], grid_size[1], x1.shape[1], x1.shape[2], x1.shape[3]))
-                x2 = x2.reshape((grid_size[0], grid_size[1], x2.shape[1], x2.shape[2], x2.shape[3]))
-                x3 = x3.reshape((grid_size[0], grid_size[1], x3.shape[1], x3.shape[2], x3.shape[3]))
+                if instrument not in grids:
+                    grids[instrument] = []
 
-            if instrument not in grids:
-                grids[instrument] = []
+                if instrument not in scenes:
+                    scenes[instrument] = []
 
-            if instrument not in scenes:
-                scenes[instrument] = []
+                grids[instrument].append(grid_size)
+                scenes[instrument].append([x1, x2, x3])
+                if instrument in pre_baked:
+                    pre_baked[instrument]["grid"] = grid_size
+                    pre_baked[instrument]["scene"] = [x1, x2, x3]
 
-            grids[instrument].append(grid_size)
-            scenes[instrument].append([x1, x2, x3])
+            else:
+                grids[instrument].append(pre_baked[instrument]["grid"])
+                scenes[instrument].append(pre_baked[instrument]["scene"])
+
 
             if i == 0:
                 actual_total_chans += rsfns[instrument].out_chans
@@ -343,11 +376,11 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
            if len(scenes["combined_features"]) < scn+1:
                scenes["combined_features"].append(scenes[instrument][scn])
                for scn_sub in range(len(scenes[instrument][scn])):
-                   scenes["combined_features"][scn][scn_sub] = scenes["combined_features"][scn][scn_sub].numpy()
+                   scenes["combined_features"][scn][scn_sub] = scenes["combined_features"][scn][scn_sub]
            else:
                for scn_sub in range(len(scenes[instrument][scn])):
                    scenes["combined_features"][scn][scn_sub] = np.concatenate((scenes["combined_features"][scn][scn_sub], \
-                       scenes[instrument][scn][scn_sub].numpy()), axis=2)
+                       scenes[instrument][scn][scn_sub]), axis=2)
 
     
     print("Adding per-agent grid distances to feature set")
@@ -417,7 +450,7 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
 
                 for tmpp in range(len(scenes_per_df[act_index])):
                     if scenes_per_df[act_index] is not None and len(scenes_per_df[act_index]) > 0:
-                        print("IN SCENE SHAPE", tmpp, new_scene.shape, len(scenes_per_df[act_index][tmpp]))
+                        print("IN SCENE SHAPE", tmpp, new_scene.shape, scenes_per_df[act_index][tmpp].shape)
 
                 act_index = act_index + 1
 
@@ -539,7 +572,7 @@ def run_surface_feature_connect_final(yml_conf, scenes_per_uid, clustering = Non
 
 def save_models(out_dir, run_uid, rsfns=None, msrffr=None):
 
-    if rsfns is not None:
+    if rsfns is not None and not os.path.exists(os.path.join(out_dir, run_uid + "rsfns.ckpt")):
         model_dict = {}
         for instrument in rsfns.keys():
             state_dict = rsfns[instrument].state_dict()
@@ -550,7 +583,7 @@ def save_models(out_dir, run_uid, rsfns=None, msrffr=None):
                 "in_chans" : in_chans, "tile_size" : tile_size}
         torch.save(model_dict, os.path.join(out_dir, run_uid + "rsfns.ckpt"))
 
-    if msrffr is not None:
+    if msrffr is not None and not os.path.exists(os.path.join(out_dir, run_uid + "msrffr.ckpt")):
         model_dict = {"weights" : msrffr.state_dict(), "in_chans" : msrffr.in_chans}
         torch.save(model_dict, os.path.join(out_dir, run_uid + "msrffr.ckpt"))
 
@@ -564,10 +597,11 @@ def load_models(out_dir, run_uid, stats=None):
 
         rsfns = {}
         for instrument in rsfns_init.keys():
-            rsfns[instrument] = RSFeatureNet(rsfns_init[instrument]["in_chans"],\
+            rsfns[instrument] = RSFeatureNet(rsfns_init[instrument]["in_chans"], rsfns_init[instrument]["tile_size"],\
                 stats[instrument]["mean"], stats[instrument]["std"])
-            rsfns[instrument].load_state_dict(rsfns_init["in_chans"])
+            rsfns[instrument].load_state_dict(rsfns_init[instrument]["weights"])
             rsfns[instrument].eval()
+
 
     msrffr = None
 
@@ -601,7 +635,7 @@ def build_and_save_envs(yml_fpath):
         print("Generating surface features")
         prelim_scene_map, grids, rsfns, scenes_per_uid  = run_surface_feature_connect(yml_conf, scenes_per_uid)
 
-        pkl_file = os.path.join(yml_conf["out_dir"], "env_maps_" + yml_conf["run_uid"] + ".pkl")
+        pkl_file = os.path.join(yml_conf["out_dir"], "env_maps_" + yml_conf["run_uid"] + str(uuid.uuid4()) + ".pkl")
         with open(pkl_file, 'wb') as f:
             pickle.dump(scenes_per_uid, f, protocol=pickle.HIGHEST_PROTOCOL)
 
