@@ -204,7 +204,7 @@ def gen_prelim_scene_map(yml_conf, scene_count, per_channel_stats):
                 if instrument not in prelim_scene_map:
                     prelim_scene_map[instrument] = {"scenes" : []} 
                 #Generate inital grid info per-scene
-                if "final_grid" not in prelim_scene_map:
+                if "final_grid" not in prelim_scene_map or "tile_size" not in prelim_scene_map[instrument]:
                     #Can ignore resampled lat/lon for now - may be useful later
                     final_data, final_loc, final_grid_steps, final_grid_coords = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = True) 
                     #tile size will vary relative to native resolution
@@ -216,7 +216,7 @@ def gen_prelim_scene_map(yml_conf, scene_count, per_channel_stats):
                 if instrument in pre_baked:
                     pre_baked[instrument]["final_data"] = final_data
             else:
-                prelim_scene_map[instrument]["scenes"].append(pre_baked[instrument]["final_data"])
+                prelim_scene_map[instrument]["scenes"].append(copy.deepcopy(pre_baked[instrument]["final_data"]))
 
             print("Associating times to grid", instrument, i)
             if "times" not in prelim_scene_map:
@@ -352,8 +352,8 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
                     pre_baked[instrument]["scene"] = [x1, x2, x3]
 
             else:
-                grids[instrument].append(pre_baked[instrument]["grid"])
-                scenes[instrument].append(pre_baked[instrument]["scene"])
+                grids[instrument].append(copy.deepcopy(pre_baked[instrument]["grid"]))
+                scenes[instrument].append(copy.deepcopy(pre_baked[instrument]["scene"]))
 
 
             if i == 0:
@@ -369,20 +369,18 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
         
 
     print("Concatenating features per-scene")
+    scenes["combined_features"] = []
     for scn in range(scene_count):
-        if "combined_features" not in scenes:
-            scenes["combined_features"] = []
+        scenes["combined_features"].append([])
         for instrument in grids:
-           if len(scenes["combined_features"]) < scn+1:
-               scenes["combined_features"].append(scenes[instrument][scn])
-               for scn_sub in range(len(scenes[instrument][scn])):
-                   scenes["combined_features"][scn][scn_sub] = scenes["combined_features"][scn][scn_sub]
-           else:
-               for scn_sub in range(len(scenes[instrument][scn])):
-                   scenes["combined_features"][scn][scn_sub] = np.concatenate((scenes["combined_features"][scn][scn_sub], \
+            if len(scenes["combined_features"][scn]) == 0:
+                scenes["combined_features"][scn] = scenes[instrument][scn]
+            else:
+                for scn_sub in range(len(scenes[instrument][scn])):
+                    scenes["combined_features"][scn][scn_sub] = np.concatenate((scenes["combined_features"][scn][scn_sub], \
                        scenes[instrument][scn][scn_sub]), axis=2)
 
-    
+
     print("Adding per-agent grid distances to feature set")
     movement_dfs = None
     df_uid = yml_conf["df_run_uid"]
@@ -421,22 +419,24 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
                 df_st_str = datetime.datetime.strptime(row['date'][0:10],"%Y-%m-%d")
                 st_str = prelim_scene_map["times"][scene_ind]
 
+                print(df_st_str, st_str, len(movement_df), scene_ind, act_index, uid)
                 while st_str < df_st_str and scene_ind < len(prelim_scene_map["times"])-1:
                     scene_ind = scene_ind + 1
                     st_str = prelim_scene_map["times"][scene_ind]
+                    print(df_st_str, st_str, len(movement_df), uid, dind, scene_ind, act_index)
                 if st_str - df_st_str > datetime.timedelta(hours=15) or df_st_str - st_str > datetime.timedelta(hours=15):
                     if len(scenes_per_df) < act_index + 1:
                         scenes_per_df.append([])
+                    act_index = act_index + 1
                     continue
                 if scene_ind >= len(prelim_scene_map["times"]):
-                    break
+                    act_index = act_index + 1
+                    continue
                 distance_grid = distance_grids[act_index]
                 resample_shape = (scenes["combined_features"][scene_ind][0].shape[0], scenes["combined_features"][scene_ind][0].shape[1])
                 distance_grid = cv2.resize(distance_grid, resample_shape, interpolation=cv2.INTER_CUBIC)
                 distance_grid = np.reshape(distance_grid, (resample_shape[0], resample_shape[1], 1,1,1))
                 new_scene = np.concatenate((scenes["combined_features"][scene_ind][-1], distance_grid), axis=2)
-
-                print("HERE IN SCENE", uid, dind, scene_ind, act_index, df_st_str, st_str)
 
                 new_full_scene = copy.deepcopy(scenes["combined_features"][scene_ind])
                 new_full_scene[-1] = new_scene
@@ -448,9 +448,6 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
                     print("Inserting scene in ", uid, "at", act_index, "from", scene_ind)
                     scenes_per_df[act_index] = new_full_scene
 
-                for tmpp in range(len(scenes_per_df[act_index])):
-                    if scenes_per_df[act_index] is not None and len(scenes_per_df[act_index]) > 0:
-                        print("IN SCENE SHAPE", tmpp, new_scene.shape, scenes_per_df[act_index][tmpp].shape)
 
                 act_index = act_index + 1
 
@@ -491,8 +488,8 @@ def run_surface_feature_connect_final(yml_conf, scenes_per_uid, clustering = Non
         for uid_ind in range(len(scenes_per_uid[uid])):
             final_scenes_per_uid[uid].append([])
             #if actual_total_chans > 10:
-            if uid_ind == 0 and msrffr is None:
-                msrffr = MultiSourceRSFeatureReduc(actual_total_chans) #TODO - incorporate. Currently not needed
+            #if uid_ind == 0 and msrffr is None:
+            #    msrffr = MultiSourceRSFeatureReduc(actual_total_chans) #TODO - incorporate. Currently not needed
  
             #if not device_check and torch.cuda.is_available(): 
             #   msrffr = msrffr.cuda()
@@ -627,7 +624,13 @@ def build_and_save_envs(yml_fpath):
         pkl_file = os.path.join(yml_conf["out_dir"], "env_maps_" + yml_conf["run_uid"] + ".pkl")
         with open(pkl_file, 'rb') as f:
             scenes_per_uid = pickle.load(f)
- 
+
+    elif "split_scenes_per_uid"in yml_conf:
+        split_scenes_per_uid = yml_conf["split_scenes_per_uid"]
+        for fname in split_scenes_per_uid:
+            uid = fname[-12:-4]
+            with open(fname, 'rb') as f:
+                scenes_per_uid[uid] = pickle.load(f)
 
     rsfns = None
     msrffr = None 
