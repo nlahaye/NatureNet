@@ -53,12 +53,16 @@ def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions,
     current_state = None
     prev_state_abs = None
     current_state_abs = None
+    states = []
     act_ind = 0
 
+
     for index, row in movement_df.iterrows():
+        print(act_ind, len(abstract_grid), len(movement_df), len(actions))
         if abstract_grid[act_ind] is None:
             prev_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
             current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            states.append(current_state_abs)
             act_ind = act_ind + 1
             continue
         if act_ind == 0:
@@ -69,21 +73,24 @@ def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions,
         else:
             current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
             current_state_abs = abstract_grid[act_ind][current_state[0], current_state[1]]
-      
+            states.append(current_state_abs)      
+
             if current_state_abs is None or prev_state_abs is None:
                 prev_state = current_state
                 prev_state_abs = current_state_abs
                 act_ind = act_ind + 1                
                 continue
  
-            action = actions[act_ind]
+            action = actions[act_ind-1]
  
             if int(prev_state_abs) not in points:
                 points[int(prev_state_abs)] =  {int(current_state_abs) : {int(action) : 1}}
             elif int(current_state_abs) not in points[int(prev_state_abs)]:
                 points[int(prev_state_abs)][int(current_state_abs)] = {int(action) : 1}
+            elif int(action) not in  points[int(prev_state_abs)][int(current_state_abs)]:
+                points[int(prev_state_abs)][int(current_state_abs)][int(action)] = 1
             else:
-                points[prev_state_abs][current_state_abs][action] += 1
+                points[int(prev_state_abs)][int(current_state_abs)][int(action)] += 1
 
             if prev_state_abs not in total_count:
                 total_count[prev_state_abs] = 1
@@ -115,7 +122,7 @@ def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions,
 
     trans_prob = sparse.COO(final_points, final_data, shape=(n_states, N_ACTIONS, n_states))
 
-    return total_count, points, trans_prob
+    return total_count, points, trans_prob, states
 
 
 
