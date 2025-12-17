@@ -20,7 +20,7 @@ from naturenet.models.swirl.swirl_utils import *
 jax.config.update("jax_enable_x64", True)
 #jax.config.update("jax_platform_name", "gpu")
 
-def em_train_temp(logpi0, log_Ps, Rs, rewards, temps, iter=100, init=True, trans=True, emit=True):
+def em_train_temp(logpi0, log_Ps, Rs, rewards, temps, trans_probs, train_xohs, train_aohs, iter=100, init=True, trans=True, emit=True):
     LL_list = []
     for i in range(iter):
         print(i)
@@ -48,7 +48,7 @@ def em_train_temp(logpi0, log_Ps, Rs, rewards, temps, iter=100, init=True, trans
         logpi0, log_Ps, Rs, rewards = new_logpi0, new_log_Ps, new_Rs, new_rewards
     return logpi0, log_Ps, Rs, rewards, LL_list
 
-def em_train2_temp(logpi0, log_Ps, Rs, rewards, temps, iter=100, init=True, trans=True, emit=True):
+def em_train2_temp(logpi0, log_Ps, Rs, rewards, temps, new_trans_probs, iter=100, init=True, trans=True, emit=True):
     LL_list = []
     for i in range(iter):
         print(i)
