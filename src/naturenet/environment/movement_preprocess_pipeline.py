@@ -115,6 +115,8 @@ def reprocess_env_stats_abstract(yml_conf):
     total_count = {}
     points = None
     for key in movement_dfs.keys():
+        if key not in abstract_grid:
+            continue
         grid = None
         actions = None
  
@@ -130,9 +132,14 @@ def reprocess_env_stats_abstract(yml_conf):
 
         #total_count = {}
         #points = None
+        states_full = []
 
         for i in range(len(movement_sub_df)):
-            total_count, points, trans_prob = compute_transition_probs_abstracted_env(movement_sub_df[i], abstract_grid_sub[i], actions[i], grid, n_clusters, points = points, total_count = total_count)
+            total_count, points, trans_prob, states = compute_transition_probs_abstracted_env(movement_sub_df[i], abstract_grid_sub[i], actions[i], grid, n_clusters, points = points, total_count = total_count)
+            states_full.append(states)
+
+        with open(os.path.join(df_dir, yml_conf["df_run_uid"] + "_" + str(key) + "_states_abstract_env.pkl"), "wb") as f:
+            pickle.dump(states_full, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     sparse.save_npz(os.path.join(df_dir, yml_conf["df_run_uid"] + "_trans_prob_abstract_env"), trans_prob)
 
@@ -142,7 +149,7 @@ def reprocess_env_stats_abstract(yml_conf):
     with open(os.path.join(df_dir, yml_conf["df_run_uid"] + "_points_abstract_env.pkl"), "wb") as f:
          pickle.dump(points, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-
+ 
 
 if __name__ == '__main__':
 
