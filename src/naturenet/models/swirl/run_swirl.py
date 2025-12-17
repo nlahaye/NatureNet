@@ -12,10 +12,17 @@ import os
 import pickle
 import sparse
 
+import sparse
+import scipy
+
 import jax
 import jax.numpy as jnp
 from jax import lax, vmap, jit
-from jax.lib import xla_bridge
+
+#from jax.lib import xla_bridge
+
+import jax.extend
+ 
 from functools import partial
 from jax.scipy.special import logsumexp as jax_logsumexp
 import optax
@@ -45,16 +52,22 @@ def run_swirl_init(yml_conf):
     run_uid = yml_conf["run_uid"]
 
     trans_prob = sparse.load_npz(trans_prob_fpath)
+    print(trans_prob.shape)
+ 
+    trans_prob = trans_prob.todense()
+
     actions = np.load(actions_fpath, allow_pickle=True)
     positions = np.load(positions_fpath, allow_pickle=True)
-
-    for i in range(len(positions)):
-        print(len(positions[i]))
 
     positions = np.array(positions[:-1])
     actions  = np.array(actions[:-1])
 
+
+    global n_states
+    global n_actions
     n_states, n_actions, _ = trans_prob.shape
+
+    print(n_actions)
 
     #TODO train test split
 
@@ -101,21 +114,29 @@ def run_swirl_init(yml_conf):
     arhmm_s_params = np.load(arhmm_s_fname, allow_pickle=True)
     logpi0_start = arhmm_s_params['logpi0_start']
     log_Ps_start = arhmm_s_params['log_Ps_start']
+
+    print(log_Ps_start.shape , logpi0_start.shape)
+
     Rs_start = arhmm_s_params['W1_start'], arhmm_s_params['b1_start'], arhmm_s_params['W2_start'], arhmm_s_params['b2_start']
 
     print("Preprocessing variables") 
+    print(positions[:, 1:].shape, prev_state_map.keys(), n_actions, n_states)
     all_xs_prev = preprocess_xs_prev_np(positions[:, 1:], positions[:, :-1], prev_state_map, n_actions, n_states)
-    all_xohs = vmap(one_hotx_partial)(positions[:, 1:], n_states)
-    all_xohs_prev = vmap(one_hotx_partial)(positions[:, :-1], n_states)
-    all_xohs2 = vmap(one_hotx2_partial)(positions[:, 1:], all_xs_prev, n_states)
-    all_aohs = vmap(one_hota_partial)(actions[:, 1:], n_actions)
+    print(len(all_xs_prev), positions.shape)
+    all_xohs = vmap(one_hotx_partial)(positions[:, 1:])
+    all_xohs_prev = vmap(one_hotx_partial)(positions[:, :-1])
+    all_xohs2 = vmap(one_hotx2_partial)(positions[:, 1:], all_xs_prev)
+    all_aohs = vmap(one_hota_partial)(actions[:, 1:])
  
-    print(xla_bridge.get_backend().platform)
-    temps = jnp.array([1] + [1] * (n_hidden - 1))
+    print(jax.extend.backend.get_backend().platform)
+    temps = jnp.array([1] + [1] * (n_hidden_init- 1))
 
     # S-1
     print("Training initial model step 1")
-    new_logpi0, new_log_Ps, new_Rs, new_reward, LL_list = em_train_temp(jnp.array(logpi0_start), jnp.array(log_Ps_start), Rs_start, jnp.array(R_start2)[:, None], temps, 50, init=False, trans=False)
+    print(len(Rs_start), R_start2.shape)
+    new_logpi0, new_log_Ps, new_Rs, new_reward, LL_list = em_train_temp(jnp.array(logpi0_start), jnp.array(log_Ps_start), Rs_start, jnp.array(R_start2)[:, None], temps, trans_prob, all_xohs, all_aohs, 500, init=False, trans=False)
+
+
     fname = run_uid + "_time_interval_run_" + str(n_hidden_init) + '_' + str(seed) + "_naturenet_init0.npz"
     fname = os.path.join(out_dir, fname)
     jnp.savez(fname, new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=np.array(new_Rs, dtype=object), new_reward=new_reward, LL_list=LL_list, temps=temps) 
@@ -229,7 +250,7 @@ def run_swirl_final(yml_conf):
     all_xohs2 = vmap(one_hotx2_partial)(positions[:, 1:], all_xs_prev, n_states)
     all_aohs = vmap(one_hota_partial)(actions[:, 1:], n_actions)
 
-    print(xla_bridge.get_backend().platform)
+    print(jax.extend.backend.get_backend().platform)
     temps = jnp.array([0.01] + [1] * (n_hidden - 1))
 
     # S-2
