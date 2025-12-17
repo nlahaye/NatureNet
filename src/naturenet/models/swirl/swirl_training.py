@@ -466,7 +466,7 @@ def emit_m_step_jax_scipy_temp_reg(rewards, trans_probs, temps, expectations, on
     def objective(flat_params, itr):
         elbo = _expected_log_joint(flat_params, expectations)
         rewards = flat_params.reshape(initial_params_shape)
-        return -elbo / T + 0.01 * jnp.sum(jnp.abs(rewards[0])) + 0.007 * jnp.sum(jnp.abs(rewards[1])) + 0.001 * jnp.sum(jnp.square(rewards[2]))
+        return -elbo / T #+ 0.01 * jnp.sum(jnp.abs(rewards[0])) + 0.007 * jnp.sum(jnp.abs(rewards[1])) + 0.001 * jnp.sum(jnp.square(rewards[2]))
 
     # Initial parameter values
     initial_params = rewards
