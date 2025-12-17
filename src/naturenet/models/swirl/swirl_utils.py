@@ -35,10 +35,12 @@ def compute_prev_state_map(trans_probs, n_state, n_action):
     
     # Loop through trans_probs to find valid previous states for each x
     for x in range(n_state):
+        print("HERE STATE", x)
         for prev_x in range(n_state):
+                print(np.sum(trans_probs[prev_x, :, x]))
                 if np.sum(trans_probs[prev_x, :, x]) > 0:
                         prev_state_map[x].append(prev_x)
-    
+                        print(x, prev_x) 
     return prev_state_map
 
 def preprocess_xs_prev_np(xs_list, xs_prev_list, prev_state_map, n_action, n_state):
@@ -51,7 +53,7 @@ def preprocess_xs_prev_np(xs_list, xs_prev_list, prev_state_map, n_action, n_sta
             except ValueError:
                 print("HERE BAD INDS", x, prev_x, n_action, n_state)
         prev_indices_list.append(prev_indices)
-    return prev_indices_list
+    return np.array(prev_indices_list)
 
 
 def one_hot_jax(hidden_states, n_hidden_states):
@@ -74,13 +76,20 @@ def one_hot_jax2(hidden, hidden_prev, n_hidden_states, n_actions):
     zoh = jnp.reshape(zoh, shp + (n_hidden_states_2,))
     return zoh
 
-def one_hotx_partial(xs, n_states):
+def one_hotx_partial(xs):
+    global n_states
+    n_states = 40 #TODO
     return one_hot_jax(xs[:, None], n_states)
 
-def one_hotx2_partial(xs, xs_prev, n_states):
-    return one_hot_jax2(xs[:, None], xs_prev[:, None], n_states)
+def one_hotx2_partial(xs, xs_prev):
+    global n_states 
+    n_states = 40 #TODO
+    n_actions = 9 #TODO
+    return one_hot_jax2(xs[:, None], xs_prev[:, None], n_states, n_actions)
 
-def one_hota_partial(acs, n_actions):
+def one_hota_partial(acs):
+    global n_actions
+    n_actions = 9 #TODO
     return one_hot_jax(acs[:, None], n_actions)
 
 
