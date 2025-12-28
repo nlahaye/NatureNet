@@ -93,7 +93,7 @@ def comp_log_transP(log_Ps, Wbs, one_hot_x):
 def comp_transP(log_Ps, Wbs, one_hot_x):
     return jnp.exp(comp_log_transP(log_Ps, Wbs, one_hot_x))
 
-def _viterbi_JAX(pi0, Ps, ll):
+def viterbi_JAX(pi0, Ps, ll):
     """
     Implements the Viterbi algorithm in JAX.
     """

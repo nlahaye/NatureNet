@@ -19,9 +19,8 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
     #positions = np.array(positions)
     positions = np.array(positions[:-1])
     
-    print("POSITIONS", positions.shape)
     list_x = [row for row in positions[:, :, np.newaxis].astype(int)]
-    lls_arhmm = arhmm_s.initialize(list_x, num_init_iters=100)
+    lls_arhmm = arhmm_s.initialize(list_x, num_init_iters=500)
     init_start = arhmm_s.init_state_distn.initial_state_distn
     logpi0_start = arhmm_s.init_state_distn.log_pi0
     log_Ps_start = arhmm_s.transitions.log_Ps
