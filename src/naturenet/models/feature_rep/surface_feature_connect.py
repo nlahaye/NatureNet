@@ -28,20 +28,23 @@ import uuid
 from pprint import pprint
 
 def run_normalization_stats(yml_conf, stats = {}):
+
+    pre_baked = { "Bathymetry" : None, "Coastal_Dist" : None}
     for key in yml_conf["instruments"].keys():
         data = None
         for i in range(len(yml_conf["instruments"][key]["filenames"])):
-            data_config = read_yaml(yml_conf["instruments"][key]["data_config"])
-            dat_tmp, _, _ = get_scenes(data_config, yml_conf["instruments"][key]["filenames"][i])
-            dat_tmp = np.array(dat_tmp)        
+            if key  not in pre_baked or (key in pre_baked and pre_baked[key] is None):
+                data_config = read_yaml(yml_conf["instruments"][key]["data_config"])
+                dat_tmp, _, _ = get_scenes(data_config, yml_conf["instruments"][key]["filenames"][i])
+                dat_tmp = np.array(dat_tmp)        
     
-            #if dat_tmp.ndim < 3:
-            #    np.expand_dims(dat_tmp, axis=2)
+                #if dat_tmp.ndim < 3:
+                #    np.expand_dims(dat_tmp, axis=2)
 
-            if data is None:
-                data = dat_tmp
-            else:
-                data = np.concatenate((data, dat_tmp), axis=0)    
+                if data is None:
+                    data = dat_tmp
+                else:
+                    data = np.concatenate((data, dat_tmp), axis=0)    
 
         inds = np.where(data < -99990.0)
         data[inds] = np.nan 
@@ -157,10 +160,8 @@ def gen_prelim_scene_map(yml_conf, scene_count, per_channel_stats):
 
     bath = {"data" : None, "location" : None, "final_data":None}
     coast = {"data" : None, "location" : None, "final_data":None}
-    sst = {"data" : None, "location" : None, "final_data":None}
-    sss = {"data" : None, "location" : None, "final_data":None}
  
-    pre_baked = { "Bathymetry" : bath, "Coastal_Dist" : coast, "SST" : sst, "SSS" : sss}
+    pre_baked = { "Bathymetry" : bath, "Coastal_Dist" : coast}
 
     for i in range(scene_count):
 
@@ -287,9 +288,7 @@ def run_surface_feature_connect(yml_conf, scenes_per_uid={}):
 
     bath = {"grid" : None, "scene" : None}
     coast = {"grid" : None, "scene" : None}
-    sst = {"grid" : None, "scene" : None}
-    sss = {"grid" : None, "scene" : None}
-    pre_baked = { "Bathymetry" : bath, "Coastal_Dist" : coast, "SST" : sst, "SSS" : sss}
+    pre_baked = { "Bathymetry" : bath, "Coastal_Dist" : coast}
 
 
     #TODO parallelize
@@ -542,7 +541,7 @@ def run_surface_feature_connect_final(yml_conf, scenes_per_uid, clustering = Non
                         continue
                     extend = True
                     grid_sub[sub_ind] = np.reshape(grid_sub[sub_ind],\
-                        shape=(grid_sub[sub_ind].shape[0]*grid_sub[sub_ind].shape[1],\
+                        (grid_sub[sub_ind].shape[0]*grid_sub[sub_ind].shape[1],\
                         grid_sub[sub_ind].shape[2]))
                     if extend:
                         if training_grids is None:
