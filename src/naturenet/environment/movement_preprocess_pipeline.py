@@ -21,7 +21,6 @@ def run_movement_track_preprocess(yml_conf):
 
 
     movement_dfs = split_movement_streams(movement_df, yml_conf["out_dir"], yml_conf["run_uid"])
-
     points = None
     total_count = {} 
     for key in movement_dfs.keys():
@@ -50,23 +49,23 @@ def run_movement_track_preprocess(yml_conf):
         distances_full = []       
  
         for i in range(len(movement_sub_df)):
-            total_count, points, trans_prob, actions, single_unit_coords, distances  = compute_transition_probabilities(movement_sub_df[i], grid, total_count = total_count, points = points)
+            total_count, points, trans_prob, actions, single_unit_coords, distances = compute_transition_probabilities(movement_sub_df[i], grid, total_count = total_count, points = points)
 
             single_unit_coords_full.append(single_unit_coords) 
             actions_full.append(actions)
             distances_full.append(distances)
 
         run_uid = yml_conf["run_uid"] + "_" + key
-        #sparse.save_npz(os.path.join(yml_conf["out_dir"], run_uid + "_trans_prob"), trans_prob)
+        sparse.save_npz(os.path.join(yml_conf["out_dir"], run_uid + "_trans_prob"), trans_prob)
 
         with open(os.path.join(yml_conf["out_dir"], run_uid + "_grid.pkl"), "wb") as f:
              pickle.dump(grid, f, protocol=pickle.HIGHEST_PROTOCOL) 
 
-        #with open(os.path.join(yml_conf["out_dir"], run_uid + "_total_count.pkl"), "wb") as f:
-        #     pickle.dump(total_count, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(os.path.join(yml_conf["out_dir"], run_uid + "_total_count.pkl"), "wb") as f:
+             pickle.dump(total_count, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-        #with open(os.path.join(yml_conf["out_dir"], run_uid + "_points.pkl"), "wb") as f:
-        #     pickle.dump(points, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(os.path.join(yml_conf["out_dir"], run_uid + "_points.pkl"), "wb") as f:
+             pickle.dump(points, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         with open(os.path.join(yml_conf["out_dir"], run_uid + "_actions.pkl"), "wb") as f:
              pickle.dump(actions_full, f, protocol=pickle.HIGHEST_PROTOCOL)
