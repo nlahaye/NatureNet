@@ -45,6 +45,12 @@ def grid_to_ind(grid, y, x):
     return (y*grid.lon_tiles) + x
 
 
+def ind_to_grid(grid, ind):
+    y = int(ind / grid.lon_tiles)
+    x = int(ind - (y*grid.lon_tiles))
+    return x, y
+
+
 def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions, grid, n_clusters, total_count = {}, points = None):
 
     if points is None:
