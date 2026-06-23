@@ -1,4 +1,4 @@
-
+import argparse
 import copy
 import os
 import zarr
@@ -8,6 +8,12 @@ from osgeo import gdal
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
+
+from sit_fuse.utils import read_yaml
+
+import re
+
+from pprint import pprint
 
 
 def gen_scene_list(yml_conf):
@@ -134,6 +140,143 @@ def gen_scene_list(yml_conf):
             with open(pkl_file, 'wb') as f:
                 pickle.dump(scenes_per_uid, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-gen_scene_list()
 
+
+def compress_clusters(yml_conf):
+
+    times = []
+    scenes = []
+
+
+    n_days = yml_conf["n_days"]
+    start_time = yml_conf["start_time"]
+    glob_start = yml_conf["glob_start"]
+    glob_end = yml_conf["glob_end"]
+    df_uid = yml_conf["df_uid"]
+    df_dir = yml_conf["df_dir"]
+    out_dir = yml_conf["out_dir"]
+
+    final_env_maps = []
+    lst = None
+
+    tme = datetime.strptime(start_time,"%Y-%m-%d")
+    for i in range(n_days):
+        fname = glob.glob(glob_start + str(i) + glob_end)[0]
+        dat = gdal.Open(fname).ReadAsArray()
+        scenes.append(dat)
+        times.append(tme)
+        tme = tme + timedelta(days=1)
+
+        inds = np.where(dat <= 0.0)
+        dat = dat*1000
+        dat[inds] = -1
+
+        dat = np.round(dat, decimals=0, out=None).astype(np.int32)
+        scenes.append(fname)
+
+        unq = np.unique(dat)
+        if lst is None:
+            lst = unq
+        else:
+            lst = np.concatenate((lst, unq), axis=0)
+        lst = np.sort(np.unique(lst))
+
+
+    print("UNIQUE", lst)
+    mapper = {}
+    print(lst.shape)
+    for i in range(lst.shape[0]):
+        mapper[float(lst[i])] = i
+
+    mapper[float(-1.0)] = 0.0
+    mapper[float(0.0)] = 0.0
+
+    print("MAPPER")
+    pprint(mapper)
+
+    #for j in range(len(scenes)):
+    #    dat = gdal.Open(scenes[j])
+    #    for key in mapper.keys():
+    #        dat[np.where(dat == float(key))] = mapper[key]
+    #    print(dat.min(), dat.max())    
+
+
+    with open(os.path.join(df_dir, df_uid + '_dfs.pkl'), "rb") as f:
+        movement_dfs = pd.read_pickle(f)
+
+    for key in movement_dfs.keys():
+
+        #if "Bmu-008" not in key and "Bmu-01" not in key:
+        #    continue
+
+        with open(os.path.join(out_dir, "final_env_maps_" + key + ".pkl"), "rb") as f:
+            abstract_grid = pickle.load(f)
+
+        movement_sub_df = movement_dfs[key]
+        abstract_grid_sub = abstract_grid[key]
+
+        processed = 0
+        for i in range(len(movement_sub_df)):
+            #for j in range(len(abstract_grid_sub[i])):
+            abstract_grid_sub[i] = np.array(abstract_grid_sub[i])
+            print("HERE1", abstract_grid_sub[i].min(), abstract_grid_sub[i].max(), abstract_grid_sub[i].mean(), abstract_grid_sub[i].shape)
+            if abstract_grid_sub[i].max() > 100 and abstract_grid_sub[i].max() < 1000:
+                processed = processed + 1
+                continue
+            inds = np.where(abstract_grid_sub[i] <= 0.0)
+            #if abstract_grid_sub[i].max() >= 1000:
+            #    abstract_grid_sub[i] = abstract_grid_sub[i]/1000
+            #else:
+            abstract_grid_sub[i] = abstract_grid_sub[i]*1000
+            abstract_grid_sub[i][inds] = -1
+            print("HERE UNIQUE", abstract_grid_sub[i].min(), abstract_grid_sub[i].max(), abstract_grid_sub[i].mean(), np.unique(abstract_grid_sub[i]))
+            for key2 in mapper.keys():
+                print(key, key2, mapper[key2], i)
+                abstract_grid_sub[i][np.where(abstract_grid_sub[i] == float(key2))] = mapper[key2]
+            print("HERE3", abstract_grid_sub[i].min(), abstract_grid_sub[i].max(), i)
+            abstract_grid_sub[i] = abstract_grid_sub[i].astype(np.int16)
+        #print(np.min(abstract_grid_sub), np.max(abstract_grid_sub))   
+        if processed >= len(movement_sub_df):
+            continue
+
+
+
+        abstract_grid[key] = abstract_grid_sub
+
+        pkl_file = os.path.join(out_dir, "final_env_maps_" + key + ".pkl")
+        with open(pkl_file, 'wb') as f:
+            pickle.dump(abstract_grid, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+
+def merge_compressed_maps(yml_conf):
+ 
+    fles = glob.glob(yml_conf["merge_glob"])
+    out_fle = yml_conf["merge_file"]
+    final_dict = {}
+
+    for fi in range(len(fles)):
+         print(fles[fi])
+         with open(fles[fi], "rb") as f:
+             abstract_grid = pickle.load(f)
+         for key in abstract_grid.keys():
+             print(fles[fi], key)
+             final_dict[key] = abstract_grid[key]
+
+    with open(out_fle, 'wb') as f:
+        pickle.dump(final_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-y", "--yaml", help="YAML file for fusion info.")
+    args = parser.parse_args()
+  
+    yml_conf = read_yaml(args.yaml)
+
+    #gen_scene_list(yml_conf)
+    compress_clusters(yml_conf)
+    merge_compressed_maps(yml_conf)
 
