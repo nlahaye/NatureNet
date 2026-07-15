@@ -14,8 +14,8 @@ from functools import partial
 from jax.scipy.special import logsumexp as jax_logsumexp
 import optax
  
-from naturenet.models.swirl.swirl_training import *
-from naturenet.models.swirl.swirl_utils import *
+from naturenet.models.irl.swirl_training import *
+from naturenet.models.irl.swirl_utils import *
 
 jax.config.update("jax_enable_x64", True)
 #jax.config.update("jax_platform_name", "gpu")
@@ -128,23 +128,17 @@ def comp_LLloss(pi0, trans_Ps, lls):
     alphas_list = vmap(partial(forward, jnp.array(pi0)))(trans_Ps, lls)
     return jnp.sum(jax_logsumexp(alphas_list[:, -1], axis=-1))
 
-def learnt_LL1(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, trans_probs, all_xohs, all_aohs, train_xohs, train_aohs, test_aohs, test_xohs):
+def learnt_LL1(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, trans_probs, all_xohs, all_aohs):
     pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
     rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
     pi, _, _ = vmap(partial(vi_temp, trans_probs))(rewards_sa, temps)
     logemit = jnp.log(pi)
     new_lls_jax_vmap = vmap(partial(comp_ll_jax, logemit))(jnp.array(all_xohs), jnp.array(all_aohs))
     new_trans_Ps_vmap = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(all_xohs))
-    new_lls_jax_vmap_train = vmap(partial(comp_ll_jax, logemit))(jnp.array(train_xohs), jnp.array(train_aohs))
-    new_trans_Ps_vmap_train = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(train_xohs))
-    new_lls_jax_vmap_test = vmap(partial(comp_ll_jax, logemit))(jnp.array(test_xohs), jnp.array(test_aohs))
-    new_trans_Ps_vmap_test = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(test_xohs))
     jax_path_vmap = vmap(partial(viterbi_JAX, jnp.array(pi0)))(jnp.array(new_trans_Ps_vmap), jnp.array(new_lls_jax_vmap))
-    return comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap) / (all_xohs.shape[0]*all_xohs.shape[1]), \
-        comp_LLloss(pi0, new_trans_Ps_vmap_train, new_lls_jax_vmap_train) / (train_xohs.shape[0]*train_xohs.shape[1]),\
-        comp_LLloss(pi0, new_trans_Ps_vmap_test, new_lls_jax_vmap_test) / (test_xohs.shape[0]*test_xohs.shape[1]), jax_path_vmap
+    return comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap) / (all_xohs.shape[0]*all_xohs.shape[1]), jax_path_vmap
 
-def learnt_LL2(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, new_trans_probs, all_xohs, all_xohs2, all_aohs, train_xohs, train_xohs2, train_aohs, test_xohs, test_xohs2, test_aohs):
+def learnt_LL2(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, new_trans_probs, all_xohs, all_xohs2, all_aohs):
     n_states, n_actions, _ = new_trans_probs.shape
     pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
     rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
@@ -152,11 +146,7 @@ def learnt_LL2(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, new_tran
     logemit = jnp.log(pi)
     new_lls_jax_vmap = vmap(partial(comp_ll_jax, logemit))(jnp.array(all_xohs2), jnp.array(all_aohs))
     new_trans_Ps_vmap = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(all_xohs))
-    new_lls_jax_vmap_train = vmap(partial(comp_ll_jax, logemit))(jnp.array(train_xohs2), jnp.array(train_aohs))
-    new_trans_Ps_vmap_train = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(train_xohs))
-    new_lls_jax_vmap_test = vmap(partial(comp_ll_jax, logemit))(jnp.array(test_xohs2), jnp.array(test_aohs))
-    new_trans_Ps_vmap_test = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(test_xohs))
     jax_path_vmap = vmap(partial(viterbi_JAX, jnp.array(pi0)))(jnp.array(new_trans_Ps_vmap), jnp.array(new_lls_jax_vmap))
-    return comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap) / (all_xohs.shape[0]*all_xohs.shape[1]), comp_LLloss(pi0, new_trans_Ps_vmap_train, new_lls_jax_vmap_train) / (train_xohs.shape[0]*train_xohs.shape[1]), comp_LLloss(pi0, new_trans_Ps_vmap_test, new_lls_jax_vmap_test) / (test_xohs.shape[0]*test_xohs.shape[1]), jax_path_vmap
+    return comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap) / (all_xohs.shape[0]*all_xohs.shape[1]), jax_path_vmap
 
 
