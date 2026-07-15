@@ -4,6 +4,10 @@ import numpy as np
 import os
 import copy
 import math
+import cv2
+
+from osgeo import gdal
+
 from sit_fuse.pipelines.inference.inference_utils import run_embed_gen_from_scene_arr
 from sit_fuse.preprocessing.colocate_and_resample import resample_scene
 from sit_fuse.datasets.dataset_utils import get_scenes
@@ -152,7 +156,7 @@ def resample_or_fuse_scene(scene, init_location, resample_config):
     return output, location
 
 
-def run_subsampler(data_dict, n_days):
+def run_subsampler(data_dict, n_days, fkey_input = ""):
    
     lonlat = None 
     for key in data_dict.keys():
@@ -187,8 +191,11 @@ def run_subsampler(data_dict, n_days):
 
             data = np.swapaxes(data, 0,1) #T x C x Lat x Lon
             print(data.shape, "FINAL SAVE")
-
-            fkey = key + "_" + fn_dict["vars"][0]
+           
+            if fkey_input != "":
+                fkey = key + "_" + fkey_input + "_" + fn_dict["vars"][0]
+            else:
+               ufkey = key + "_" + fn_dict["vars"][0]
             zarr.save("/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr", data)
             del data
         del lonlat
@@ -198,7 +205,7 @@ def run_subsampler(data_dict, n_days):
 def gen_copernicus_scenes_map(yml_conf): #yml_conf,  per_channel_stats):
 
     data_dict = yml_conf["data_dict"]
-    resample_config = read_yaml(yml_conf["resample_config"]
+    resample_config = yml_conf["resample_config"]
 
     ##For each file
     ##Read vars - take top depth
@@ -244,8 +251,10 @@ def gen_copernicus_scenes_map(yml_conf): #yml_conf,  per_channel_stats):
 
  
     if yml_conf["run_subsampler"]:
-        run_subsampler(data_dict, n_days)
+        run_subsampler(data_dict, n_days, yml_conf["fkey_tag"])
  
+    initial_water_mask = gdal.Open(yml_conf["water_mask"]).ReadAsArray()
+    resized_water_mask = None
 
     for d in range(dt_start, n_days+1, day_gap):
         dat = {}
@@ -254,32 +263,52 @@ def gen_copernicus_scenes_map(yml_conf): #yml_conf,  per_channel_stats):
 
         for key in data_dict.keys():
             for fn_dict in data_dict[key]:
-                fkey = key + "_" + fn_dict["vars"][0]
+
+                if yml_conf["fkey_tag"] != "":
+                    fkey = key + "_" + yml_conf["fkey_tag"] + "_" + fn_dict["vars"][0]
+                else:
+                    fkey = key + "_" + fn_dict["vars"][0]
+
                 dt = zarr.load("/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr").astype(np.float32)
                 print("LOADED", "/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr")
-                print(dt.shape, "HERE", dt.min())
+                print(dt.shape, "HERE1", dt.min())
                 dt = dt[d:dt_end]
                 inds = np.where(np.isinf(dt) | np.isnan(dt))
                 dt[inds] = -999999.0
                 print(dt.shape, "HERE2", dt.min())
+
                 dat_init[fkey] = dt
+                if resized_water_mask is None:
+                    resized_water_mask = cv2.resize(initial_water_mask, (dt.shape[3], dt.shape[2]), interpolation=cv2.INTER_CUBIC)
                 del dt
 
-
+        
         for key in data_dict.keys():
                 for fn_dict in data_dict[key]:
-                    fkey = key + "_" + fn_dict["vars"][0]
+
+                    if yml_conf["fkey_tag"] != "":
+                        fkey = key + "_" + yml_conf["fkey_tag"] + "_" + fn_dict["vars"][0]
+                    else:
+                        fkey = key + "_" + fn_dict["vars"][0]
+
                     dt = dat_init[fkey]
                     if dt.ndim > 3:
                         for v in range(dt.shape[1]):
                             for t in range(dt.shape[0]):
-    
-                                dt[t,v] = fill_missing_bilinear_like(dt[t,v], -999999.0, 8, 8, 1.0, "nearest")
-                                print("COMPLETED", t, v)
+                                print(dt[t,v].min(), dt[t,v].max())
+                                sub = dt[t,v]
+                                inds = np.where((resized_water_mask == 1) & (sub >  -999999.0))
+                                mean_val = np.mean(sub[inds])
+                                sub[np.where((resized_water_mask == 0))] = mean_val #Data Imputation
+                                print("IMPUTED Stats", sub.min(), sub.max(), sub.mean(), mean_val)
+                                dt[t,v] = fill_missing_bilinear_like(sub, -999999.0, 8, 8, 1.0, "nearest")
+                                del sub
+                                print("COMPLETED", t, v, dt[t,v].min(), dt[t,v].max(), dt[t,v].mean(), dt[t,v].std(), dt.shape)
                     else:
                         for t in range(dt.shape[0]):
+                            print(dt[t].min(), dt[t].max())
                             dt[t] = fill_missing_bilinear_like(dt[t], -999999.0, 8, 8, 1.0, "nearest")
-                            print("COMPLETED", t)
+                            print("COMPLETED", t, dt[t].min(), dt[t].max(), dt[t,v].mean(), dt[t,v].std(), dt.shape)
 
                     dat[fkey] = dt
                     print("FIXED_FILL", "/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr")
@@ -291,8 +320,12 @@ def gen_copernicus_scenes_map(yml_conf): #yml_conf,  per_channel_stats):
             dat_cur = None
             for key in data_dict.keys():
                 for fn_dict in data_dict[key]:
+                    
+                    if yml_conf["fkey_tag"] != "":
+                        fkey = key + "_" + yml_conf["fkey_tag"] + "_" + fn_dict["vars"][0]
+                    else:
+                        fkey = key + "_" + fn_dict["vars"][0]
 
-                    #fkey = key + "_" + fn_dict["vars"][0]
                     #dat = zarr.load("/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr")            
                     day_ind = day - d
                     if dat_cur is None:
@@ -305,9 +338,9 @@ def gen_copernicus_scenes_map(yml_conf): #yml_conf,  per_channel_stats):
                         dat_cur = np.concatenate((dat_cur, tmp), axis=0)
                     if len(dat_cur.shape) < 3:
                         dat_cur = np.expand_dims(dat_cur, axis=0)
-            
- 
-            print("HERE", dat_cur.min(), dat_cur.max(), dat_cur.mean(), dat_cur.std())
+                    print("HERE DAY", dat_cur.min(), dat_cur.max(), dat_cur.mean(), dat_cur.std(), dat_cur.shape, day_ind, dat[fkey].shape, dat[fkey][day_ind,:,:,:].mean())
+
+            print("HERE FINAL", dat_cur.min(), dat_cur.max(), dat_cur.mean(), dat_cur.std(), dat_cur.shape)
             zarr.save("/data/nlahaye/NatureNet_Env/Copernicus/cop_env_" + animal_tag + "_t" + str(day) + ".zarr", dat_cur)
             del dat_cur
 
