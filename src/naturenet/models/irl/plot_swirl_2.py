@@ -10,7 +10,7 @@ from sit_fuse.utils import read_yaml
 import sparse
 import copy
 import cv2
-
+import operator
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
@@ -39,8 +39,63 @@ from holoviews import opts
 
 hv.extension("bokeh") 
 
-# adapted from https://github.com/markusmeister/Rosenberg-2021-Repository
 
+def confidence_ellipse(x, y, ax, n_std=3.0, facecolor='none', **kwargs):
+    """
+    Create a plot of the covariance confidence ellipse of *x* and *y*.
+
+    Parameters
+    ----------
+    x, y : array-like, shape (n, )
+        Input data.
+
+    ax : matplotlib.axes.Axes
+        The Axes object to draw the ellipse into.
+
+    n_std : float
+        The number of standard deviations to determine the ellipse's radiuses.
+
+    **kwargs
+        Forwarded to `~matplotlib.patches.Ellipse`
+
+    Returns
+    -------
+    matplotlib.patches.Ellipse
+    """
+    if x.size != y.size:
+        raise ValueError("x and y must be the same size")
+
+    cov = np.cov(x, y)
+    pearson = cov[0, 1]/np.sqrt(cov[0, 0] * cov[1, 1])
+    # Using a special case to obtain the eigenvalues of this
+    # two-dimensional dataset.
+    ell_radius_x = np.sqrt(1 + pearson)
+    ell_radius_y = np.sqrt(1 - pearson)
+    ellipse = Ellipse((0, 0), width=ell_radius_x * 2, height=ell_radius_y * 2,
+                      facecolor=facecolor, **kwargs)
+
+    # Calculating the standard deviation of x from
+    # the squareroot of the variance and multiplying
+    # with the given number of standard deviations.
+    scale_x = np.sqrt(cov[0, 0]) * n_std
+    mean_x = np.mean(x)
+
+    # calculating the standard deviation of y ...
+    scale_y = np.sqrt(cov[1, 1]) * n_std
+    mean_y = np.mean(y)
+
+    transf = transforms.Affine2D() \
+        .rotate_deg(45) \
+        .scale(scale_x, scale_y) \
+        .translate(mean_x, mean_y)
+
+    ellipse.set_transform(transf + ax.transData)
+    return ax.add_patch(ellipse)
+
+
+
+
+# adapted from https://github.com/markusmeister/Rosenberg-2021-Repository
 def plot(X, Y=None, xlabel=None, ylabel=None, legend=[], loc=None, title=None,
          xlim=None, ylim=None, xscale='linear', yscale='linear',
          xticks=None, yticks=None, xhide=False, yhide=False, yrot=False, yzero=False, yflip=False, 
@@ -131,7 +186,7 @@ def set_axes(axes, xlabel, ylabel, legend, loc, xlim, ylim, xscale, yscale,
     axes.get_yaxis().set_visible(not yhide)
     axes.get_xaxis().set_visible(not xhide)
     if yzero:
-        axes.axhline(color='white', linewidth=0.5) #'black', linewidth=0.5)
+        axes.axhline(color='black', linewidth=0.5)
     if yflip:
         axes.invert_yaxis()
     axes.tick_params(axis = 'both', which = 'major', labelsize = 10)
@@ -343,14 +398,10 @@ def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list):
 
     f = np.round(f, decimals=2)
     for i in range(learnt_zs.shape[0]):
-        print( len(paths[i]), len(learnt_zs[i]), len(env_maps[i]), i)
-        if len(paths[i]) < 25 or len(learnt_zs[i]) < 25 or len(env_maps[i]) < 25:
-            continue
         zs = learnt_zs[i]
         path = paths[i]
         env_map = env_maps[i]
         for k in range(learnt_zs.shape[1]):
-            print(k, k,path[k]["y"],path[k]["x"])
             if  path[k]["y"] < 0 or path[k]["x"] < 0:
                 continue
             env_val = int(env_map[k,path[k]["y"],path[k]["x"]])
@@ -359,7 +410,7 @@ def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list):
             else:
                 dist = math.sqrt((path[k-1]["y"] - path[k]["y"])**2 + (path[k-1]["x"] - path[k]["x"])**2)
             max_dist = max(max_dist, dist)
-            dist = np.round(dist * (0.027*111.11), decimals=2) #degrees to km at the equator
+            dist = np.round(dist * (0.0009*111.11), decimals=2) #degrees to km at the equator
             dist_states[zs[k]].append(dist)  
             print(dist, zs[k]) 
             env_states[zs[k]].append(env_val)
@@ -369,7 +420,6 @@ def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list):
 
     print(dist_states)
     print(heat_states)
-    plt.rc('font', size=18) 
     ax = plt.gca()
     latent = 0
     for i in range(n_hidden):
@@ -430,7 +480,7 @@ def plot_reward_heatmaps(f, out_dir):
 
 def gen_cmap():
  
-    palette_100 = sns.color_palette(cc.glasbey, n_colors=300)
+    palette_100 = sns.color_palette(cc.glasbey, n_colors=120)
     cmap_distinct = ListedColormap(palette_100)
     return cmap_distinct 
 
@@ -515,6 +565,119 @@ def plot_env_maps(env_map, f, uid, out_dir):
     )
     hv.save(hmap, os.path.join(out_dir, "env_heatmap_backgrounds_slider" + "_" + uid + ".html"), backend="bokeh")
 
+def plot_projection_examples(path, env_map, latents, uid, out_dir, color_list, lon_bounds, lat_bounds):
+
+    xs = []
+    ys = []
+
+
+    print(lon_bounds[0], lon_bounds[1], lat_bounds[0], lat_bounds[1], len(env_map), len(latents), len(path))
+    xmin, xmax, ymin, ymax = get_path_lims(path, env_map[0])
+
+    fig, ax = plt.subplots() 
+
+    tmp = copy.deepcopy(env_map[0]).astype(np.float32)
+    if not np.isnan(tmp).any():
+        tmp[np.where(tmp <= 0)] = np.nan
+
+    cmap = gen_cmap()
+    im = ax.matshow(tmp, cmap=cmap, interpolation='none',\
+        aspect="equal", zorder=0)
+    ##fig, ax = plot_map_with_bounds(lon_bounds[0], lon_bounds[1], lat_bounds[0], lat_bounds[1])
+
+    num_frames = len(path)
+
+    xs.append(path[0]["x"])
+    ys.append(path[0]["y"])
+    (line,) = ax.step(xs, ys, where="post", color="white", linewidth=3, zorder=1)
+
+    latest_point = ax.scatter(
+        xs, ys, s=150,           # size controls marker size
+    color=color_list[latents[0]], edgecolor="white", zorder=2
+    )
+
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+
+    circles = []
+    x2s = []
+    y2s = []
+    #ci = []
+    (line2,) = ax.step(xs, ys, where="post", color="palegreen", linewidth=3, zorder=2)
+    #fill = ax.fill_between(x2s, y2s, y2s, color='mediumseagreen', alpha=.2)
+    #fill = confidence_ellipse(x2s, y2s, ax, n_std=3.0, facecolor='none', )
+    #circle = patches.Circle((x, y), r, facecolor='mediumseagreen', edgecolor='green', linewidth=2)
+    #ax.add_patch(circle)
+ 
+    def init():
+        tmp = copy.deepcopy(env_map[0]).astype(np.float32)
+        if not np.isnan(tmp).any():
+            tmp[np.where(tmp <= 0)] = np.nan
+        im.set_data(tmp) #[ymin:ymax+1, xmin:xmax+1])
+
+        line.set_data(xs, ys)
+        latest_point.set_offsets([[xs[-1], ys[-1]]])
+        latest_point.set_facecolor(color_list[latents[0]])
+        line2.set_data(x2s, y2s)
+        #fill = ax.fill_between(x2s, y2s, y2s, color='mediumseagreen', alpha=.2)
+        #circle = patches.Circle((x, y), r, facecolor='mediumseagreen', edgecolor='green', linewidth=2)
+        #ax.add_patch(circle)
+
+        return im, line, line2 #, latest_point   # return both artists for blitting
+
+    def update(frame):
+        # Update background image
+        if frame > latents.shape[0]-1:
+            latent = latents[-1]
+        else:  
+            latent = latents[frame]
+
+        tmp = copy.deepcopy(env_map[frame]).astype(np.float32)
+        if not np.isnan(tmp).any():
+            tmp[np.where(tmp <= 0)] = np.nan
+        im.set_data(tmp)
+
+
+        if frame < 11:
+            xs.append(path[frame]["x"])
+            ys.append(path[frame]["y"])
+            line.set_data(xs, ys)
+            latest_point.set_offsets([[xs[-1], ys[-1]]])
+            latest_point.set_facecolor(color_list[latent])
+            #fill = ax.fill_between(x2s, y2s, y2s, color='mediumseagreen', alpha=.2)
+            line2.set_data(x2s, y2s)
+        else:  
+            x2s.append(path[frame]["x"])
+            y2s.append(path[frame]["y"])
+            #ci.append(2*(frame-51)/2)
+            r = 2*(frame-11)/8 #/ 2
+            circle = patches.Circle((path[frame]["x"], path[frame]["y"]), r, facecolor='honeydew', edgecolor='palegreen', linewidth=2)
+            ax.add_patch(circle)
+            circles.append(circle)
+            #fill = ax.fill_between(x2s, list(map(operator.sub, y2s, ci)), list(map(operator.add, y2s, ci)), color='mediumseagreen', alpha=.2)
+            line.set_data(xs, ys)
+            line2.set_data(x2s, y2s)
+            latest_point.set_offsets([[x2s[-1], y2s[-1]]])
+            latest_point.set_facecolor(color_list[latents[latent]])
+        ret = copy.deepcopy(circles)
+        ret.extend([im, line, line2])
+        return ret #circles, im, line, line2 #, latest_point
+
+    ani = animation.FuncAnimation(
+        fig,   
+        update,
+        init_func=init,
+        frames=num_frames,
+        interval=300,
+        blit=True
+    )
+
+    gif_writer = PillowWriter(fps=3)
+    ani.save(os.path.join(out_dir, "false_proj_" + uid + ".gif"), writer=gif_writer, dpi=800)
+    print(os.path.join(out_dir, "false_proj_" + uid + ".gif"))
+
+    plt.close(fig)
+    plt.clf()
 
 
 
@@ -548,11 +711,11 @@ def plot_env_heat_map_traj_animations(path, env_map, f, latents, uid, out_dir, c
     # Initial step line 
     xs.append(path[0]["x"])
     ys.append(path[0]["y"])
-    (line,) = ax.step(xs, ys, where="post", color="black", linewidth=3, zorder=1) #"black", linewidth=3, zorder=1)
+    (line,) = ax.step(xs, ys, where="post", color="black", linewidth=3, zorder=1)
 
     latest_point = ax.scatter(
         xs, ys, s=150,           # size controls marker size
-    color=color_list[latents[0]], edgecolor="black", zorder=2 #"black", zorder=2
+    color=color_list[latents[0]], edgecolor="black", zorder=2
     )
 
     ax.set_xlim(xmin, xmax)
@@ -639,7 +802,7 @@ def plot_env_prev_maps_traj_animations(path, env_map, prev_env_map, uid, out_dir
 
             latest_point = ax.scatter(
                 xs, ys, s=150,           # size controls marker size
-            color=color_list[latents[0]], edgecolor="white", zorder=2 #"black", zorder=2
+            color=color_list[latents[0]], edgecolor="black", zorder=2
             )
 
             ax.set_xlim(xmin, xmax)
@@ -714,11 +877,11 @@ def plot_env_map_traj_animations(path, env_map, latents, uid, out_dir, color_lis
     # Initial step line 
     xs.append(path[0]["x"])
     ys.append(path[0]["y"])
-    (line,) = ax.step(xs, ys, where="post", color="white", linewidth=2, zorder=1) #"black", linewidth=2, zorder=1)
+    (line,) = ax.step(xs, ys, where="post", color="black", linewidth=2, zorder=1)
 
     latest_point = ax.scatter(
         xs, ys, s=150,           # size controls marker size
-    color=color_list[latents[0]], edgecolor="white", zorder=2 #"black", zorder=2
+    color=color_list[latents[0]], edgecolor="black", zorder=2
     )
 
     ax.set_xlim(xmin, xmax)
@@ -858,7 +1021,7 @@ def run_plots(yml_conf):
     paths = []
     max_len = -1
 
-    key = "2017CA-Bmu-00826"  #"1F90648_(4111)" #TODO
+    key = "1F90648_(4111)"  #"2017CA-Bmu-00825" #TODO fix
     df_uid = yml_conf["df_run_uid"] + "_" + key
     with open(os.path.join(yml_conf["df_dir"], df_uid + "_grid.pkl"), "rb") as f:
         grid = pickle.load(f)
@@ -870,7 +1033,7 @@ def run_plots(yml_conf):
     with open(env_map_fname, "rb") as f:
         envs_init = pickle.load(f)
 
-    if not os.path.exists(paths_fpaths[0]):
+    if not os.path.exists(paths_fpaths[5]):#TODO
        gen_grid_point_paths(yml_conf) 
     
     uids_init = yml_conf["uids"]
@@ -966,13 +1129,10 @@ def run_plots(yml_conf):
     print("HERE CONVERTED MAP", converted_map.shape)
     if plot_gifs:
         for j in range(len(paths)):
-            print( len(paths[j]), len(learnt_zs[j]), len(envs[j]), j)
-            if len(paths[j]) < 25 or len(learnt_zs[j]) < 25 or len(envs[j]) < 25:
-                print("CONTINUING", j, uids[j])
-                continue
-            #converted_map = np.nanmean(reward2_filtered, axis=-1)
-            plot_env_heat_map_traj_animations(paths[j], envs[j], converted_map, learnt_zs[j], uids[j] + "_path" + str(j), out_dir, color_list)
-            plot_env_map_traj_animations(paths[j], envs[j], learnt_zs[j], uids[j] + "_path" + str(j), out_dir, color_list)
+            converted_map = np.nanmean(reward2_filtered, axis=-1)
+            plot_projection_examples(paths[j], envs[j], learnt_zs[j], uids[j] + "_path" + str(j), out_dir, color_list, lon_bounds, lat_bounds)
+            #plot_env_heat_map_traj_animations(paths[j], envs[j], converted_map, learnt_zs[j], uids[j] + "_path" + str(j), out_dir, color_list)
+            #plot_env_map_traj_animations(paths[j], envs[j], learnt_zs[j], uids[j] + "_path" + str(j), out_dir, color_list)
             
 
 
@@ -988,8 +1148,8 @@ def run_plots(yml_conf):
                 plot_env_heat_map_traj_animations(paths[j], envs[j], converted_map, uids[j] + "_path" + str(j) + "_latent" + str(i), out_dir)
                 if i == 0:
                     plot_env_map_traj_animations(paths[j], envs[j], uids[j] + "_path" + str(j) + "_latent" + str(i), out_dir)
-                    #plot_env_maps(envs[j], converted_map, uids[j] + "_path" + str(j) + "_latent" + str(i), out_dir)
-                    ##plot_env_prev_maps_traj_animations(paths[j], envs[j], prev_envs[j], uids[j] + "_path" + str(j) + "_latent" + str(i), out_dir)
+                    plot_env_maps(envs[j], converted_map, uids[j] + "_path" + str(j) + "_latent" + str(i), out_dir)
+                    #plot_env_prev_maps_traj_animations(paths[j], envs[j], prev_envs[j], uids[j] + "_path" + str(j) + "_latent" + str(i), out_dir)
         """
 
     if plot_traj:

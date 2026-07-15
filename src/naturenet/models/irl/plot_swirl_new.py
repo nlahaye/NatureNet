@@ -1,3 +1,7 @@
+
+import operator
+
+import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib.animation as animation
@@ -34,8 +38,11 @@ from matplotlib.collections import LineCollection
 from matplotlib import cm
 import matplotlib.patches as patches
 
+from datetime import datetime
+
 import holoviews as hv
 from holoviews import opts
+
 
 hv.extension("bokeh") 
 
@@ -327,45 +334,844 @@ color_options = [
 #s[i])
 
 
-def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list):
+def colored_line(x, y, c, ax, **lc_kwargs):
+    """
+    Plot a line with a color specified along the line by a third value.
+
+    It does this by creating a collection of line segments. Each line segment is
+    made up of two straight lines each connecting the current (x, y) point to the
+    midpoints of the lines connecting the current point with its two neighbors.
+    This creates a smooth line with no gaps between the line segments.
+
+    Parameters
+    ----------
+    x, y : array-like
+        The horizontal and vertical coordinates of the data points.
+    c : array-like
+        The color values, which should be the same size as x and y.
+    ax : Axes
+        Axis object on which to plot the colored line.
+    **lc_kwargs
+        Any additional arguments to pass to matplotlib.collections.LineCollection
+        constructor. This should not include the array keyword argument because
+        that is set to the color argument. If provided, it will be overridden.
+
+    Returns
+    -------
+    matplotlib.collections.LineCollection
+        The generated line collection representing the colored line.
+    """
+    if "array" in lc_kwargs:
+        warnings.warn('The provided "array" keyword argument will be overridden')
+
+    # Default the capstyle to butt so that the line segments smoothly line up
+    default_kwargs = {"capstyle": "butt"}
+    default_kwargs.update(lc_kwargs)
+
+    # Compute the midpoints of the line segments. Include the first and last points
+    # twice so we don't need any special syntax later to handle them.
+    x = np.asarray(x)
+    y = np.asarray(y)
+    x_midpts = np.hstack((x[0], 0.5 * (x[1:] + x[:-1]), x[-1]))
+    y_midpts = np.hstack((y[0], 0.5 * (y[1:] + y[:-1]), y[-1]))
+
+    print(x_midpts, y_midpts, x.max(), y.max())
+
+    # Determine the start, middle, and end coordinate pair of each line segment.
+    # Use the reshape to add an extra dimension so each pair of points is in its
+    # own list. Then concatenate them to create:
+    # [
+    #   [(x1_start, y1_start), (x1_mid, y1_mid), (x1_end, y1_end)],
+    #   [(x2_start, y2_start), (x2_mid, y2_mid), (x2_end, y2_end)],
+    #   ...
+    # ]
+    coord_start = np.column_stack((x_midpts[:-1], y_midpts[:-1]))[:, np.newaxis, :]
+    coord_mid = np.column_stack((x, y))[:, np.newaxis, :]
+    coord_end = np.column_stack((x_midpts[1:], y_midpts[1:]))[:, np.newaxis, :]
+    segments = np.concatenate((coord_start, coord_mid, coord_end), axis=1)
+
+    lc = LineCollection(segments, **default_kwargs)
+    lc.set_array(c)  # set the colors of each segment
+
+    return ax.add_collection(lc)
+
+
+def wrap_to_pi(angle):
+    return (angle + np.pi) % (2 * np.pi) - np.pi
+
+
+def get_season(month):
+ 
+    if month < 4:
+        return 1
+    elif month < 7:
+        return 2
+    elif month < 10:
+        return 3
+    else:
+        return 4
+
+
+def plot_time_series(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list, static_data, uids):
 
     env_states = []
     heat_states = []
     dist_states = []
+    turn_angles = []
+    coasts = []
+    ships = []
+    baths = []
+
+    bath = np.squeeze(static_data['Bathymetry']['scenes'][0])
+    coast = np.squeeze(static_data['Coastal_Dist']['scenes'][0])
+    ship = np.squeeze(static_data['Ship_Density']['scenes'][0])
+
+    plt.imshow(bath)
+    plt.savefig("BATH.png")
+    plt.clf()
+
+    plt.imshow(coast)
+    plt.savefig("COASTS.png")
+    plt.clf()
+
+    plt.imshow(ship)
+    plt.savefig("SHIP.png")
+    plt.clf()
+
 
     max_dist = -1
+    min_angles = 361
+    max_angles = -1
+    max_env = 0
     for i in range(n_hidden):
-        env_states.append([])
-        heat_states.append([])
-        dist_states.append([])
-
         f[i] = normalize(f[i])
 
     f = np.round(f, decimals=2)
+    run = False
     for i in range(learnt_zs.shape[0]):
-        print( len(paths[i]), len(learnt_zs[i]), len(env_maps[i]), i)
-        if len(paths[i]) < 25 or len(learnt_zs[i]) < 25 or len(env_maps[i]) < 25:
+
+        env_states.append([])
+        heat_states.append([])
+        dist_states.append([])
+        turn_angles.append([])
+        coasts.append([])
+        baths.append([])
+        ships.append([])
+    
+
+        print((learnt_zs.shape, len(paths), len(learnt_zs), len(env_maps), paths[i]), len(learnt_zs[i]), len(env_maps[i]), i)
+        if len(paths[i]) < 97 or len(learnt_zs[i]) < 97 or len(env_maps[i]) < 97:
             continue
         zs = learnt_zs[i]
         path = paths[i]
+  
+       
+        #bath = np.swapaxes(bath, 0,1)
+        #ship = np.swapaxes(ship, 0,1)
+        #coast = np.swapaxes(coast, 0,1)
         env_map = env_maps[i]
+        if not run:
+             swpd_shape = (env_map.shape[2], env_map.shape[1])
+             print(env_map.shape[1:], bath.shape, "SMALL RESAMPLE")
+             bath = cv2.resize(bath, swpd_shape, interpolation=cv2.INTER_CUBIC)
+             coast = cv2.resize(coast, swpd_shape, interpolation=cv2.INTER_CUBIC)
+             ship = cv2.resize(ship, swpd_shape, interpolation=cv2.INTER_CUBIC)
+             run = True
+
+        print(bath.shape, env_map.shape)
+        positions = np.zeros(env_map.shape[1:])
+
         for k in range(learnt_zs.shape[1]):
-            print(k, k,path[k]["y"],path[k]["x"])
+            print(k, k,path[k]["y"],path[k]["x"], env_map.shape, "TRAJ TROUBLES")
             if  path[k]["y"] < 0 or path[k]["x"] < 0:
                 continue
+            positions[path[k]["y"],path[k]["x"]] = positions[path[k]["y"],path[k]["x"]] + 1
             env_val = int(env_map[k,path[k]["y"],path[k]["x"]])
             if k == 0:
                 dist = 0
             else:
                 dist = math.sqrt((path[k-1]["y"] - path[k]["y"])**2 + (path[k-1]["x"] - path[k]["x"])**2)
+
+            if k > 1:
+                dy = path[k-1]["y"] - path[k]["y"]
+                dx = path[k-1]["x"] - path[k]["x"]
+
+                step_len = np.hypot(dx, dy)
+ 
+                # Absolute movement angle in radians, measured from +x axis
+                bearing = np.arctan2(dy, dx)
+ 
+                # Relative turn angle, if previous location is known
+                prev_dx = path[k-1]["x"] - path[k-2]["x"]
+                prev_dy = path[k-1]["y"] - path[k-2]["y"]
+ 
+                # Guard against zero-length previous step
+                if prev_dx == 0 and prev_dy == 0:
+                    turn_angle = 0.0
+                else:
+                    prev_bearing = np.arctan2(prev_dy, prev_dx)
+                    turn_angle = wrap_to_pi(bearing - prev_bearing)
+            else:
+                turn_angle = 0.0
+
+            print(bath.shape, ship.shape, coast.shape)
+            turn_angles[i].append(turn_angle)
+            baths[i].append(bath[path[k]["y"],path[k]["x"]])
+            ships[i].append(ship[path[k]["y"],path[k]["x"]])
+            coasts[i].append(coast[path[k]["y"],path[k]["x"]])
+
             max_dist = max(max_dist, dist)
-            dist = np.round(dist * (0.027*111.11), decimals=2) #degrees to km at the equator
+            max_angles = max(max_angles, turn_angle)
+            min_angles = min(0, 0, 0, 0, 0, 0, 0, 0, 0, min_angles, turn_angle)
+            max_env = max(max_env, env_val)
+
+            dist = np.round(dist * (0.009000090001*111.11), decimals=2) #degrees to km at the equator
+            dist_states[i].append(dist)
+            env_states[i].append(env_val)
+            heat_states[i].append(f[zs[k], env_val])
+        print(len(heat_states[i]), len(env_states[i]), len(dist_states[i]), len(baths[i]), len(ships[i]), len(coasts[i]), i, "HERE LENS") 
+        plt.imshow(positions, cmap="jet")
+        plt.savefig("/home/nlahaye/position_scatter_" + str(i) + ".png", dpi=400)
+        plt.clf()
+        print("SCATTER DONE")
+
+
+    pds = {}
+
+    cmap = ListedColormap(color_list)
+
+    print(len(env_states[1]), "HERE1")
+
+    plt.clf()
+    for ind in range(len(env_states)):
+        x = list(range(0, len(env_states[ind])))
+        y = [ind]*len(x)
+        c = learnt_zs[ind]
+        plt.scatter(x, y, c=c, cmap=cmap)
+    plt.savefig(os.path.join(out_dir, "time_series_zs_plot.png"), bbox_inches='tight')
+
+
+    print(len(env_states[1]), "HERE2")
+ 
+    plt.clf()
+    for ind in range(len(env_states)):
+        x = list(range(0, len(env_states[ind])))
+        print(len(env_states[ind]), ind, min(x), max(x))
+        plt.plot(x, env_states[ind])
+        plt.ylim(0, max_env)
+    plt.savefig(os.path.join(out_dir, "env_map_time_series.png"), bbox_inches='tight')
+
+    print(len(env_states[1]), "HERE3")
+
+
+    df_dir = "/data/nlahaye/NatureNet/Blue_Whale_v1/"
+    df_uid = "whale_v1"
+    #df_dir = "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+    #df_uid = "hammerhead_v1"
+ 
+    #out_dir = "/data/nlahaye/NatureNet/Blue_Whale_v1/"
+
+    scenes_per_uid = {}
+    movement_dfs = None
+    with open(os.path.join(df_dir, df_uid + '_dfs.pkl'), "rb") as f:
+        movement_dfs = pickle.load(f)
+
+    time_dif = {}
+    month = {}
+    season = {}
+ 
+    for uid in movement_dfs:
+        current_time = None
+     
+        movement_dfs_uid = movement_dfs[uid]
+        print("WTD UID", uid)
+        min_dt = None
+        for dind in range(len(movement_dfs_uid)):
+
+            if len(movement_dfs_uid[dind]) < 99: #TODO generalize - removing end of paths that weren't included in training/eval
+                continue
+            print(uid, dind, len(movement_dfs_uid[dind]), len(movement_dfs_uid[dind]) < 90, "ERRORS HERE")
+            movement_df = movement_dfs_uid[dind]
+
+            dttm = movement_df.iloc[0]['TimeValue'] #["date"]
+            #if len(dttm) == 10:
+            #    dttm = dttm + " 00:00:00"
+
+            if min_dt is None:
+                min_dt = datetime.strptime(dttm, "%Y-%m-%dT%H:%M:%SZ") #"%Y-%m-%d %H:%M:%S") #['TimeValue'],"%Y-%m-%dT%H:%M:%SZ")
+            else:
+                min_dt = min(min_dt, datetime.strptime(dttm, "%Y-%m-%dT%H:%M:%SZ")) #"%Y-%m-%d %H:%M:%S")) #['TimeValue'],"%Y-%m-%dT%H:%M:%SZ"))  
+
+        for dind in range(len(movement_dfs_uid)):
+
+            if len(movement_dfs_uid[dind]) < 99: #TODO generalize - removing end of paths that weren't included in training/eval
+                continue
+            print(uid, dind, len(movement_dfs_uid[dind]), len(movement_dfs_uid[dind]) < 90, "ERRORS HERE2")
+            movement_df = movement_dfs_uid[dind]
+            if uid not in time_dif:
+                print("HERE UID", uid)
+                time_dif[uid] = []
+                month[uid] = []
+                season[uid] = []
+            act_index = 0
+            for index, row in movement_df.iterrows():
+
+                #if len(row["date"]) == 10:
+                #    row["date"] = row["date"] + " 00:00:00"
+
+                if act_index == 0 or act_index == len(movement_df) - 1: #system currently cuts off first and last sample
+                    act_index += 1
+                    continue
+                act_index += 1
+                current_time = datetime.strptime(row['TimeValue'],"%Y-%m-%dT%H:%M:%SZ") #row["date"], "%Y-%m-%d %H:%M:%S") #['TimeValue'],"%Y-%m-%dT%H:%M:%SZ")
+                print(current_time, min_dt, uid, "HERE TIME DIFF", len(movement_df), len(movement_dfs_uid), act_index, len(time_dif[uid]))
+                time_df = (current_time - min_dt).total_seconds() / 60.0 / 60.0 
+                time_dif[uid].append(time_df)
+                month[uid].append(current_time.month)
+                season[uid].append(get_season(current_time.month))
+
+    plt.clf()
+    uid = uids[0]
+    current_uid = uids[0]
+
+    uid_ind = 0
+    ind = 0
+    x = []
+    y = []
+    c = []
+
+
+    while ind <= len(env_states):
+  
+        if ind < len(env_states):
+            current_uid = uids[ind]
+ 
+        print(uid, current_uid, ind, len(env_states), "UIDS_HERE") 
+        if  current_uid == uid and ind < len(env_states):
+                if uid_ind == 0:   
+                    x = list(range(uid_ind, uid_ind + len(env_states[ind])))
+                        
+                    y = [ind]*len(env_states[ind])
+                    c = learnt_zs[ind]
+              
+                    print(len(c), len(y), len(x), uid, uid_ind, "TEST1")
+ 
+                    uid_ind = uid_ind + len(env_states[ind])
+                else:
+                    x.extend(list(range(uid_ind, uid_ind + len(env_states[ind]))))
+                    y.extend([y[-1]]*len(env_states[ind]))
+                    c = np.concatenate((c, learnt_zs[ind]), axis = 0)
+
+                    print(len(c), len(y), len(x), uid, uid_ind, "TEST1_2")
+
+                    uid_ind = uid_ind + len(env_states[ind])
+        else:
+
+            print(len(c), len(y), len(x), uid, uid_ind, "TEST1_3")
+
+            pds[uid] = pd.DataFrame(index=x)
+            print(pds.keys(), time_dif.keys())
+            pds[uid]['Time'] = time_dif[uid]
+            pds[uid]['month'] = month[uid]
+            pds[uid]['seasaon'] = season[uid]
+            pds[uid]['latent'] = c
+
+            plt.scatter(x, y, c=c, cmap=cmap)
+            plt.savefig(os.path.join(out_dir, "time_series_zs_plot_traj_color_" + uid + ".png"), bbox_inches='tight')
+
+            plt.clf()
+            plt.plot(x, c)
+            plt.savefig(os.path.join(out_dir, "time_series_zs_plot_traj_" + uid + ".png"), bbox_inches='tight')
+
+            plt.plot(x, time_dif[uid])
+            plt.savefig(os.path.join(out_dir, "time_series_time_diff_traj_" + uid + ".png"), bbox_inches='tight')
+
+            plt.clf()
+            plt.plot(x, month[uid])
+            plt.savefig(os.path.join(out_dir, "time_series_month_traj_" + uid + ".png"), bbox_inches='tight')
+
+            plt.clf()
+            plt.plot(x, season[uid])
+            plt.savefig(os.path.join(out_dir, "time_series_season_traj_" + uid + ".png"), bbox_inches='tight')
+
+            tmp_ind = ind
+            if ind >= len(env_states):
+                tmp_ind = ind-1
+
+            plt.clf()
+            uid_ind = 0
+            x = list(range(uid_ind, uid_ind + len(env_states[tmp_ind])))
+            y = [tmp_ind]*len(env_states[tmp_ind])
+            c = learnt_zs[tmp_ind]
+            uid_ind = uid_ind + len(env_states[tmp_ind])
+        uid = current_uid
+        ind = ind + 1
+
+
+    print(len(env_states[1]), "HERE4")
+
+    plt.clf()
+    uid = uids[0]
+    current_uid = uids[0]
+
+    uid_ind = 0
+
+    ind = 0
+    x = []
+    y = []
+    while ind <= len(env_states):
+        if ind < len(env_states):
+            current_uid = uids[ind]
+ 
+        if  current_uid == uid and ind < len(env_states):
+                if uid_ind == 0:   
+                    x = list(range(uid_ind, uid_ind + len(env_states[ind])))
+                    y = copy.deepcopy(env_states[ind])
+
+
+                    print(len(c), len(y), len(x), uid, uid_ind, "TEST2")
+
+                    uid_ind = uid_ind + len(env_states[ind])
+                else:
+                    x.extend(list(range(uid_ind, uid_ind + len(env_states[ind]))))
+                    y.extend(copy.deepcopy(env_states[ind]))
+
+                    print(len(c), len(y), len(x), uid, uid_ind, "TEST2_1")
+
+                    uid_ind = uid_ind + len(env_states[ind])
+        else:
+            plt.plot(x, y)
+
+
+            print(len(c), len(y), len(x), uid, uid_ind, "TEST2_2")
+
+            pds[uid]['env'] = y
+
+            plt.ylim(0, max_env)
+            plt.savefig(os.path.join(out_dir, "env_map_time_series_traj_" + uid + ".png"), bbox_inches='tight')
+            plt.clf()
+
+            tmp_ind = ind
+            if ind >= len(env_states):
+                tmp_ind = ind-1
+
+            uid_ind = 0
+            x = list(range(uid_ind, uid_ind + len(env_states[tmp_ind])))   
+            y = copy.deepcopy(env_states[tmp_ind])
+            uid_ind = uid_ind + len(env_states[tmp_ind])
+        uid = current_uid
+        ind = ind + 1
+
+    print(len(env_states[1]))
+
+    del ind
+
+
+    plt.clf()
+    for ind in range(len(env_states)):
+        print(len(x), len(dist_states[ind]), ind)
+        x = list(range(0, len(env_states[ind])))
+        print(len(x), len(env_states[ind]), len(dist_states[ind]), ind)
+        plt.plot(x, dist_states[ind])
+        plt.ylim(0, max_dist)
+    plt.savefig(os.path.join(out_dir, "dist_time_series.png"), bbox_inches='tight')
+
+
+    plt.clf()
+    uid = uids[0]
+    current_uid = uids[0]
+
+    uid_ind = 0
+    ind = 0
+    x = []
+    y = []
+    while ind <= len(env_states):
+
+        if ind < len(env_states):
+            current_uid = uids[ind]
+   
+        if  current_uid == uid and ind < len(env_states):
+                if uid_ind == 0:
+                    x = list(range(uid_ind, uid_ind + len(env_states[ind])))
+                    y = copy.deepcopy(dist_states[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+                else:
+                    x.extend(list(range(uid_ind, uid_ind + len(env_states[ind]))))
+                    y.extend(dist_states[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+        else:
+            plt.plot(x, y)
+            pds[uid]['distance_traveled'] = y
+            plt.ylim(0, max_dist)
+            plt.savefig(os.path.join(out_dir, "dist_time_series_traj_" + uid + ".png"), bbox_inches='tight')
+            plt.clf()
+
+            tmp_ind = ind
+            if ind >= len(env_states):
+                tmp_ind = ind-1
+
+            uid_ind = 0
+            x = list(range(uid_ind, uid_ind + len(env_states[tmp_ind])))   
+            y = copy.deepcopy(dist_states[tmp_ind])
+            uid_ind = uid_ind + len(env_states[tmp_ind])
+        uid = current_uid
+        ind = ind + 1
+ 
+
+    plt.clf()
+    for ind in range(len(env_states)):
+        x = list(range(0, len(env_states[ind])))
+        plt.plot(x, heat_states[ind])
+        plt.ylim(0, 1)
+    plt.savefig(os.path.join(out_dir, "heat_time_series.png"), bbox_inches='tight')    
+
+    plt.clf()
+    uid = uids[0]
+    current_uid = uids[0]
+
+    uid_ind = 0
+
+    ind = 0
+    x = []
+    y = []
+    while ind <= len(env_states):
+        if ind < len(env_states):
+            current_uid = uids[ind] 
+  
+        if  current_uid == uid and ind < len(env_states):
+                if uid_ind == 0:
+                    x = list(range(uid_ind, uid_ind + len(env_states[ind])))
+                    y = copy.deepcopy(heat_states[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+                else:
+                    x.extend(list(range(uid_ind, uid_ind + len(env_states[ind]))))
+                    y.extend(heat_states[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+        else:
+            plt.plot(x, y)
+            plt.ylim(0, 1)
+            pds[uid]['reward_likelihood'] = y
+            plt.savefig(os.path.join(out_dir, "heat_time_series_traj_" + uid + ".png"), bbox_inches='tight')
+            plt.clf()
+
+            tmp_ind = ind
+            if ind >= len(env_states):
+                tmp_ind = ind-1
+
+            uid_ind = 0
+            x = list(range(uid_ind, uid_ind + len(env_states[tmp_ind])))
+            y = copy.deepcopy(heat_states[tmp_ind])
+            uid_ind =  uid_ind + len(env_states[tmp_ind])
+
+        uid = current_uid
+        ind = ind + 1
+
+
+    plt.clf()
+    for ind in range(len(env_states)):
+        x = list(range(0, len(env_states[ind])))
+        plt.plot(x,  turn_angles[ind])
+        plt.ylim(min_angles, max_angles)
+    plt.savefig(os.path.join(out_dir, "turn_angles_time_series.png"), bbox_inches='tight')
+
+    plt.clf()
+    uid = uids[0]
+    current_uid = uids[0]
+
+    uid_ind = 0
+
+    ind = 0
+    x = []
+    y = []
+    while ind <= len(env_states):
+ 
+        if ind < len(env_states):
+            current_uid = uids[ind]
+ 
+        if  current_uid == uid and ind < len(env_states):
+                if uid_ind == 0:
+                    x = list(range(uid_ind, uid_ind + len(env_states[ind])))
+                    y = copy.deepcopy(turn_angles[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+                else:
+                    x.extend(list(range(uid_ind, uid_ind + len(env_states[ind]))))
+                    y.extend(turn_angles[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+        else:
+            plt.plot(x, y)
+            pds[uid]['turn_angle'] = y
+
+            plt.ylim(min_angles, max_angles)
+            plt.savefig(os.path.join(out_dir, "turn_angles_time_series_traj_" + uid + ".png"), bbox_inches='tight')
+            plt.clf()
+
+            tmp_ind = ind
+            if ind >= len(env_states):
+                tmp_ind = ind-1
+
+            uid_ind = 0
+
+            x = list(range(uid_ind, uid_ind + len(env_states[tmp_ind])))
+            y = copy.deepcopy(turn_angles[tmp_ind])
+            uid_ind = uid_ind + len(env_states[tmp_ind])
+        uid = current_uid
+        ind = ind + 1
+
+
+    plt.clf()
+    for ind in range(len(env_states)):
+        x = list(range(0, len(env_states[ind])))
+        plt.plot(x,  ships[ind])
+        plt.ylim(0, 1)
+    plt.savefig(os.path.join(out_dir, "ship_density_time_series.png"), bbox_inches='tight')
+
+    plt.clf()
+    uid = uids[0]
+    current_uid = uids[0]
+
+    uid_ind = 0
+
+    ind = 0
+    x = []
+    y = []
+    while ind <= len(env_states):
+        if ind < len(env_states):
+            current_uid = uids[ind]
+     
+        if  current_uid == uid and ind < len(env_states):
+                if uid_ind == 0:
+                    x = list(range(uid_ind, uid_ind + len(env_states[ind])))
+                    y = copy.deepcopy(ships[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+                else:
+                    x.extend(list(range(uid_ind, uid_ind + len(env_states[ind]))))
+                    y.extend(ships[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+        else:
+            plt.plot(x, y)
+            plt.ylim(0, 1)
+            pds[uid]['ship_density'] = y
+            plt.savefig(os.path.join(out_dir, "ship_density_time_series_traj_" + uid + ".png"), bbox_inches='tight')
+            plt.clf()
+
+            tmp_ind = ind
+            if ind >= len(env_states):
+                tmp_ind = ind-1
+
+            uid_ind = 0
+
+            x = list(range(uid_ind, uid_ind + len(env_states[tmp_ind])))
+            y = copy.deepcopy(ships[tmp_ind]) 
+            uid_ind = uid_ind + len(env_states[tmp_ind])
+        uid = current_uid
+        ind = ind + 1
+
+
+    plt.clf()
+    for ind in range(len(env_states)):
+        x = list(range(0, len(env_states[ind])))
+        plt.plot(x,  baths[ind])
+        plt.ylim(np.min(baths), np.max(baths))
+    plt.savefig(os.path.join(out_dir, "bathymetry_time_series.png"), bbox_inches='tight')
+
+    plt.clf()
+    uid = uids[0]
+    current_uid = uids[0]
+
+    uid_ind = 0
+
+    ind = 0
+    x = []
+    y = []
+    while ind <= len(env_states):
+ 
+        if ind < len(env_states):
+            current_uid = uids[ind]
+
+        if  current_uid == uid and ind < len(env_states):
+                if uid_ind == 0:
+                    x = list(range(uid_ind, uid_ind + len(env_states[ind])))
+                    y = copy.deepcopy(baths[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+                else:
+                    x.extend(list(range(uid_ind, uid_ind + len(env_states[ind]))))
+                    y.extend(baths[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+        else:
+            plt.plot(x, y)
+
+            pds[uid]['bathymetry'] = y
+
+            plt.ylim(np.min(baths), np.max(baths))
+            plt.savefig(os.path.join(out_dir, "bathymetry_time_series_traj_" + uid + ".png"), bbox_inches='tight')
+            plt.clf()
+
+            tmp_ind = ind
+            if ind >= len(env_states):
+                tmp_ind = ind-1
+
+            uid_ind = 0
+
+            x = list(range(uid_ind, uid_ind + len(env_states[tmp_ind])))
+            y = copy.deepcopy(baths[tmp_ind])
+            uid_ind = uid_ind + len(env_states[tmp_ind])
+        uid = current_uid
+        ind = ind + 1
+
+
+    plt.clf()
+    for ind in range(len(env_states)):
+        x = list(range(0, len(env_states[ind])))
+        plt.plot(x,  coasts[ind])
+        plt.ylim(np.min(coasts), np.max(coasts))
+    plt.savefig(os.path.join(out_dir, "dist_to_coast_time_series.png"), bbox_inches='tight')
+
+    plt.clf()
+    uid = uids[0]
+    current_uid = uids[0]
+
+    uid_ind = 0
+
+    ind = 0
+    x = []
+    y = []
+    while ind <= len(env_states):
+        if ind < len(env_states):
+            current_uid = uids[ind]
+  
+        if  current_uid == uid and ind < len(env_states):
+                if uid_ind == 0:
+                    x = list(range(uid_ind, uid_ind + len(env_states[ind])))
+                    y = copy.deepcopy(coasts[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+                else:
+                    x.extend(list(range(uid_ind, uid_ind + len(env_states[ind]))))
+                    y.extend(coasts[ind])
+                    uid_ind = uid_ind + len(env_states[ind])
+        else:
+            plt.plot(x, y)
+            plt.ylim(np.min(coasts), np.max(coasts))
+            plt.savefig(os.path.join(out_dir, "dist_to_coast_time_series_traj_" + uid + ".png"), bbox_inches='tight')
+            plt.clf()
+
+            pds[uid]['distance_to_coast'] = y
+
+            tmp_ind = ind
+            if ind >= len(env_states):
+                tmp_ind = ind-1
+
+            uid_ind = 0
+
+            x = list(range(uid_ind, uid_ind + len(env_states[tmp_ind])))
+            y = copy.deepcopy(coasts[tmp_ind]) 
+            uid_ind = uid_ind + len(env_states[tmp_ind])
+        uid = current_uid
+        ind = ind + 1
+
+
+    for uid in pds:
+        pds[uid].to_excel(os.path.join(out_dir, uid + "_time_series_pd.xlsx"), header=True, index=False)
+
+
+def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list, static_data):
+
+    env_states = []
+    heat_states = []
+    dist_states = []
+    turn_angles = []
+    baths = []
+    ships = []
+    coasts = []
+
+    z_env_hist = {}
+
+    max_dist = -1
+    max_angles = -1
+    min_angles = 361
+    max_env = 0
+
+    bath = np.squeeze(static_data['Bathymetry']['scenes'][0])
+    coast = np.squeeze(static_data['Coastal_Dist']['scenes'][0])
+    ship = np.squeeze(static_data['Ship_Density']['scenes'][0])
+    print("HERE COAST", coast.min(), coast.max(), coast.mean(), coast.std())  
+ 
+
+    for i in range(n_hidden):
+        env_states.append([])
+        heat_states.append([])
+        dist_states.append([])
+        turn_angles.append([])
+        baths.append([])
+        coasts.append([])
+        ships.append([])
+
+        f[i] = normalize(f[i])
+
+        z_env_hist[i] = {}
+
+    f = np.round(f, decimals=2)
+    for i in range(learnt_zs.shape[0]):
+        print( len(paths[i]), len(learnt_zs[i]), len(env_maps[i]), i)
+        if len(paths[i]) < 97 or len(learnt_zs[i]) < 97 or len(env_maps[i]) < 97:
+            continue
+        zs = learnt_zs[i]
+        path = paths[i][1:-1]
+        env_map = env_maps[i]
+        print("HERE BUG", learnt_zs.shape, path.shape, )
+        for k in range(learnt_zs.shape[1]):
+            print(k, k,path[k]["y"],path[k]["x"])
+            if  path[k]["y"] < 0 or path[k]["x"] < 0:
+                continue
+            env_val = int(env_map[k,path[k]["y"],path[k]["x"]])
+            print(zs[k], z_env_hist, env_val, "HERE", k,path[k]["y"], path[k]["x"], ship.shape, bath.shape, "HERE ISSUES")
+            if env_val not in z_env_hist[zs[k]]:
+                z_env_hist[zs[k]][env_val] = 1
+            else:
+                z_env_hist[zs[k]][env_val] = z_env_hist[zs[k]][env_val] + 1
+            if k == 0:
+                dist = 0
+            else:
+                dist = math.sqrt((path[k-1]["y"] - path[k]["y"])**2 + (path[k-1]["x"] - path[k]["x"])**2)
+            max_dist = max(max_dist, dist)
+            max_env = max(max_env, env_val)
+            dist = np.round(dist * (0.009000090001*111.11), decimals=2) #degrees to km at the equator
             dist_states[zs[k]].append(dist)  
             print(dist, zs[k]) 
             env_states[zs[k]].append(env_val)
             print(f[zs[k], env_val], zs[k], env_val)
             heat_states[zs[k]].append(f[zs[k], env_val])
 
+
+            print("HERE BATH ISSUE", zs[k], len(baths), path[k]["y"],path[k]["x"], bath.shape)
+            baths[zs[k]].append(bath[path[k]["y"],path[k]["x"]])
+            ships[zs[k]].append(ship[path[k]["y"],path[k]["x"]])
+            coasts[zs[k]].append(coast[path[k]["y"],path[k]["x"]])
+
+            if k > 1:
+                dy = path[k-1]["y"] - path[k]["y"]
+                dx = path[k-1]["x"] - path[k]["x"]
+
+                step_len = np.hypot(dx, dy)
+
+                # Absolute movement angle in radians, measured from +x axis
+                bearing = np.arctan2(dy, dx)
+
+                prev_dx = path[k-1]["x"] - path[k-2]["x"]
+                prev_dy = path[k-1]["y"] - path[k-2]["y"]
+
+                # Guard against zero-length previous step
+                if prev_dx == 0 and prev_dy == 0:
+                    turn_angle = 0.0
+                else:
+                    prev_bearing = np.arctan2(prev_dy, prev_dx)
+                    turn_angle = wrap_to_pi(bearing - prev_bearing)
+            else:
+                turn_angle = 0.0
+
+            max_angles = max(max_angles, turn_angle)
+            min_angles = min(0, min_angles, turn_angle)
+            turn_angles[zs[k]].append(turn_angle)  
+            
 
     print(dist_states)
     print(heat_states)
@@ -376,12 +1182,20 @@ def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list):
         latent = latent + 1
         if len(env_states[i]) == 0:
             continue
-        sns.kdeplot(env_states[i], ax=ax, label="Latent State " + str(latent), color=color_list[i], alpha=0.5, fill=True, linewidth=0, clip=(0,315))
+        sns.kdeplot(env_states[i], ax=ax, label="Latent State " + str(latent), color=color_list[i], alpha=0.5, fill=True, linewidth=0, clip=(0,max_env))
     plt.legend()
     plt.show()
     plt.savefig(os.path.join(out_dir, "env_kdeplots.png"), bbox_inches='tight')
  
     plt.clf()
+
+    plt.boxplot(env_states, labels=list(range(1,len(env_states)+1)))
+    plt.legend()
+    plt.tight_layout(h_pad=0.1)
+    plt.savefig(os.path.join(out_dir, "env_dist_bplot.png"), bbox_inches='tight')
+    plt.clf()
+
+
     #plt.clear()
 
     latent = 0
@@ -397,6 +1211,12 @@ def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list):
     plt.savefig(os.path.join(out_dir, "env_heat_kdeplots.png"), bbox_inches='tight')
     plt.clf()
 
+    plt.boxplot(heat_states, labels=list(range(1,len(heat_states)+1)))
+    plt.legend()
+    plt.tight_layout(h_pad=0.1)
+    plt.savefig(os.path.join(out_dir, "env_heat_dist_bplot.png"), bbox_inches='tight')
+    plt.clf()
+
     latent = 0
     ax = plt.gca()
     for i in range(n_hidden):
@@ -410,15 +1230,107 @@ def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list):
     plt.savefig(os.path.join(out_dir, "dist_kdeplots.png"), bbox_inches='tight')
     plt.clf()
 
+    plt.boxplot(dist_states, labels=list(range(1,len(dist_states)+1)))
+    plt.legend()
+    plt.tight_layout(h_pad=0.1)
+    plt.savefig(os.path.join(out_dir, "dist_bplot.png"), bbox_inches='tight')
+    plt.clf()
+
+    latent = 0
+    ax = plt.gca()
+    for i in range(n_hidden):
+        latent = latent + 1
+        print(len(env_states[i]), len(turn_angles[i]), i)
+        if len(env_states[i]) == 0:
+            continue
+        sns.kdeplot(turn_angles[i], ax=ax, label="Latent State " + str(latent), color=color_list[i], alpha=0.5, fill=True, linewidth=0, clip=(min_angles, max_angles))
+    plt.legend()
+    plt.show()
+    plt.savefig(os.path.join(out_dir, "angle_kdeplots.png"), bbox_inches='tight')
+    plt.clf() 
+
+    plt.boxplot(turn_angles, labels=list(range(1,len(turn_angles)+1)))
+    plt.legend()
+    plt.tight_layout(h_pad=0.1)
+    plt.savefig(os.path.join(out_dir, "angle_dist_bplot.png"), bbox_inches='tight')
+    plt.clf()
+
+
+    latent = 0
+    ax = plt.gca()
+    for i in range(n_hidden):
+        latent = latent + 1
+        print(len(env_states[i]), len(baths[i]), i)
+        if len(env_states[i]) == 0:
+            continue
+        sns.kdeplot(baths[i], ax=ax, label="Latent State " + str(latent), color=color_list[i], alpha=0.5, fill=True, linewidth=0, clip=(bath.min(), bath.max()))
+    plt.legend()
+    plt.show()
+    plt.savefig(os.path.join(out_dir, "bathymetry_kdeplots.png"), bbox_inches='tight')
+    plt.clf()
+
+    plt.boxplot(baths, labels=list(range(1,len(baths)+1)))
+    plt.legend()
+    plt.tight_layout(h_pad=0.1)
+    plt.savefig(os.path.join(out_dir, "bathhymetry_bplot.png"), bbox_inches='tight')
+    plt.clf()
+
+
+    latent = 0
+    ax = plt.gca()
+    for i in range(n_hidden):
+        latent = latent + 1 
+        print(len(env_states[i]), len(ships[i]), i)
+        if len(env_states[i]) == 0:
+            continue
+        print(min(ships[i]), max(ships[i]), "SHIPS")
+        sns.kdeplot(ships[i], ax=ax, label="Latent State " + str(latent), color=color_list[i], alpha=0.5, fill=True, linewidth=0, clip=(0, ship.max()))
+    plt.legend()
+    plt.show()
+    plt.savefig(os.path.join(out_dir, "ship_density_kdeplots.png"), bbox_inches='tight')
+    plt.clf()
+
+    plt.boxplot(ships, labels=list(range(1,len(ships)+1)))
+    plt.legend()
+    plt.tight_layout(h_pad=0.1)
+    plt.savefig(os.path.join(out_dir, "ship_density_bplot.png"), bbox_inches='tight')
+    plt.clf()
+
+
+    latent = 0
+    ax = plt.gca()
+    for i in range(n_hidden):
+        latent = latent + 1
+        print(len(env_states[i]), len(coasts[i]), i)
+        if len(env_states[i]) == 0:
+            continue
+        print(min(coasts[i]), max(coasts[i]), "COASTS")
+        sns.kdeplot(coasts[i], ax=ax, label="Latent State " + str(latent), color=color_list[i], alpha=0.5, fill=True, linewidth=0, clip=(0, coast.max()))
+    plt.legend()
+    plt.show()
+    plt.savefig(os.path.join(out_dir, "dist_to_coast_kdeplots.png"), bbox_inches='tight')
+    plt.clf()
+
+
+    plt.boxplot(coasts, labels=list(range(1,len(coasts)+1)))
+    plt.legend()
+    plt.tight_layout(h_pad=0.1)
+    plt.savefig(os.path.join(out_dir, "env_to_coast_bplot.png"), bbox_inches='tight')
+    plt.clf()
+
+    return z_env_hist
+
 
 def plot_reward_heatmaps(f, out_dir):
 
     f = normalize(f) 
+    dists = []
     for j in range(f.shape[0]):
         f_tmp = np.squeeze(f[j,:])
         new_arr_size = math.ceil(math.sqrt(f_tmp.shape[0]))
         new_arr = np.zeros((new_arr_size**2))
         new_arr[:f_tmp.shape[0]] = f_tmp
+        dists.append(np.ravel(f_tmp))
 
         im = plt.imshow(new_arr.reshape(new_arr_size, new_arr_size), cmap="jet", interpolation='none', vmin=0, vmax=1)
         plt.colorbar(im, location='bottom', pad=0.05, ticks=[np.min(new_arr), np.max(new_arr)],
@@ -426,6 +1338,12 @@ def plot_reward_heatmaps(f, out_dir):
         plt.tight_layout(h_pad=0.1)
         plt.savefig(os.path.join(out_dir, "reward_heatmap_" + str(j) + ".png"), bbox_inches='tight')
         plt.clf()
+
+    plt.boxplot(dists, labels=list(range(1,f.shape[0]+1)))
+    plt.legend()
+    plt.tight_layout(h_pad=0.1)
+    plt.savefig(os.path.join(out_dir, "reward_dist_bplot.png"), bbox_inches='tight')
+    plt.clf()
 
 
 def gen_cmap():
@@ -858,7 +1776,7 @@ def run_plots(yml_conf):
     paths = []
     max_len = -1
 
-    key = "2017CA-Bmu-00826"  #"1F90648_(4111)" #TODO
+    key = "2017CA-Bmu-00826"  #"235283_6" #"2017CA-Bmu-00826"  #"1F90648_(4111)" #TODO
     df_uid = yml_conf["df_run_uid"] + "_" + key
     with open(os.path.join(yml_conf["df_dir"], df_uid + "_grid.pkl"), "rb") as f:
         grid = pickle.load(f)
@@ -883,6 +1801,10 @@ def run_plots(yml_conf):
         paths_tmp = np.load(paths_fpaths[i], allow_pickle=True)
         envs_tmp = envs_init[uids_init[i]]
 
+        #for k1 in range(len(envs_tmp)):
+        #    for k2 in range(len(envs_tmp[k1])):
+        #        print(envs_tmp[k1][k2].min(), envs_tmp[k1][k2].max(), envs_tmp[k1][k2].mean(), "ERROR")
+                
         #with open(os.path.join(yml_conf["prev_envs"][i]), "rb") as f:
         #    prev_env_tmp = pickle.load(f)
 
@@ -894,6 +1816,7 @@ def run_plots(yml_conf):
         envs.extend(envs_tmp)
         for e in range(len(envs_tmp)):
             uids.append(uids_init[i])
+            print("HERE FPATHS", i, paths_fpaths[i], e, len(envs_tmp), uids_init[i], uids[-1], len(uids))
         paths.extend(paths_tmp)
         #prev_envs.extend(prev_env_tmp) 
 
@@ -903,6 +1826,7 @@ def run_plots(yml_conf):
     uids_final = []
     #prev_envs_final = []
     for j in range(len(paths)):
+        print("HERE FINALIZE", j, len(paths[j]), max_len)
         if len(paths[j]) == max_len:
             paths_final.append(paths[j])
             envs_final.append(envs[j])
@@ -936,26 +1860,25 @@ def run_plots(yml_conf):
   
     temps = jnp.array([0.01] + [1] * (n_hidden - 1))
 
-    # Load S-2 params
-    print("Load params and set reward values")
-    fname = run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_iter2.npz"
+    fname = run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_S2_naturenet_iter2.npz"
     fname = os.path.join(out_dir, fname)
     params2 = jnp.load(fname, allow_pickle=True)
     new_logpi02, new_log_Ps2, new_Rs2, new_reward2, LL_list2 = params2['new_logpi0'], params2['new_log_Ps'], params2['new_Rs'], params2['new_reward'], params2['LL_list']
 
-    params3 = jnp.load(yml_conf["ll2_fname"], allow_pickle=True)
+    fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_S2_naturenet_iter2_LL2.npz")
+    params3 = jnp.load(fname, allow_pickle=True)
     jax_path_vmap=params3["jax_path_vmap"]
-    
+
 
     #temps = jnp.array([0.01] + [1] * (n_hidden - 1))
 
     print("HERE REWARD", new_reward2.shape)
     reward2_filtered = np.copy(new_reward2[:, 0,:]).reshape((n_hidden, n_states, n_actions))
     print(invalid_indices.shape, reward2_filtered.shape)
- 
-    #reward2_filtered[invalid_indices,:] = np.nan
- 
-    color_list = ["red", "green", "blue", "brown", "cyan", "orange", "black", "magenta"]
+
+    reward2_filtered[invalid_indices,:] = 0.0
+  
+    color_list = ["red", "green", "blue", "brown", "cyan", "orange", "black", "magenta", "lightcoral", "goldenrod", "olive", "rosybrown", "silver", "sandybrown", "teal", "springgreen", "hotpink", "indigo", "darkkhaki", "navy", "red", "green", "blue", "brown", "cyan", "orange", "black", "magenta", "lightcoral", "goldenrod", "olive", "rosybrown", "silver", "sandybrown", "teal", "springgreen", "hotpink", "indigo", "darkkhaki", "navy"]
     print(reward2_filtered.shape)
     converted_map = np.nanmean(reward2_filtered, axis=-1)
     print(converted_map.shape) 
@@ -963,11 +1886,12 @@ def run_plots(yml_conf):
  
     learnt_zs = np.array(jax_path_vmap)
 
+    print(len(paths), len(learnt_zs), len(envs))
     print("HERE CONVERTED MAP", converted_map.shape)
     if plot_gifs:
         for j in range(len(paths)):
             print( len(paths[j]), len(learnt_zs[j]), len(envs[j]), j)
-            if len(paths[j]) < 25 or len(learnt_zs[j]) < 25 or len(envs[j]) < 25:
+            if len(paths[j]) < 97 or len(learnt_zs[j]) < 97 or len(envs[j]) < 97:
                 print("CONTINUING", j, uids[j])
                 continue
             #converted_map = np.nanmean(reward2_filtered, axis=-1)
@@ -994,16 +1918,31 @@ def run_plots(yml_conf):
 
     if plot_traj:
 
+        static_data = None #TODO - generalize and input fpath
+        #with open("/data/nlahaye/NatureNet_Env/output_static/static_movement_kernel_info_prelim_scene_map.pkl",'rb') as f:
+        #with open("/data/nlahaye/NatureNet_Env/output_static/static_movement_kernel_info_prelim_scene_map_shark.pkl",'rb') as f:
+        with open("/data/nlahaye/NatureNet_Env/output_static/static_movement_kernel_info_prelim_scene_map.pkl",'rb') as f:
+            static_data = pickle.load(f)
+   
         print(converted_map.shape)
-        plot_density(learnt_zs, envs, paths, converted_map, n_hidden, out_dir, color_list)
+        z_env_hist = plot_density(learnt_zs, envs, paths, converted_map, n_hidden, out_dir, color_list, static_data) #, uids)
+
+        for key in z_env_hist.keys():
+
+            res = dict(sorted(z_env_hist[key].items(), key=operator.itemgetter(1), reverse=True)[:5])
+            print("Latent state", key, "Top 5 env values", str(res))
+
+        plot_time_series(learnt_zs, envs, paths, converted_map, n_hidden, out_dir, color_list, static_data, uids)
+
+
 
         figs = []
         axs = []
-        for i in range(n_hidden):
-            fig, ax = plot_map_with_bounds(lon_bounds[0], lon_bounds[1], lat_bounds[0], lat_bounds[1])
-            figs.append(fig)
-            axs.append(ax)
-        figs, axs, lines_list = plot_trajs(learnt_zs, paths, grid, n_hidden, axs=axs, figs=figs)
+        #for i in range(n_hidden):
+        #    fig, ax = plot_map_with_bounds(lon_bounds[0], lon_bounds[1], lat_bounds[0], lat_bounds[1])
+        #    figs.append(fig)
+        #    axs.append(ax)
+        #figs, axs, lines_list = plot_trajs(learnt_zs, paths, grid, n_hidden, axs=axs, figs=figs)
   
  
         plt.clf()
