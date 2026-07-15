@@ -49,7 +49,9 @@ def gen_traj(actions, positions):
         for i in range(len(actions[j])-1):
             print(i, len(positions[j]), len(actions[j]))
             traj.append([positions[j][i], actions[j][i], positions[j][i+1]])
-        traj_total.append(traj)
+        if len(traj) > 5:
+            traj_total.append(traj)
+        print(len(traj), "HERE")
     traj_total = np.array(traj_total)
     return traj_total
 
@@ -97,7 +99,7 @@ def run_hiavi(yml_conf):
     output_df = pd.DataFrame(columns=['num_trajs', 'fold', 'train_ll', 'test_ll'])
 
     kf = KFold(n_splits=len(trajs), shuffle=True, random_state=10015)
-    for num_trajs in np.arange(0,5):
+    for num_trajs in np.arange(0,8):
         for kf_idx, (train_idxes, test_idxes) in enumerate(kf.split(trajs)):
             train_trajs = [trajs[train_idx] for train_idx in train_idxes]
             test_trajs = [trajs[test_idx] for test_idx in test_idxes]
@@ -105,7 +107,8 @@ def run_hiavi(yml_conf):
             best_test_ll = -np.infty
             best_ll = None
             for repeats in range(10): #num_repeats):
-                model = HIAVI(num_latents=5, num_states=n_states, num_actions=n_actions,
+                print(8, n_states, n_actions, len(train_trajs), len(test_trajs), trans_prob.shape, gamma)
+                model = HIAVI(num_latents=8, num_states=n_states, num_actions=n_actions,
                                 train_trajs=train_trajs, test_trajs=test_trajs, P=trans_prob, discount=gamma)
                 ll, logp_init, logp_tr, agents = model.fit()
                 if ll['test'] > best_test_ll:

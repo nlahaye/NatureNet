@@ -99,7 +99,7 @@ def run_hiavi(yml_conf):
     output_df = pd.DataFrame(columns=['num_trajs', 'fold', 'train_ll', 'test_ll'])
 
     kf = KFold(n_splits=len(trajs), shuffle=True, random_state=10015)
-    for num_trajs in np.arange(0,5):
+    for num_trajs in np.arange(0,8):
         for kf_idx, (train_idxes, test_idxes) in enumerate(kf.split(trajs)):
             train_trajs = [trajs[train_idx] for train_idx in train_idxes]
             test_trajs = [trajs[test_idx] for test_idx in test_idxes]
@@ -124,7 +124,7 @@ def run_hiavi(yml_conf):
                         like.append(pi_hat[s, a])
                     like = np.log(like)
                     ll[ds].append(np.mean(like))
-            if num_trajs == 4:
+            if num_trajs == 7:
                 param_dir = os.path.join(out_dir, f'iavi/fold_{kf_idx}')
                 if not os.path.exists(param_dir):
                     os.makedirs(param_dir)
