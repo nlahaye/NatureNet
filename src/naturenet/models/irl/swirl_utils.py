@@ -53,8 +53,29 @@ def preprocess_xs_prev_np(xs_list, xs_prev_list, prev_state_map, n_action, n_sta
     return np.array(prev_indices_list)
 
 
+def one_hot_jax_nn(hidden, n_hidden_states):
+    hidden = jnp.atleast_1d(hidden).astype(int)
+    shp = hidden.shape
+    n_samples = hidden.size
+    zoh = jnp.zeros((n_samples, n_hidden_states))
+    zoh = zoh.at[jnp.arange(n_samples), jnp.ravel(hidden)].set(1)
+    zoh = jnp.reshape(zoh, shp + (n_hidden_states,))
+    return zoh
+
+def one_hot_jax2_nn(hidden, hidden_prev, n_hidden_states):
+    hidden = hidden * n_hidden_states + hidden_prev
+    hidden = jnp.atleast_1d(hidden).astype(int)
+    n_hidden_states_2 = n_hidden_states * n_hidden_states
+    shp = hidden.shape
+    n_samples = hidden.size
+    zoh = jnp.zeros((n_samples, n_hidden_states_2))
+    zoh = zoh.at[jnp.arange(n_samples), jnp.ravel(hidden)].set(1)
+    zoh = jnp.reshape(zoh, shp + (n_hidden_states_2,))
+    return zoh, hidden
+
+
 def one_hot_jax(hidden_states, n_hidden_states):
-    z = jnp.atleast_1d(hidden_states).astype(int)
+    hidden = jnp.atleast_1d(hidden_states).astype(int)
     shp = hidden_states.shape
     n_samples = hidden_states.size
     zoh = jnp.zeros((n_samples, n_hidden_states))
@@ -75,12 +96,12 @@ def one_hot_jax2(hidden, hidden_prev, n_hidden_states, n_actions):
 
 def one_hotx_partial(xs):
     global n_states
-    n_states = 40 #TODO
+    n_states = 98 #146 #TODO
     return one_hot_jax(xs[:, None], n_states)
 
 def one_hotx2_partial(xs, xs_prev):
     global n_states 
-    n_states = 40 #TODO
+    n_states = 98 # 146TODO
     n_actions = 9 #TODO
     return one_hot_jax2(xs[:, None], xs_prev[:, None], n_states, n_actions)
 
@@ -88,6 +109,22 @@ def one_hota_partial(acs):
     global n_actions
     n_actions = 9 #TODO
     return one_hot_jax(acs[:, None], n_actions)
+
+def one_hotx_partial_nn(xs):
+    global n_states
+    n_states = 98 #146 #TODO
+    return one_hot_jax_nn(xs[:, None], n_states)
+
+def one_hotx2_partial_nn(xs, xs_prev):
+    global n_states
+    n_states = 98 # 146TODO
+    #n_actions = 9 #TODO
+    return one_hot_jax2_nn(xs[:, None], xs_prev[:, None], n_states)
+
+def one_hota_partial_nn(acs):
+    global n_actions
+    n_actions = 9 #TODO
+    return one_hot_jax_nn(acs[:, None], n_actions)
 
 
 def normalize_reward(reward, indices=[0]):
