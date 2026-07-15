@@ -1,0 +1,250 @@
+
+import zarr
+import numpy as np
+import os
+import copy
+import math
+from sit_fuse.pipelines.inference.inference_utils import run_embed_gen_from_scene_arr
+from sit_fuse.preprocessing.colocate_and_resample import resample_scene
+from sit_fuse.datasets.dataset_utils import get_scenes
+from sit_fuse.utils import read_copernicus_generic, read_vars_copernicus_generic, read_yaml
+
+
+def interpolate_filled_pixels(matrix, missing_value=np.nan, method="linear"):
+    """
+    Fill missing pixels in a 2D matrix by interpolating from known pixels.
+
+    Parameters
+    ----------
+    matrix : np.ndarray
+        2D input array.
+    missing_value : float or int, default np.nan
+        Value used to mark missing pixels. If np.nan, NaNs are treated as missing.
+    method : str, default "linear"
+        Interpolation method: "nearest", "linear", or "cubic".
+
+    Returns
+    -------
+    filled : np.ndarray
+        Matrix with missing pixels interpolated.
+    """
+    matrix = np.asarray(matrix, dtype=float)
+
+    if np.isnan(missing_value):
+        mask_missing = np.isnan(matrix)
+    else:
+        mask_missing = matrix == missing_value
+
+    if not np.any(mask_missing):
+        return matrix.copy()
+
+    rows, cols = matrix.shape
+    yy, xx = np.meshgrid(np.arange(rows), np.arange(cols), indexing="ij")
+
+    known_points = np.column_stack((yy[~mask_missing], xx[~mask_missing]))
+    known_values = matrix[~mask_missing]
+
+    missing_points = np.column_stack((yy[mask_missing], xx[mask_missing]))
+
+    filled = matrix.copy()
+
+    interp_values = griddata(
+        known_points,
+        known_values,
+        missing_points,
+        method=method
+    )
+
+    if np.any(np.isnan(interp_values)):
+        bicubic_values = griddata(
+            known_points,
+            known_values,
+            missing_points[np.isnan(interp_values)],
+            method="cubic"
+        )
+        interp_values[np.isnan(interp_values)] = bicubic_values
+
+    filled[mask_missing] = interp_values
+    return filled
+
+
+def resample_or_fuse_scene(scene, init_location, resample_config):
+
+    resample_config["low_res"]["filenames"] = scene
+    resample_config["low_res"]["geo_filenames"] = scene
+
+
+    resample_config["return_products"] = True
+    output, location = resample_scene(scene, init_location, resample_config)
+    return output, location
+
+def gen_copernicus_scenes_map(): #yml_conf,  per_channel_stats):
+
+##/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc_anfc_0.25deg_static.nc
+##/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-optics_anfc_0.25deg_P1D-m.nc
+##/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-plankton_anfc_0.25deg_P1D-m.nc
+##/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D.nc
+
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-car_anfc_0.25deg_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc_my_0.083deg-lmtl-Fphy_P1D-i.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-nut_anfc_0.25deg_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m.nc
+
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy_anfc_0.083deg_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy_anfc_0.083deg-sst-anomaly_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy_anfc_0.083deg_static.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy-wcur_anfc_0.083deg_P1D-m.nc
+#/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i.nc
+
+    data_dict = {
+
+        "0.25" : [
+
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m.nc", \
+            "vars": ["nppv", "o2"], "resolution": 0.25},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-car_anfc_0.25deg_P1D-m.nc", \
+            "vars": ["ph", "dissic"], "resolution": 0.25},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-nut_anfc_0.25deg_P1D-m.nc", \
+            "vars": ["fe", "no3"], "resolution": 0.25},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-nut_anfc_0.25deg_P1D-m.nc", \
+            "vars": [ "po4", "si"], "resolution": 0.25},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m.nc", \
+            "vars": ["phyc"], "resolution": 0.25}],
+        "0.083" : [
+        ##{"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc_my_0.083deg-lmtl-Fphy_P1D-i.nc", \
+        ##    "vars": ["T", "U", "V"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i.nc", \
+             "vars": ["zooc"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy_anfc_0.083deg_P1D-m.nc", \
+             "vars": ["zos"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy_anfc_0.083deg-sst-anomaly_P1D-m.nc", \
+             "vars": ["sea_surface_temperature_anomaly"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m.nc", \
+             "vars": ["uo", "vo"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m.nc", \
+             "vars": ["so"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m.nc", \
+             "vars": ["thetao"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy-wcur_anfc_0.083deg_P1D-m.nc", \
+             "vars": ["wo"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i.nc", \
+             "vars": ["VCMX", "VHM0"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i.nc", \
+             "vars": ["VHM0_SW1", "VHM0_WW"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i.nc", \
+             "vars": ["VMDR", "VMDR_SW1"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i.nc", \
+             "vars": ["VMDR_WW", "VMXL"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i.nc", \
+             "vars": ["VPED", "VTM01_SW1"], "resolution": 0.083},
+        {"fname": "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i.nc", \
+             "vars": ["VTM01_WW", "VTPK"], "resolution": 0.083},
+        ]
+    }
+
+ 
+    #mask_fname = "/data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/cmems_mod_glo_phy_anfc_0.083deg_static.nc"
+
+    ##For each resolution
+    ##For each file
+    ##Read vars - take top depth
+    #split by time
+    ##stack channels
+
+    ##Get lat/lon once
+    ##longr, latgr = np.meshgrid(data1[1], data1[0])
+    ##data1 = np.array([longr, latgr]).astype(np.float32)
+
+    #Get times
+
+    ##Read mask
+    ##Resample
+    ##Mask land
+
+
+    resample_config = read_yaml("../../config/environment/cop_resample_config.yaml")
+
+    #msk = read_copernicus_generic(mask_fname, ["mask"], depth=0)
+    #msk_geo = read_vars_copernicus_generic(mask_fname, ["latitude", "longitude"], depth = 0)
+    #longr, latgr = np.meshgrid(msk_geo[1], msk_geo[0])
+    #msk_lonlat = np.array([longr, latgr]).astype(np.float32)
+    #msk = np.expand_dims(np.squeeze(msk[0,0,:,:]), 0)
+    #mask, mask_loc = resample_or_fuse_scene(msk, msk_lonlat, resample_config)
+    #mask_inds = np.where(mask < 0.5)
+
+    #fill = -999999
+ 
+    #data[:,inds[0], inds[1]] = fill
+
+    final_dict = {}
+
+    dat_final = None
+    lonlat = None
+    ind = 13
+    for key in data_dict.keys():
+        dat1 = None
+        lonlat = None
+        for fn_dict in data_dict[key]:
+            dat = read_copernicus_generic(fn_dict["fname"], fn_dict["vars"], depth = 0) #C x Time x Lat x Lon
+            n_div = int(round(dat.shape[1] / 403))
+            print("HERE N_DIV", dat.shape[1], n_div)
+            dat2 = np.zeros((dat.shape[0], math.ceil(dat.shape[1] / n_div), dat.shape[2], dat.shape[3]))
+            end_rnge = 0
+            for n in range(0,dat.shape[1],n_div):
+               end_rnge = end_rnge + n_div
+               if end_rnge >= dat.shape[1]:
+                   end_rnge = dat.shape[1]
+               tmp = np.mean(dat[:,n:end_rnge,:,:], axis=1)
+               dat2[:,int(n/n_div),:,:] = tmp
+            dat = dat2
+            print(dat2.shape)
+                               
+
+            #if dat1 is None:
+            #    dat1 = dat 
+            #else:
+            #    dat1 = np.concatenate((dat1, dat), axis=0)
+
+            if lonlat is None:
+                geo = read_vars_copernicus_generic(fn_dict["fname"], ["latitude", "longitude"], depth = 0)
+                longr, latgr = np.meshgrid(geo[1], geo[0])
+                lonlat = np.array([longr, latgr]).astype(np.float32)
+
+            dims = copy.deepcopy(dat.shape)
+            print(dims)
+            dat = dat.reshape((dims[0]*dims[1], dims[2], dims[3]))
+            print(dat.shape, lonlat.shape, "HERE HERE")
+            data, location = resample_or_fuse_scene(dat, lonlat,  resample_config)
+            print(data.shape, location.shape) 
+            data = data.reshape((dims[0], dims[1], data.shape[1], data.shape[2]))
+            print(data.shape)
+            del lonlat
+            lonlat = None
+ 
+            #if dat_final is None:
+            #    dat_final = copy.deepcopy(data)
+            #else:
+            #    dat_final = np.concatenate((dat_final, data), axis=0)
+            #data[:,:,mask_inds[0], mask_inds[1]] = fill
+            data = np.swapaxes(data, 0,1).astype(np.float32)
+            fname = "/data/nlahaye/NatureNet_Env/Copernicus/cop_env_shark_" + str(ind) + ".zarr"
+            zarr.save_array(fname, data)
+            ind = ind + 1
+            del data, dat, location
+            #print(dat_final.shape) 
+ 
+    #dat_final[:,:,mask_inds[0], mask_inds[1]] = fill
+    #dat_final = np.swapaxes(data_final, 0,1) #T x C x Lat x Lon
+   
+    #zarr.save("/data/nlahaye/NatureNet_Env/Copernicus/cop_env.zarr", dat_final)
+ 
+
+
+gen_copernicus_scenes_map()
+
+
