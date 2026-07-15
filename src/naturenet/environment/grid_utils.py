@@ -6,7 +6,13 @@ import pickle
 import math
 import sparse
 import numpy as np
+import pandas as pd
 from datetime import datetime
+
+import matplotlib
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 
 N_ACTIONS = 9
 
@@ -27,6 +33,7 @@ class Grid(object):
         self.lon_tiles = math.ceil(self.lon_size)
         self.lat_tiles = math.ceil(self.lat_size)
 
+        print(self.lon_tiles, self.lat_tiles)
 
 def grid_to_lat_lon(grid, x, y):
 
@@ -37,8 +44,11 @@ def grid_to_lat_lon(grid, x, y):
 
 def lat_lon_to_grid(grid, lat, lon):
 
+    print("HERE", lat, lon, grid.min_lon, grid.min_lat, grid.grid_res_lon_deg, grid.grid_res_lat_deg)
+
     x = int((lon - grid.min_lon)/ grid.grid_res_lon_deg)
     y = int((lat - grid.min_lat) / grid.grid_res_lat_deg)
+ 
     return (y, x)
 
 def grid_to_ind(grid, y, x):
@@ -48,7 +58,49 @@ def grid_to_ind(grid, y, x):
 def ind_to_grid(grid, ind):
     y = int(ind / grid.lon_tiles)
     x = int(ind - (y*grid.lon_tiles))
-    return x, y
+    return y, x
+
+
+
+#def build_movement_kernel_features(movement_df, abstract_grid, actions, grid, ancillary_data):
+
+    
+
+def streamline_columns(movement_df, rename_dict = {"lon":"longitude", "lat":"latitude", "TimeValue":"timestamp", "date":"timestamp", "datetime":"timestamp",\
+    "animal_id":"uid", "id":"uid", "smaj":"semi_major", "smin":"semi_minor", "eor":"err_orient", "coords_x":"longitude", "coords_y":"latitude"}):
+
+    rnm_dict = {}
+    for key in rename_dict.keys():
+        if key in movement_df:
+            rnm_dict[key] = rename_dict[key]
+ 
+    movement_df.rename(columns=rnm_dict, inplace=True)
+
+    movement_df = movement_df.sort_values(['uid', 'timestamp'], ascending=[True, True])
+    print(movement_df.head())
+    movement_df["uid"]  = movement_df["uid"].astype(str).str.strip()
+    movement_df["timestamp"]  = pd.to_datetime(movement_df["timestamp"],  utc=True, errors="coerce")
+
+    return movement_df
+ 
+def combine_errs_and_paths(movement_df, err_df):
+ 
+
+    # Inner join: keep only rows where both id AND date match in df1 and df2
+    merged = pd.merge(
+        movement_df,
+        err_df,
+        on=["uid", "timestamp", "longitude", "latitude"],   # two-key match
+        how="inner",
+        #suffixes=("_df1", "_df2")
+    )
+ 
+    #merged["longitude"] = merged["longitude_x"]
+    #merged["latitude"] = merged["latitude_x"]
+    return merged
+
+
+
 
 
 def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions, grid, n_clusters, total_count = {}, points = None):
@@ -63,24 +115,42 @@ def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions,
     act_ind = 0
 
 
+    print(len(movement_df), abstract_grid.shape, len(actions), "ABSTRACT ENV")
     for index, row in movement_df.iterrows():
-        print(act_ind, len(abstract_grid), len(movement_df), len(actions))
+       
+        if "longitude" in row.keys():
+            row["longitude"] = row["longitude"]
+            row["latitude"] = row["latitude"]
+        print(row.keys()) 
+        #Fixing one-off indexing iin some rows lat/lon swap
+        if (row["latitude"] >= grid.min_lon and row["latitude"] <= grid.max_lon) and ( row["latitude"] > grid.max_lat or row["latitude"] < grid.min_lat):
+            tmp = row["longitude"]
+            row["longitude"] = row["latitude"]
+            row["latitude"] = tmp
+
         if abstract_grid[act_ind] is None:
-            prev_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
-            current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            prev_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"]) #row["latitude"], row["longitude"])
+            current_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"]) #row["latitude"], row["longitude"])
             states.append(current_state_abs)
             act_ind = act_ind + 1
             continue
         if act_ind == 0:
-            prev_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            prev_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"]) #row["latitude"], row["longitude"])
             prev_state_abs = abstract_grid[act_ind][prev_state[0], prev_state[1]]
-            current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            current_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"]) #row["latitude"], row["longitude"])
             current_state_abs = abstract_grid[act_ind][current_state[0], current_state[1]]            
+            print(current_state_abs, "HERE CURRENT STATE ABS", np.unique(abstract_grid[act_ind][current_state[0], current_state[1]]), current_state)
+            plt.imshow(abstract_grid[act_ind])
+            plt.savefig("ABSTRACT_GRID_" + str(act_ind) + ".png")
+            plt.clf()
         else:
-            current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+            current_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"]) #row["latitude"], row["longitude"])
             current_state_abs = abstract_grid[act_ind][current_state[0], current_state[1]]
             states.append(current_state_abs)      
-
+            print(current_state_abs, "HERE CURRENT STATE ABS", np.unique(abstract_grid[act_ind]), current_state, act_ind)
+            plt.imshow(abstract_grid[act_ind])
+            plt.savefig("ABSTRACT_GRID_" + str(act_ind) + ".png")
+            plt.clf()
             if current_state_abs is None or prev_state_abs is None:
                 prev_state = current_state
                 prev_state_abs = current_state_abs
@@ -118,6 +188,7 @@ def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions,
     for key in points:
         for key2 in points[key]:
             for key3 in points[key][key2]:
+                    print(key, key3, key2)
                     final_points[0].append(key)
                     final_points[1].append(key3)
                     final_points[2].append(key2)
@@ -156,11 +227,21 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
     current_state = None
     act_ind = 0
     for index, row in movement_df.iterrows():
+
+        if (row["latitude"] >= grid.min_lon and row["latitude"] <= grid.max_lon) and ( row["latitude"] > grid.max_lat or row["latitude"] < grid.min_lat):
+            tmp = row["longitude"]
+            row["longitude"] = row["latitude"]
+            row["latitude"] = tmp
+
         if act_ind == 0:
-          prev_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
-          current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+          prev_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"]) #row["latitude"], row["longitude"])
+          current_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"])
+          if prev_state[0] < 0 or prev_state[1] < 0 or current_state[0] < 0 or current_state[1] < 0:
+              print(prev_state, current_state, row["latitude"], row["longitude"], grid.min_lat, grid.min_lon, grid.max_lat, grid.max_lon, grid.grid_res_lon_deg, grid.grid_res_lat_deg, "HERE LAT LON")
         else:
-          current_state = lat_lon_to_grid(grid, row["lat"], row["lon"])
+          current_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"])
+          if prev_state[0] < 0 or prev_state[1] < 0 or current_state[0] < 0 or current_state[1] < 0:
+              print(prev_state, current_state, row["latitude"], row["longitude"], grid.min_lat, grid.min_lon, grid.max_lat, grid.max_lon, grid.grid_res_lon_deg, grid.grid_res_lat_deg, "HERE LAT LON")
 
           #TODO - there are a few exceptions to these simplified rule, given that a map could wrap the globe, but keeping simple for now
           # action 0 = stay. Other 8 actions are cardinal + diagonal directions in clockwise order, starting with NW diagonal movement == 1
@@ -236,6 +317,7 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
             for key3 in points[key][key2]:
                 for key4 in points[key][key2][key3]:
                     for key5 in points[key][key2][key3][key4]:
+                        #print(int(key), int(key2), int(key3), int(key4))
                         flat_ind = grid_to_ind(grid, int(key), int(key2)) 
                         #SWIRL works with flat index structure currentl 
                         #TODO investigate tradeoffs of moving back to lat/lon map. I suspect this is correlated to MLP prediction of positions (easier for flat, single number)
@@ -249,7 +331,8 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
                         final_points[0].append(flat_ind) #initial position
                         final_points[1].append(int(key5)) #action
                         final_points[2].append(flat_ind_2) #final position
-                        
+                        #print(flat_ind, int(key5), flat_ind_2)                       
+                        print("FINAL COORDS", flat_ind, int(key5), flat_ind_2, key, key2, key3, key4, key5, points[key][key2][key3][key4][key5] / total_count[key][key2]) 
                         final_data.append(points[key][key2][key3][key4][key5] / total_count[key][key2])
 
     n_states = grid.lon_tiles * grid.lat_tiles
@@ -263,30 +346,118 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
 
 #For now, split - later, can investigate use of loss functions that account for missing data:
 #https://arxiv.org/pdf/1911.06930
- 
+
+def split_pre_split_streams(dfs_by_id, ids, out_dir, run_uid):
+
+    path_length = 30
+
+    final_dfs = {}
+    for i in range(len(dfs_by_id)): 
+        print(ids[i])
+        first_ind = 0
+        actual_ind = -1
+        for index, row in dfs_by_id[i].iterrows():
+             #print(row)
+             if isinstance(row["visible"], str):
+                 row['timestamp'] = row["visible"]
+             row["timestamp"] = row["timestamp"].replace("-", "/")
+             row["timestamp"] = row["timestamp"].replace(" ", "T")
+             if len(row["timestamp"]) < 11: 
+                 row["timestamp"] = row["timestamp"] + " 00:00:00" 
+
+             if row["timestamp"][-6:] == "+00:00":
+                 row["timestamp"] = row["timestamp"][:-6]
+
+             dfs_by_id[i].loc[index, "timestamp"] = row["timestamp"]
+             #row["latitude"] = row["coords_y"]
+             #row["longitude"] = row["coords_x"]
+             dfs_by_id[i].loc[index, "latitude"] = row["latitude"]
+             dfs_by_id[i].loc[index, "longitude"] = row["longitude"]
+
+        dfs_by_id[i] = dfs_by_id[i].sort_values(by=["timestamp"], ascending=[True, True])
+        for index, row in dfs_by_id[i].iterrows():
+             actual_ind = actual_ind +1
+             if actual_ind < 1:
+                 actual_ind = 0
+                 first_ind = 0
+                 try:
+                     last_date = datetime.strptime(row["timestamp"], "%Y/%m/%d %H:%M:%S") 
+                 except ValueError:
+                     last_date = datetime.strptime(row["timestamp"], "%m/%d/%y %H:%M")
+                 final_dfs[ids[i]] = []
+                 continue
+             try:
+                 current_date = datetime.strptime(row["timestamp"], "%Y/%m/%d %H:%M:%S") 
+             except ValueError:
+                 current_date = datetime.strptime(row["timestamp"], "%m/%d/%y %H:%M")
+             date_diff = current_date - last_date
+             if int(round(float(date_diff.total_seconds() / (24.0*60*60)))) > 2 or (actual_ind-first_ind +1) >= path_length or actual_ind == len(dfs_by_id[i])-1:
+                 final_dfs[ids[i]].append(dfs_by_id[i].iloc[first_ind:actual_ind]) 
+                 first_ind = actual_ind
+             last_date = current_date
+
+    for key in final_dfs:
+         for i in range(len(final_dfs[key])):
+             distance_diff = None
+             for index, row in final_dfs[key][i].iterrows():
+                 #print("latitude", "longitude", [row["coords_y"], row["coords_x"]])
+                 if distance_diff is None:
+                     distance_diff = []
+                     last_coord = [row["latitude"], row["longitude"]]
+                     continue
+                 current_coord = [row["latitude"], row["longitude"]]
+                
+                 distance_diff.append(math.sqrt((current_coord[0] - last_coord[0])**2 + (current_coord[1] - last_coord[1])**2))
+             distance_diff = None
+
+    with open(os.path.join(out_dir, run_uid + '_dfs.pkl'), 'wb') as f:
+         pickle.dump(final_dfs, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    return final_dfs
+
+
+
+
 def split_movement_streams(movement_df, out_dir, run_uid):
 
-     movement_df = movement_df.sort_values(by=['id', 'date'])
-     dfs_by_id = [x for _, x in movement_df.groupby(movement_df["id"])]
+     print("SPLITTING Movement streams")
+     movement_df = movement_df.sort_values(['uid', 'timestamp'], ascending=[True, True]) #by=["animal_name", "TimeValue"])       #['id', 'date'])
+     dfs_by_id = [x for _, x in movement_df.groupby(movement_df["uid"])] #["id"])]
      #first_ind = 0
      final_dfs = {}
      for i in range(len(dfs_by_id)):
          first_ind = 0
          actual_ind = -1
+ 
+         dfs_by_id[i].dropna(subset=['timestamp'], inplace=True)
+
          for index, row in dfs_by_id[i].iterrows():
+             if 'visible' in row and isinstance(row["visible"], str):
+                 row['timestamp'] = row["visible"]
+             #row["timestamp"] = row["timestamp"].replace("-", "/")
+             print(row["timestamp"])
+             row["timestamp"] = row["timestamp"].replace(" ", "T")
+             if len(row["timestamp"]) < 11:
+                 row["timestamp"] = row["timestamp"] + " 00:00:00"
+
+             if row["timestamp"][-6:] == "+00:00":
+                 row["timestamp"] = row["timestamp"][:-6]
+             if row["timestamp"][-1] != 'Z':
+                 row["timestamp"] = row["timestamp"] + 'Z'
+
              actual_ind = actual_ind +1
-             if len(row["date"]) == 10:
-                 row["date"] = row["date"] + " 00:00:00"
-             if actual_ind < 1 or row["id"] not in final_dfs:
+             #if len(row["date"]) == 10:
+             #    row["date"] = row["date"] + " 00:00:00"
+             if actual_ind < 1 or row["uid"] not in final_dfs: #["id"] not in final_dfs:
                  actual_ind = 0
                  first_ind = 0
-                 last_date = datetime.strptime(row["date"], "%Y-%m-%d %H:%M:%S")
-                 final_dfs[row["id"]] = []
+                 last_date = datetime.strptime(row["timestamp"], "%Y-%m-%dT%H:%M:%SZ") #row["date"], "%Y-%m-%d %H:%M:%S")
+                 final_dfs[row["uid"]] = [] #["id"]] = []
                  continue
-             current_date = datetime.strptime(row["date"], "%Y-%m-%d %H:%M:%S")
+             current_date = datetime.strptime(row["timestamp"], "%Y-%m-%dT%H:%M:%SZ")        #["date"], "%Y-%m-%d %H:%M:%S")
              date_diff = current_date - last_date
-             if int(round(float(date_diff.total_seconds() / (24.0*60*60)))) > 2 or (actual_ind-first_ind +1) >= 100 or actual_ind == len(dfs_by_id[i])-1:
-                 final_dfs[row["id"]].append(dfs_by_id[i].iloc[first_ind:actual_ind])
+             if int(round(float(date_diff.total_seconds() / (24.0*60*60)))) > 2 or (actual_ind-first_ind +1) >= 50 or actual_ind == len(dfs_by_id[i])-1:
+                 final_dfs[row["uid"]].append(dfs_by_id[i].iloc[first_ind:actual_ind])  #[row["id"]].append(dfs_by_id[i].iloc[first_ind:actual_ind])
                  first_ind = actual_ind
              last_date = current_date
          #if first_ind < len(dfs_by_id[i]):
@@ -299,12 +470,13 @@ def split_movement_streams(movement_df, out_dir, run_uid):
              for index, row in final_dfs[key][i].iterrows():
                  if distance_diff is None:
                      distance_diff = []
-                     last_coord = [row["lat"], row["lon"]]
-                     continue
-                 current_coord = [row["lat"], row["lon"]]
+                     last_coord = [row["latitude"], row["longitude"]] #["latitude"], row["longitude"]]
+                     continue 
+                 current_coord = [row["latitude"], row["longitude"]]  #[row["latitude"], row["longitude"]]
                  distance_diff.append(math.sqrt((current_coord[0] - last_coord[0])**2 + (current_coord[1] - last_coord[1])**2))
              distance_diff = None
  
+     print("SAVING", os.path.join(out_dir, run_uid + '_dfs.pkl'))
      with open(os.path.join(out_dir, run_uid + '_dfs.pkl'), 'wb') as f:
          pickle.dump(final_dfs, f, protocol=pickle.HIGHEST_PROTOCOL)
 
