@@ -29,8 +29,8 @@ data:
     chans: []
     transform: []
   val_percent: 0.1
-  valid_max: 64000000
-  valid_min: -32000.0
+  valid_max: 2000 #64000000
+  valid_min: 0.0 #-32000.0
 
 logger:
   log_model: true
@@ -41,7 +41,7 @@ logger:
 output:
   generate_intermediate_output: true
   generate_train_output: true
-  out_dir: "/mnt/data/NatureNet_Env/output"
+  out_dir: "/data/nlahaye/NatureNet_Env/output"
 
 scaler:
   name: standard

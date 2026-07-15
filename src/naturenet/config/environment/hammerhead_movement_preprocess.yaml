@@ -1,14 +1,23 @@
 
 
-movement_csv: "/mnt/data/NatureNet/Hammerhead_In/Data_aniMotum_CTCRW_output_predicted_rerouted_non-projected_with_Argosfilter_data.csv"
+movement_csv: "/data/nlahaye/NatureNet/Hammerhead_In/Argosfilter_filtered_Sphyrna_SPOT_tracks_multiID_2020-03-13_2024-10-08.augmented.land_jittered.csv"
 
 lon_bounds: [-100.0, -60.0]
 lat_bounds: [20, 40]
 
-grid_res_lon: 0.027 #0.027
-grid_res_lat: 0.027 #0.027
-out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
+grid_res_lon: 0.009000090001 #0.027 #0.027
+grid_res_lat: 0.009000090001 #0.027 #0.027
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+
 run_uid: "hammerhead_v1"
 
 init_preprocess: True
+
+
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+df_run_uid: "hammerhead_v1"
+
+
+skip_uids: [] #["10826__aug6", "10831__aug1", "10831__aug4"]
 

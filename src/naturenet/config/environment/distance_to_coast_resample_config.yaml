@@ -10,11 +10,11 @@ low_res:
   geo_reader_kwargs:
    no_arg: "no_arg"
   filenames: [
-"/mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
+"/data/nlahaye/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
 ]
 
   geo_filenames: [
-"/mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
+"/data/nlahaye/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
 ]
 
   chan_dim: 2
@@ -52,13 +52,14 @@ fusion:
  projection_units: "degrees"
  resample_radius: 5000
  resample_n_neighbors: 64
- resample_n_procs: 10
+ resample_n_procs: 20
  resample_epsilon: 1.6
  use_bilinear: True 
- lon_bounds: [-100.0, -60.0]
- lat_bounds: [20.0, 40.0]
-
+ #lon_bounds: [-100.0, -60.0]
+ #lat_bounds: [20.0, 40.0]
+ lon_bounds: [-126.0, -102.0]
+ lat_bounds: [13, 40]
+ 
        
 output_files: [
-"/mnt/data/NatureNet_Env/Coastal_Dist/GMT_intermediate_coast_distance_01d.tif"
 ]

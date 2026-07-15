@@ -1,8 +1,9 @@
 
 low_res:
  data:
-  valid_min: -300.0
-  valid_max: 100000000
+  valid_min: -10.0
+  valid_max: 100
+  fill_value: -999.0
   reader_type: "noaa_oisst_daily"
   reader_kwargs:
    no_arg: ''
@@ -23,8 +24,8 @@ low_res:
 
 high_res:
  data:
-  valid_min: 0.0
-  valid_max: 100000000
+  valid_min: -10.0
+  valid_max: 100
   reader_type: "numpy"
   reader_kwargs:
    no_arg: "no_arg"
@@ -47,14 +48,13 @@ fusion:
   datum: "WGS84"
  final_resolution: 0.009000090001 #1km
  projection_units: "degrees"
- resample_radius: 5000
- resample_n_neighbors: 64
- resample_n_procs: 10
+ resample_radius: 100000
+ resample_n_neighbors: 32
+ resample_n_procs: 20
  resample_epsilon: 1.6
  use_bilinear: True
  lon_bounds: [-100.0, -60.0]
  lat_bounds: [20.0, 40.0]
 
-       
 output_files: [
 ]
