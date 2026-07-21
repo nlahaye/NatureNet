@@ -33,11 +33,14 @@ from sit_fuse.utils import read_yaml
 
 import argparse
 
+out_dir = "/data/nlahaye/NatureNet/Blue_Whale_LL_Test/"
 
 def loop_arhmm(yml_conf):
 
 
     base_uid = copy.deepcopy(yml_conf["run_uid"])
+
+    yml_conf["out_dir"] = out_dir
 
     for n_states in range(yml_conf["min_latent"], yml_conf["max_latent"], 1):
         yml_conf["n_hidden"] = n_states
