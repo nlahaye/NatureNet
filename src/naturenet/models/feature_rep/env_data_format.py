@@ -42,6 +42,7 @@ def gen_scene_list(yml_conf):
 
     tme = datetime.strptime(start_time,"%Y-%m-%d")
     for i in range(n_days):
+        print(glob_start + str(i) + glob_end)
         fname = glob.glob(glob_start + str(i) + glob_end)[0]
         if "tif" in fname:
             dat = gdal.Open(fname).ReadAsArray() 
@@ -234,7 +235,7 @@ def compress_clusters(yml_conf):
 
     print("MAPPER")
     pprint(mapper)
-    with open(os.path.join(out_dir, output_uid + "_whale_class_mapper.pkl"), "wb") as f:
+    with open(os.path.join(out_dir, output_uid + "_class_mapper.pkl"), "wb") as f:
         pickle.dump(mapper, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
@@ -334,7 +335,7 @@ if __name__ == '__main__':
   
     yml_conf = read_yaml(args.yaml)
 
-    #gen_scene_list(yml_conf)
+    gen_scene_list(yml_conf)
  
     if yml_conf["sit_fuse_output"]:
         compress_clusters(yml_conf)
