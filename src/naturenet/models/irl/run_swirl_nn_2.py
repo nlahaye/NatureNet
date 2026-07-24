@@ -128,9 +128,9 @@ def run_swirl_nn(yml_conf):
     one_hota = vmap(partial(one_hota_partial_nn, n_actions=n_actions))
 
     print("Finalizing preprocessing") 
-    all_xohs = vmap(one_hotx)(positions[:, 1:])
-    all_xohs2, all_xs2 = vmap(one_hotx2)(positions[:, 1:], jnp.roll(positions[:, 1:], 1))
-    all_aohs = vmap(one_hota)(actions[:, 1:])
+    all_xohs = one_hotx(positions[:, 1:])
+    all_xohs2, all_xs2 = one_hotx2(positions[:, 1:], jnp.roll(positions[:, 1:], 1))
+    all_aohs = one_hota(actions[:, 1:])
 
     trans_probs = trans_probs.astype(jnp.bfloat16)
     new_trans_probs = new_trans_probs.astype(jnp.bfloat16)

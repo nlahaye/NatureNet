@@ -176,12 +176,12 @@ def run_swirl_init(yml_conf):
     one_hota = vmap(partial(one_hota_partial, n_actions=n_actions))
  
 
-    print(positions.shape, positions.shape, n_actions, n_states)
+    print(positions.shape, positions[:, 1:].shape, n_actions, n_states)
     all_xs_prev = preprocess_xs_prev_np(positions[:, 1:], positions[:, :-1], prev_state_map, n_actions, n_states)
-    all_xohs = vmap(one_hotx)(positions[:, 1:])
-    all_xohs_prev = vmap(one_hotx)(positions[:, :-1])
-    all_xohs2 = vmap(one_hotx2)(positions[:, 1:], all_xs_prev)
-    all_aohs = vmap(one_hota)(actions[:, 1:])
+    all_xohs = one_hotx(positions[:, 1:])
+    all_xohs_prev = one_hotx(positions[:, :-1])
+    all_xohs2 = one_hotx2(positions[:, 1:], all_xs_prev)
+    all_aohs = one_hota(actions[:, 1:])
  
     temps = jnp.array([1] + [1] * (n_hidden_init- 1))
 
@@ -314,7 +314,7 @@ def run_swirl_final(yml_conf):
     one_hota = vmap(partial(one_hota_partial, n_actions=n_actions))
 
  
-    all_aohs = vmap(one_hota)(actions[:, 1:])
+    all_aohs = one_hota(actions[:, 1:])
 
     trans_prob = trans_prob.todense()
     for train_index, test_index in kf.split(all_aohs):
@@ -399,9 +399,9 @@ def run_swirl_final(yml_conf):
     
         print("Finalizing preprocessing") 
         all_xs_prev = preprocess_xs_prev_np(positions[:, 1:], positions[:, :-1], prev_state_map, n_actions, n_states)
-        all_xohs = vmap(one_hotx)(positions[:, 1:])
-        all_xohs_prev = vmap(one_hotx)(positions[:, :-1])
-        all_xohs2 = vmap(one_hotx2)(positions[:, 1:], all_xs_prev)
+        all_xohs = one_hotx(positions[:, 1:])
+        all_xohs_prev = one_hotx(positions[:, :-1])
+        all_xohs2 = one_hotx2(positions[:, 1:], all_xs_prev)
 
         train_aohs, test_aohs = all_aohs[train_index], all_aohs[test_index]
         train_xohs, test_xohs = all_xohs[train_index], all_xohs[test_index]
