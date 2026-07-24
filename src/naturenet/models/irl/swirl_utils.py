@@ -94,36 +94,29 @@ def one_hot_jax2(hidden, hidden_prev, n_hidden_states, n_actions):
     zoh = jnp.reshape(zoh, shp + (n_hidden_states_2,))
     return zoh
 
-def one_hotx_partial(xs):
-    global n_states
-    n_states = 98 #146 #TODO
+def one_hotx_partial(xs, n_states):
+    #n_states = 98 #146 #TODO
     return one_hot_jax(xs[:, None], n_states)
 
-def one_hotx2_partial(xs, xs_prev):
-    global n_states 
-    n_states = 98 # 146TODO
-    n_actions = 9 #TODO
+def one_hotx2_partial(xs, xs_prev, n_states, n_actions):
+    #n_states = 98 # 146TODO
+    #n_actions = 9 #TODO
     return one_hot_jax2(xs[:, None], xs_prev[:, None], n_states, n_actions)
 
-def one_hota_partial(acs):
-    global n_actions
-    n_actions = 9 #TODO
+def one_hota_partial(acs, n_actions):
+    #n_actions = 9 #TODO
     return one_hot_jax(acs[:, None], n_actions)
 
-def one_hotx_partial_nn(xs):
-    global n_states
-    n_states = 98 #146 #TODO
+def one_hotx_partial_nn(xs, n_states):
+    #n_states = 98 #146 #TODO
     return one_hot_jax_nn(xs[:, None], n_states)
 
-def one_hotx2_partial_nn(xs, xs_prev):
-    global n_states
-    n_states = 98 # 146TODO
-    #n_actions = 9 #TODO
-    return one_hot_jax2_nn(xs[:, None], xs_prev[:, None], n_states)
+def one_hotx2_partial_nn(xs, xs_prev, n_states):
+    #n_states = 98 # 146TODO
+    return one_hot_jax2_nn(xs[:, None], xs_prev[:, None], n_states, n_actions)
 
-def one_hota_partial_nn(acs):
-    global n_actions
-    n_actions = 9 #TODO
+def one_hota_partial_nn(acs, n_actions):
+    #n_actions = 9 #TODO
     return one_hot_jax_nn(acs[:, None], n_actions)
 
 

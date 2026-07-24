@@ -123,10 +123,14 @@ def run_swirl_nn(yml_conf):
                     if trans_probs[s, a, s_prime] > 0:
                         new_trans_probs[s * n_states + s_prev, a, s_prime * n_states + s] = trans_probs[s, a, s_prime]
   
+    one_hotx = vmap(partial(one_hotx_partial_nn, n_states=n_states))
+    one_hotx2 = vmap(partial(one_hotx2_partial_nn, n_states=n_states, n_actions=n_actions))
+    one_hota = vmap(partial(one_hota_partial_nn, n_actions=n_actions))
+
     print("Finalizing preprocessing") 
-    all_xohs = vmap(one_hotx_partial_nn)(positions[:, 1:])
-    all_xohs2, all_xs2 = vmap(one_hotx2_partial_nn)(positions[:, 1:], jnp.roll(positions[:, 1:], 1))
-    all_aohs = vmap(one_hota_partial_nn)(actions[:, 1:])
+    all_xohs = vmap(one_hotx)(positions[:, 1:])
+    all_xohs2, all_xs2 = vmap(one_hotx2)(positions[:, 1:], jnp.roll(positions[:, 1:], 1))
+    all_aohs = vmap(one_hota)(actions[:, 1:])
 
     trans_probs = trans_probs.astype(jnp.bfloat16)
     new_trans_probs = new_trans_probs.astype(jnp.bfloat16)
