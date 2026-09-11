@@ -45,10 +45,10 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
     Rs_start = arhmm_s.transitions.Rs
     #Rs_start = arhmm_s.transitions.W1, arhmm_s.transitions.b1, arhmm_s.transitions.W2, arhmm_s.transitions.b2
 
-    fname = run_uid + "_" + str(n_hidden_states) + "_hidden_" + str(seed) + '_seed_arhmm_s_KF_' + str(kf_ind) + '.npz'
+    fname = run_uid + "_" + str(n_hidden_states) + "_hidden_" + str(seed) + '_seed_arhmm_nn_s_KF_' + str(kf_ind) + '.npz'
     fname = os.path.join(out_dir, fname) 
 
-    fname_ll = run_uid + "_" + str(n_hidden_states) + "_hidden_" + str(seed) + '_seed_arhmm_s_LLs_KF_' + str(kf_ind) + '.npz'
+    fname_ll = run_uid + "_" + str(n_hidden_states) + "_hidden_" + str(seed) + '_seed_arhmm_nn_s_LLs_KF_' + str(kf_ind) + '.npz'
     fname_ll = os.path.join(out_dir, fname_ll)
  
     np.savez(fname, init_start=init_start, logpi0_start=logpi0_start, log_Ps_start=log_Ps_start, Rs_start=Rs_start) #W1_start=Rs_start[0], b1_start=Rs_start[1], W2_start=Rs_start[2], b2_start=Rs_start[3])

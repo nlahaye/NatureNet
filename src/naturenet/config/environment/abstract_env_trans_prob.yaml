@@ -5,7 +5,7 @@ movement_csv: "/data/nlahaye/NatureNet/Hammerhead_In/Data_aniMotum_CTCRW_output_
 out_dir: "/data/nlahaye/NatureNet_Env/output"
 run_uid: "simple_env"
 
-n_clusters: 150
+n_clusters: 75
 df_run_uid: "hammerhead_v1"
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
 

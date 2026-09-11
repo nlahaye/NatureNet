@@ -781,65 +781,65 @@ def run_full_analysis(df: pd.DataFrame,
 
 main_dir = "/data/nlahaye/NatureNet/Blue_Whale_v1/"
 
-second_dir = ["s1_complex", "s1_simple", "s2_complex", "s2_simple"]
+second_dir = ["whale"] #s1_complex", "s1_simple", "s2_complex", "s2_simple"]
 
 keys = ["full", "males", "females", "unknown"]
 
 data_slices = {
 "full": [
-"2017CA-Bmu-00826_time_series_pd.xlsx",
-"2017CA-Bmu-05679_time_series_pd.xlsx",
-"2017CA-Bmu-00827_time_series_pd.xlsx",
-"2017CA-Bmu-05803_time_series_pd.xlsx",
-"2017CA-Bmu-00831_time_series_pd.xlsx",
-"2017CA-Bmu-05840_time_series_pd.xlsx",
-"2017CA-Bmu-00835_time_series_pd.xlsx",
-"2017CA-Bmu-05910_time_series_pd.xlsx", #7
-"2017CA-Bmu-00841_time_series_pd.xlsx",
-"2017CA-Bmu-05921_time_series_pd.xlsx",
-"2017CA-Bmu-00845_time_series_pd.xlsx",
-"2017CA-Bmu-10826_time_series_pd.xlsx",
-"2017CA-Bmu-00847_time_series_pd.xlsx",
-"2017CA-Bmu-10830_time_series_pd.xlsx",
-"2017CA-Bmu-01385_time_series_pd.xlsx", #15
-"2017CA-Bmu-10831_time_series_pd.xlsx",
-"2017CA-Bmu-04176_time_series_pd.xlsx",  
-"2017CA-Bmu-10840_time_series_pd.xlsx",
+"826_time_series_pd.xlsx",
+"5679_time_series_pd.xlsx",
+"827_time_series_pd.xlsx",
+"5803_time_series_pd.xlsx",
+"831_time_series_pd.xlsx",
+"5840_time_series_pd.xlsx",
+"835_time_series_pd.xlsx",
+"5910_time_series_pd.xlsx", #7
+"841_time_series_pd.xlsx",
+"5921_time_series_pd.xlsx",
+"845_time_series_pd.xlsx",
+"10826_time_series_pd.xlsx",
+"847_time_series_pd.xlsx",
+"10830_time_series_pd.xlsx",
+"1385_time_series_pd.xlsx", #15
+"10831_time_series_pd.xlsx",
+"4176_time_series_pd.xlsx",  
+"10840_time_series_pd.xlsx",
 
-"2017CA-Bmu-05648_time_series_pd.xlsx",  
-"2017CA-Bmu-23031_time_series_pd.xlsx", #20
-"2017CA-Bmu-05670_time_series_pd.xlsx",
+"5648_time_series_pd.xlsx",  
+"23031_time_series_pd.xlsx", #20
+"5670_time_series_pd.xlsx",
 ],
 
 
 "males": [
-"2017CA-Bmu-00827_time_series_pd.xlsx",
-"2017CA-Bmu-10840_time_series_pd.xlsx",
-"2017CA-Bmu-23031_time_series_pd.xlsx",
-"2017CA-Bmu-00826_time_series_pd.xlsx",
-"2017CA-Bmu-00841_time_series_pd.xlsx",
-"2017CA-Bmu-05648_time_series_pd.xlsx",
-"2017CA-Bmu-05670_time_series_pd.xlsx",
-"2017CA-Bmu-05803_time_series_pd.xlsx",
-"2017CA-Bmu-05921_time_series_pd.xlsx",
-"2017CA-Bmu-10826_time_series_pd.xlsx",
+"827_time_series_pd.xlsx",
+"10840_time_series_pd.xlsx",
+"23031_time_series_pd.xlsx",
+"826_time_series_pd.xlsx",
+"841_time_series_pd.xlsx",
+"5648_time_series_pd.xlsx",
+"5670_time_series_pd.xlsx",
+"5803_time_series_pd.xlsx",
+"5921_time_series_pd.xlsx",
+"10826_time_series_pd.xlsx",
 ],
 
 "females": [
-"2017CA-Bmu-00831_time_series_pd.xlsx",
-"2017CA-Bmu-00835_time_series_pd.xlsx",
-"2017CA-Bmu-00845_time_series_pd.xlsx",
-"2017CA-Bmu-04176_time_series_pd.xlsx",
-"2017CA-Bmu-05910_time_series_pd.xlsx",
+"831_time_series_pd.xlsx",
+"835_time_series_pd.xlsx",
+"845_time_series_pd.xlsx",
+"4176_time_series_pd.xlsx",
+"5910_time_series_pd.xlsx",
 ],
 
 "unknown": [
-"2017CA-Bmu-01385_time_series_pd.xlsx",
-"2017CA-Bmu-05840_time_series_pd.xlsx",
-"2017CA-Bmu-10830_time_series_pd.xlsx",
-"2017CA-Bmu-10831_time_series_pd.xlsx",
-"2017CA-Bmu-00847_time_series_pd.xlsx",
-"2017CA-Bmu-05679_time_series_pd.xlsx",
+"1385_time_series_pd.xlsx",
+"5840_time_series_pd.xlsx",
+"10830_time_series_pd.xlsx",
+"10831_time_series_pd.xlsx",
+"847_time_series_pd.xlsx",
+"5679_time_series_pd.xlsx",
 ]
 }
 

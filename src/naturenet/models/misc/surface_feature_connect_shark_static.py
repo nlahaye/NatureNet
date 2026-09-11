@@ -1,6 +1,6 @@
 
-from naturenet.models.feature_rep.rs_feature_reduce import MultiSourceRSFeatureReduc
-from naturenet.models.feature_rep.rs_feature_net import RSFeatureNet
+#from naturenet.models.feature_rep.rs_feature_reduce import MultiSourceRSFeatureReduc
+#from naturenet.models.feature_rep.rs_feature_net import RSFeatureNet
 
 from sit_fuse.pipelines.inference.inference_utils import run_embed_gen_from_scene_arr
 from sit_fuse.preprocessing.colocate_and_resample import resample_scene
@@ -200,7 +200,7 @@ def gen_prelim_scene_map(yml_conf, scene_count, per_channel_stats):
                 data, location = resample_or_fuse_scene(scene, init_location,  resample_config)
                 del scene
 
-                print("Post-resample data imputation", instrument, i)
+                print("Post-resample data imputation", instrument, i, data.shape, location.shape)
                 #Impute across fill values for now - may want to change approach later on #TODO - revisit
                 for ch in range(data.shape[0]):
                     subd = data[ch]
@@ -208,23 +208,26 @@ def gen_prelim_scene_map(yml_conf, scene_count, per_channel_stats):
                     subd[inds] = per_channel_stats[instrument]["mean"][ch]
                     data[ch] = subd
 
-                print("Generating grid info", instrument, i)
+                
+                print("Generating grid info", instrument, i, data.shape)
                 if instrument not in prelim_scene_map:
                     prelim_scene_map[instrument] = {"scenes" : []} 
                 #Generate inital grid info per-scene
-                if "final_grid" not in prelim_scene_map or "tile_size" not in prelim_scene_map[instrument]:
-                    #Can ignore resampled lat/lon for now - may be useful later
-                    final_data, final_loc, final_grid_steps, final_grid_coords = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = True) 
-                    #tile size will vary relative to native resolution
-                    prelim_scene_map["final_grid"] = final_grid_coords
-                    prelim_scene_map[instrument]["tile_size"] = final_grid_steps
-                else:
-                    final_data, final_loc, final_grid_steps, _ = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = False)
-                prelim_scene_map[instrument]["scenes"].append(final_data)
+                #if "final_grid" not in prelim_scene_map or "tile_size" not in prelim_scene_map[instrument]:
+                #    #Can ignore resampled lat/lon for now - may be useful later
+                #    final_data, final_loc, final_grid_steps, final_grid_coords = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = True) 
+                #    #tile size will vary relative to native resolution
+                #    prelim_scene_map["final_grid"] = final_grid_coords
+                #    prelim_scene_map[instrument]["tile_size"] = final_grid_steps
+                #else:
+                #    final_data, final_loc, final_grid_steps, _ = gen_grid_info(location, data, yml_conf["final_grid_res_deg"], per_channel_stats, compute_final_grid_info = False)
+                prelim_scene_map[instrument]["scenes"].append(data) #(final_data)
                 if instrument in pre_baked:
-                    pre_baked[instrument]["final_data"] = final_data
+                    pre_baked[instrument]["final_data"] = data #final_data 
             else:
                 prelim_scene_map[instrument]["scenes"].append(copy.deepcopy(pre_baked[instrument]["final_data"]))
+                print("APPENDING DATA TO FINAL LIST", prelim_scene_map[instrument]["scenes"][-1].shape, pre_baked[instrument]["final_data"].shape)
+
 
             print("Associating times to grid", instrument, i)
             if "times" not in prelim_scene_map:

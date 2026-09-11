@@ -1,7 +1,4 @@
 
-from naturenet.models.feature_rep.rs_feature_reduce import MultiSourceRSFeatureReduc
-from naturenet.models.feature_rep.rs_feature_net import RSFeatureNet
-
 from sit_fuse.pipelines.inference.inference_utils import run_embed_gen_from_scene_arr
 from sit_fuse.preprocessing.colocate_and_resample import resample_scene
 from sit_fuse.datasets.dataset_utils import get_scenes

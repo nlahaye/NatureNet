@@ -68,7 +68,6 @@ def run_swirl_nn(yml_conf):
     out_dir = yml_conf["out_dir"]
  
     run_uid = yml_conf["run_uid"]
-    arhmm_s_fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden_init) + "_hidden_" + str(seed) + '_seed_arhmm_s.npz')
     #time_interval_params = run_uid + "_time_interval_run_" + str(n_hidden_init) + '_' + str(seed) + "_naturenet_init1.npz"
 
     trans_probs = sparse.load_npz(trans_prob_fpath)
@@ -101,11 +100,6 @@ def run_swirl_nn(yml_conf):
 
     n_states, n_actions, _ = trans_probs.shape
 
-
-    arhmm_s_params = np.load(arhmm_s_fname, allow_pickle=True)
-    logpi0_start = arhmm_s_params['logpi0_start']
-    log_Ps_start = arhmm_s_params['log_Ps_start']
-    Rs_start = arhmm_s_params["Rs_start"] #arhmm_s_params['W1_start'], arhmm_s_params['b1_start'], arhmm_s_params['W2_start'], arhmm_s_params['b2_start']
   
     rng = jax.random.PRNGKey(0)
     hidden_size = 32
@@ -126,26 +120,30 @@ def run_swirl_nn(yml_conf):
                         new_trans_probs[s * n_states + s_prev, a, s_prime * n_states + s] = trans_probs[s, a, s_prime]
  
     one_hotx = vmap(partial(one_hotx_partial_nn, n_states=n_states))
-    one_hotx2 = vmap(partial(one_hotx2_partial_nn, n_states=n_states, n_actions=n_actions))
+    #one_hotx2 = vmap(partial(one_hotx2_partial_nn, n_states=n_states))
     one_hota = vmap(partial(one_hota_partial_nn, n_actions=n_actions))
 
     print("Finalizing preprocessing") 
     all_xohs = one_hotx(positions[:, 1:])
-    all_xohs2, all_xs2 = one_hotx2(positions[:, 1:], jnp.roll(positions[:, 1:], 1))
+    #all_xohs2, all_xs2 = one_hotx2(positions[:, 1:], jnp.roll(positions[:, 1:], 1))
     all_aohs = one_hota(actions[:, 1:])
 
  
     kf = KFold(n_splits=5)
     kf_ind = 0
     for train_index, test_index in kf.split(all_aohs):
-         #f kf_ind < 3:
-         #   kf_ind = kf_ind + 1
-         #   continue
+  
+        arhmm_s_fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden_init) + "_hidden_" + str(seed) + '_seed_arhmm_nn_s_KF_' + str(kf_ind) + '.npz')
+
+        arhmm_s_params = np.load(arhmm_s_fname, allow_pickle=True)
+        logpi0_start = arhmm_s_params['logpi0_start']
+        log_Ps_start = arhmm_s_params['log_Ps_start']
+        Rs_start = arhmm_s_params["Rs_start"] #arhmm_s_params['W1_start'], arhmm_s_params['b1_start'], arhmm_s_params['W2_start'], arhmm_s_params['b2_start']
 
 
         train_aohs, test_aohs = all_aohs[train_index], all_aohs[test_index]
         train_xohs, test_xohs = all_xohs[train_index], all_xohs[test_index]
-        train_xohs2, test_xohs2 = all_xohs2[train_index], all_xohs2[test_index]
+        #train_xohs2, test_xohs2 = all_xohs2[train_index], all_xohs2[test_index]
 
         print(all_aohs.shape, test_aohs.shape, train_aohs.shape)
 

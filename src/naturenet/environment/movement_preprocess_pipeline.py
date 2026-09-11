@@ -42,7 +42,7 @@ def run_movement_track_preprocess(yml_conf):
 
     elif os.path.exists(df_fname):
         
-        movement_dfs = s = None
+        movement_dfs = None
         with open(df_fname, "rb") as f:
             movement_dfs = pd.read_pickle(f)
     else:

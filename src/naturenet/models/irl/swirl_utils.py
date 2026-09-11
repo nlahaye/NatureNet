@@ -113,7 +113,7 @@ def one_hotx_partial_nn(xs, n_states):
 
 def one_hotx2_partial_nn(xs, xs_prev, n_states):
     #n_states = 98 # 146TODO
-    return one_hot_jax2_nn(xs[:, None], xs_prev[:, None], n_states, n_actions)
+    return one_hot_jax2_nn(xs[:, None], xs_prev[:, None], n_states)
 
 def one_hota_partial_nn(acs, n_actions):
     #n_actions = 9 #TODO

@@ -27,39 +27,62 @@ class Grid(object):
         self.grid_res_lon_deg = grid_res_lon_deg
         self.grid_res_lat_deg = grid_res_lat_deg
 
-        self.lon_size = (max_lon - min_lon + 1) / self.grid_res_lon_deg
-        self.lat_size = (max_lat - min_lat + 1) / self.grid_res_lat_deg
+        self.lon_size = (max_lon - min_lon) / self.grid_res_lon_deg
+        self.lat_size = (max_lat - min_lat) / self.grid_res_lat_deg
  
         self.lon_tiles = math.ceil(self.lon_size)
         self.lat_tiles = math.ceil(self.lat_size)
 
         print(self.lon_tiles, self.lat_tiles)
 
-def grid_to_lat_lon(grid, x, y):
 
-    lon = int(x)*grid.grid_res_lon_deg + grid.min_lon + (grid.grid_res_lon_deg / 2)
-    lat = int(y)*grid.grid_res_lat_deg + grid.min_lat + (grid.grid_res_lat_deg / 2)
+def grid_to_lat_lon(grid, row: int, col: int) -> tuple[float, float]:
+    """Return the center of a cell in a north-up, top-left-origin grid."""
+    if not (0 <= col < grid.lon_tiles and 0 <= row < grid.lat_tiles):
+        raise IndexError(
+            f"Cell ({col}, {row}) is outside grid dimensions "
+            f"({grid.lon_tiles}, {grid.lat_tiles})"
+        )
 
-    return (lon, lat)
-
-def lat_lon_to_grid(grid, lat, lon):
-
-    print("HERE", lat, lon, grid.min_lon, grid.min_lat, grid.grid_res_lon_deg, grid.grid_res_lat_deg)
-
-    x = int((lon - grid.min_lon)/ grid.grid_res_lon_deg)
-    y = int((lat - grid.min_lat) / grid.grid_res_lat_deg)
- 
-    return (y, x)
-
-def grid_to_ind(grid, y, x):
-    return (y*grid.lon_tiles) + x
+    lon = grid.min_lon + (col + 0.5) * grid.grid_res_lon_deg
+    lat = grid.max_lat - (row + 0.5) * grid.grid_res_lat_deg
+    return lat, lon
 
 
-def ind_to_grid(grid, ind):
-    y = int(ind / grid.lon_tiles)
-    x = int(ind - (y*grid.lon_tiles))
-    return y, x
+def lat_lon_to_grid(grid, lat: float, lon: float) -> tuple[int, int]:
+    """Return the zero-based (col, row) of the cell containing lon/lat.
 
+    Assumes:
+      - min_lon is the west outer grid edge
+      - max_lat is the north outer grid edge
+      - col increases west -> east
+      - row increases north -> south
+      - both resolutions are positive degree magnitudes
+    """
+    col = math.floor((lon - grid.min_lon) / grid.grid_res_lon_deg)
+    row = math.floor((grid.max_lat - lat) / grid.grid_res_lat_deg)
+
+    if not (0 <= col < grid.lon_tiles and 0 <= row < grid.lat_tiles):
+        raise ValueError(
+            f"Coordinate ({lon}, {lat}) lies outside the grid extent: "
+            f"[{grid.min_lon}, {grid.min_lon + grid.lon_tiles * grid.grid_res_lon_deg}) "
+            f"x "
+            f"({grid.max_lat - grid.lat_tiles * grid.grid_res_lat_deg}, {grid.max_lat}]"
+        )
+
+    return row, col
+
+def grid_to_ind(grid, row: int, col: int) -> int:
+    """Convert zero-based (row, col) to a C-order flat index."""
+
+    width = grid.lon_tiles
+    return row * width + col
+
+
+def ind_to_grid(index: int, width: int) -> tuple[int, int]:
+    """Convert a C-order flat index to zero-based (row, col)."""
+    row, col = divmod(index, width)
+    return row, col
 
 
 #def build_movement_kernel_features(movement_df, abstract_grid, actions, grid, ancillary_data):
@@ -216,7 +239,7 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
     deg_grid = np.zeros((grid.lat_tiles, grid.lon_tiles, 2))
     for lt in range(grid.lat_tiles):
         for ln in range(grid.lon_tiles):
-            glon, glat = grid_to_lat_lon(grid, ln, lt)
+            glat, glon = grid_to_lat_lon(grid, lt, ln)
             deg_grid[lt,ln,0] = glat
             deg_grid[lt,ln,1] = glon
 
@@ -294,7 +317,7 @@ def compute_transition_probabilities(movement_df, grid, total_count = {}, points
  
         single_ind_positions.append(grid_to_ind(grid, current_state[0], current_state[1]))
         distance_grid = np.zeros((grid.lat_tiles, grid.lon_tiles))
-        lon, lat = grid_to_lat_lon(grid, current_state[1], current_state[0])
+        lat, lon = grid_to_lat_lon(grid, current_state[0], current_state[1])
         for lt in range(grid.lat_tiles):
             for ln in range(grid.lon_tiles):
                 distance_grid[lt,ln] = math.sqrt((lat - deg_grid[lt,ln,0])**2 + (lon - deg_grid[lt,ln,1])**2)
