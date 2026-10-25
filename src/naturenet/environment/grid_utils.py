@@ -124,6 +124,42 @@ def combine_errs_and_paths(movement_df, err_df):
 
 
 
+def gather_input_features(movement_df, feature_grid, grid):
+
+    states = []
+    act_ind = 0
+
+    feature_grid = np.array(feature_grid, dtype=np.float16)
+    for index, row in movement_df.iterrows():
+
+        if "longitude" in row.keys():
+            row["longitude"] = row["longitude"]
+            row["latitude"] = row["latitude"]
+        #print(row.keys())
+        #Fixing one-off indexing iin some rows lat/lon swap
+        if (row["latitude"] >= grid.min_lon and row["latitude"] <= grid.max_lon) and ( row["latitude"] > grid.max_lat or row["latitude"] < grid.min_lat):
+            tmp = row["longitude"]
+            row["longitude"] = row["latitude"]
+            row["latitude"] = tmp
+
+        if feature_grid[act_ind] is None:
+            states.append(current_state_abs)
+            act_ind = act_ind + 1
+            continue
+        if act_ind == 0:
+            current_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"]) #row["latitude"], row["longitude"])
+            current_state_abs = feature_grid[act_ind][:,current_state[0], current_state[1]]
+        else:
+            current_state = lat_lon_to_grid(grid, row["latitude"], row["longitude"]) #row["latitude"], row["longitude"])
+            current_state_abs = feature_grid[act_ind][:,current_state[0], current_state[1]]
+            print(act_ind, current_state_abs.shape)
+            states.append(current_state_abs)
+            if current_state_abs is None:
+                act_ind = act_ind + 1
+                continue
+        act_ind = act_ind + 1
+ 
+    return states
 
 
 def compute_transition_probs_abstracted_env(movement_df, abstract_grid, actions, grid, n_clusters, total_count = {}, points = None):
