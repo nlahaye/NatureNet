@@ -11,7 +11,8 @@ import pandas as pd
 from sit_fuse.utils import read_yaml
 import numpy as np
 
-from naturenet.environment.grid_utils import Grid, compute_transition_probabilities, split_movement_streams, compute_transition_probs_abstracted_env, lat_lon_to_grid, split_pre_split_streams, streamline_columns
+from naturenet.environment.grid_utils import Grid, compute_transition_probabilities, split_movement_streams,\
+ compute_transition_probs_abstracted_env, lat_lon_to_grid, split_pre_split_streams, streamline_columns, gather_input_features
 
 
 
@@ -224,6 +225,65 @@ def reprocess_env_stats_abstract(yml_conf):
          pickle.dump(points, f, protocol=pickle.HIGHEST_PROTOCOL)
 
  
+def generate_input_feature_states(yml_conf):
+
+    movement_dfs = None
+    grid = None
+    feature_grid = None
+
+    df_uid = yml_conf["df_run_uid"]
+    df_dir = yml_conf["df_dir"]
+
+    uids = yml_conf["uids"]
+
+    run_uid = yml_conf["run_uid"]
+    out_dir = yml_conf["out_dir"]
+  
+    feature_dir = yml_conf["feature_dir"]
+    feature_uid = yml_conf["feature_uid"] #cop_env_whales
+
+
+    with open(os.path.join(df_dir, df_uid + '_dfs.pkl'), "rb") as f:
+        movement_dfs = pd.read_pickle(f)
+
+    n_clusters = yml_conf["n_clusters"]
+
+    total_count = {}
+    points = None
+    for key in movement_dfs.keys():
+        if key not in uids:
+            continue
+        grid = None
+        actions = None
+
+        print("OPENING", os.path.join(feature_dir, feature_uid + "_" + key + ".pkl"))
+        with open(os.path.join(feature_dir, feature_uid + "_" + key + ".pkl"), "rb") as f: 
+            feature_grid = pickle.load(f)
+
+        df_uid = yml_conf["df_run_uid"] + "_" + key
+        with open(os.path.join(df_dir, df_uid + "_grid.pkl"), "rb") as f:
+            grid = pickle.load(f)
+
+        with open(os.path.join(df_dir, df_uid + "_actions.pkl"), "rb") as f:
+            actions = pickle.load(f)
+
+        feature_grid_sub = feature_grid[key]
+        movement_sub_df = movement_dfs[key]
+
+        #total_count = {}
+        #points = None
+        states_full = []
+
+        print(len(movement_sub_df))
+        for i in range(len(movement_sub_df)):
+
+            states = gather_input_features(movement_sub_df[i], feature_grid_sub[i], grid)
+            states_full.append(states)
+
+        print("SAVING", os.path.join(df_dir, yml_conf["df_run_uid"] + "_" + str(key) + "_states_input.pkl"))
+        with open(os.path.join(df_dir, yml_conf["df_run_uid"] + "_" + str(key) + "_states_input.pkl"), "wb") as f:
+            pickle.dump(states_full, f, protocol=pickle.HIGHEST_PROTOCOL)
+
 
 if __name__ == '__main__':
 
@@ -237,8 +297,10 @@ if __name__ == '__main__':
  
     if yml_conf["init_preprocess"]:
         run_movement_track_preprocess(yml_conf)
+    elif "gather_input" in yml_conf and yml_conf["gather_input"]:
+        generate_input_feature_states(yml_conf)
     else:
-       reprocess_env_stats_abstract(yml_conf)
+        reprocess_env_stats_abstract(yml_conf)
         
 
 
