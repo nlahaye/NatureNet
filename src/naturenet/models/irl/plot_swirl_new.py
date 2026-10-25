@@ -414,6 +414,152 @@ def get_season(month):
         return 4
 
 
+def plot_time_series_input(learnt_zs, env_maps, input_keys, paths, f, n_hidden, out_dir, color_list, uids):
+
+
+    for i in range(n_hidden):
+        f[i] = normalize(f[i])
+    f = np.round(f, decimals=2)
+    run = False
+
+    env_trajectories = {}
+    env_states = []
+
+    act_ind_0 = -1
+    #Number of paths
+    for i in range(learnt_zs.shape[0]):
+
+        env_states.append([])
+
+        #check if path is jittered augmentation, or original observed path
+        uid_simple = re.sub("__aug\d+", "", uids[i])
+        if uids[i] != uid_simple:
+            continue
+
+        act_ind_0 = act_ind_0 + 1
+
+
+        zs = learnt_zs[i]
+        path = paths[i]
+
+
+ 
+        dir_name = "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+        fle_name = "hammerhead_v1_" + str (uids[i]) + "_states_input.pkl"
+        with open(os.path.join(dir_name, fle_name), 'rb') as f:
+            input_env_maps  = pickle.load(f)
+
+        env_map = input_env_maps
+        out_env_map = env_maps[i]
+        env_states.append(out_env_map)
+        #preprocess static params
+
+        #Number of input params
+        for k in range(len(input_keys)):
+            if input_keys[k] not in env_trajectories:
+                env_trajectories[input_keys[k]] = []
+            #Number of steps per path
+            act_ind = 0
+            for j in range(len(env_map)):
+                if len(env_map[j]) < 46:
+                    continue
+                if len(env_trajectories[input_keys[k]]) < act_ind + 1:
+                    env_trajectories[input_keys[k]].append([])
+                for n in range(len(env_map[j])-1):
+                    env_trajectories[input_keys[k]][act_ind].append(env_map[j][n][k])
+                print(len(env_map), len(env_map[j]), len(env_map[act_ind]), "ENV_MAP")
+                print(env_map[0][0].shape)
+                act_ind = act_ind + 1
+
+    uid_ind = 0
+    dct = {}
+    dct_tmp  = {"x": None, "out_env": None, "reward": None}
+
+
+    for i in range(learnt_zs.shape[0]):
+        print(learnt_zs.shape, uids[i])
+
+
+  
+    unique_uids = np.unique(uids)
+    act_ind = 0
+    full_ind = 0
+    for i in range(unique_uids.shape[0]):
+        dir_name = "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+        fle_name = "hammerhead_v1_" + str (unique_uids[i]) + "_states_input.pkl"
+        with open(os.path.join(dir_name, fle_name), 'rb') as f:
+            input_env_maps  = pickle.load(f)
+
+        uid = unique_uids[i]
+     
+        if unique_uids[i] not in dct:
+            dct[unique_uids[i]] = copy.deepcopy(dct_tmp)
+    
+        env_map = []
+        for j in range(len(input_env_maps)):
+            if len(input_env_maps[j]) > 46:
+                print("HERE ENV MAP", len(input_env_maps[j]), len(input_env_maps), len(env_states), len(paths))
+                env_map.append(input_env_maps[j])
+
+        env_states_f = []
+        for j in range(len(env_states)):
+            if len(env_states[j]) > 46:
+                env_states_f.append(env_states[j])
+
+
+ 
+        uid_ind = 0
+        for j in range(len(env_map)):
+            print(len(env_map), len(env_map[j]), len(env_states_f), len(learnt_zs[i]), len(learnt_zs), len(uids), len(list(range(uid_ind, uid_ind + len(env_states_f[act_ind])-2))))
+
+
+            env_state = env_states_f[act_ind]
+
+            if dct[uid]["x"] is None:
+                dct[uid]["x"] = list(range(uid_ind, uid_ind + env_state.shape[0]-2))
+                print(len(env_map), len(env_state), np.array(env_state[act_ind]).shape, act_ind, len(path), env_state.shape)
+                print(path[act_ind]["y"],path[act_ind]["x"])
+                tmp = []
+                for k in range(1,env_state.shape[0]-1):
+                    tmp.append(env_state[k,path[act_ind]["y"],path[act_ind]["x"]])
+                dct[uid]["out_env"] = tmp
+                dct[uid]["reward"] = learnt_zs[act_ind]
+                for k in range(len(input_keys)):
+                    dct[uid][input_keys[k]] = env_trajectories[input_keys[k]][act_ind]
+                    print(input_keys[k], len(env_trajectories[input_keys[k]][act_ind]))    
+            else:
+                dct[uid]["x"].extend(list(range(uid_ind, uid_ind + env_state.shape[0]-2)))
+                tmp = []
+                for k in range(1,env_state.shape[0]-1):
+                    tmp.append(env_state[k,path[act_ind]["y"],path[act_ind]["x"]])
+
+                dct[uid]["out_env"] = np.concatenate((dct[uid]["out_env"], tmp), axis=0)
+                dct[uid]["reward"] = np.concatenate((dct[uid]["reward"], learnt_zs[act_ind]), axis = 0) 
+                for k in range(len(input_keys)):
+                    dct[uid][input_keys[k]] = env_trajectories[input_keys[k]][act_ind]
+                    print(input_keys[k], len(env_trajectories[input_keys[k]][act_ind]))
+
+            uid_ind = uid_ind + len(env_state[act_ind])
+            act_ind = act_ind + 1
+ 
+
+
+    pds = {}
+    for uid in dct.keys():
+        uid = unique_uids[i]
+        pds[uid] = pd.DataFrame(index=dct[uid]["x"])
+        for key in dct[uid].keys():
+            print("2:", key, np.array(dct[uid][key]).shape)
+        for key in dct[uid].keys():
+            if key not in pds[uid]:
+                pds[uid][key] = dct[uid][key]
+                
+ 
+    for uid in pds:
+        print(pds[uid].info)
+        pds[uid].to_excel(os.path.join(out_dir, uid + "_input_time_series_pd.xlsx"), header=True, index=False)
+
+
 def plot_time_series(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list, static_data, uids):
 
     env_states = []
@@ -424,6 +570,7 @@ def plot_time_series(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_lis
     ships = []
     baths = []
 
+    #load static params
     bath = np.squeeze(static_data['Bathymetry']['scenes'][0])
     coast = np.squeeze(static_data['Coastal_Dist']['scenes'][0])
     ship = np.squeeze(static_data['Ship_Density']['scenes'][0])
@@ -445,6 +592,7 @@ def plot_time_series(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_lis
     min_angles = 361
     max_angles = -1
     max_env = 0
+    #initialize normalized reward surface
     for i in range(n_hidden):
         f[i] = normalize(f[i])
 
@@ -473,13 +621,14 @@ def plot_time_series(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_lis
         #if len(paths[i]) < 97 or len(learnt_zs[i]) < 97 or len(env_maps[i]) < 97:
         #    continue
         zs = learnt_zs[i]
-        path = paths[i]
+        path = paths[i][1:-1]
   
        
         #bath = np.swapaxes(bath, 0,1)
         #ship = np.swapaxes(ship, 0,1)
         #coast = np.swapaxes(coast, 0,1)
-        env_map = env_maps[i]
+        env_map = env_maps[i][1:-1]
+        #preprocess static params
         if not run:
              swpd_shape = (env_map.shape[2], env_map.shape[1])
              print(env_map.shape[1:], bath.shape, "SMALL RESAMPLE")
@@ -492,16 +641,23 @@ def plot_time_series(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_lis
         positions = np.zeros(env_map.shape[1:])
 
         for k in range(learnt_zs.shape[1]):
+            #iterate over trajectory steps
+
             print(k, k,path[k]["y"],path[k]["x"], env_map.shape, "TRAJ TROUBLES")
             if  path[k]["y"] < 0 or path[k]["x"] < 0:
                 continue
+
+            #Gather positions and evironment value
             positions[path[k]["y"],path[k]["x"]] = positions[path[k]["y"],path[k]["x"]] + 1
             env_val = int(env_map[k,path[k]["y"],path[k]["x"]])
+
+            #Compute distance traveled
             if k == 0:
                 dist = 0
             else:
                 dist = math.sqrt((path[k-1]["y"] - path[k]["y"])**2 + (path[k-1]["x"] - path[k]["x"])**2)
 
+            #Compute turn angle
             if k > 1:
                 dy = path[k-1]["y"] - path[k]["y"]
                 dx = path[k-1]["x"] - path[k]["x"]
@@ -524,12 +680,14 @@ def plot_time_series(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_lis
             else:
                 turn_angle = 0.0
 
+            #Extract static params for step
             print(bath.shape, ship.shape, coast.shape)
             turn_angles[act_ind_0].append(turn_angle)
             baths[act_ind_0].append(bath[path[k]["y"],path[k]["x"]])
             ships[act_ind_0].append(ship[path[k]["y"],path[k]["x"]])
             coasts[act_ind_0].append(coast[path[k]["y"],path[k]["x"]])
 
+            #Gather stats
             max_dist = max(max_dist, dist)
             max_angles = max(max_angles, turn_angle)
             min_angles = min(0, 0, 0, 0, 0, 0, 0, 0, 0, min_angles, turn_angle)
@@ -1113,6 +1271,86 @@ def plot_time_series(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_lis
         pds[uid].to_excel(os.path.join(out_dir, uid + "_time_series_pd.xlsx"), header=True, index=False)
 
 
+
+
+def plot_density_inputs(learnt_zs, paths, f, n_hidden, out_dir, color_list, input_keys, uids):
+
+    input_states = {} 
+    z_env_hist = {}
+  
+    for i in range(n_hidden):
+
+        f[i] = normalize(f[i])
+
+        z_env_hist[i] = {}
+        input_states[i] = {}
+        for k in range(len(input_keys)):
+            input_states[i][input_keys[k]] = []
+
+
+    f = np.round(f, decimals=2)
+   
+    for i in range(len(learnt_zs)):
+        zs = learnt_zs[i]
+        path = paths[i][1:-1]
+
+        dir_name = "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+        fle_name = "hammerhead_v1_" + str (uids[i]) + "_states_input.pkl"
+        input_env_maps = None
+        with open(os.path.join(dir_name, fle_name), 'rb') as f:
+            input_env_maps  = pickle.load(f)
+
+        ienv_maps = {}
+        act_ind = 0
+        for n in range(len(input_env_maps)):
+            if len(input_env_maps[n]) < 46:
+                continue
+            
+            for ky in range(len(input_keys)):
+                if input_keys[ky] not in ienv_maps:
+                    ienv_maps[input_keys[ky]] = []
+                if len(ienv_maps[input_keys[ky]]) < act_ind + 1:
+                    ienv_maps[input_keys[ky]].append([])
+                for p in range(len(input_env_maps[n])-1):
+                    ienv_maps[input_keys[ky]][act_ind].append(input_env_maps[n][p][ky])
+                act_ind = act_ind + 1
+
+
+        ienv_maps2 = {}
+        for ac in range(act_ind + 1): 
+            for k in range(learnt_zs.shape[1]):
+                for ik in range(len(input_keys)):
+                    if input_keys[ik] not in ienv_maps2:
+                        ienv_maps2[input_keys[ik]] = {}
+                    if learnt_zs[i][k] not in ienv_maps2[input_keys[ik]]:
+                        ienv_maps2[input_keys[ik]][learnt_zs[i][k]] = []
+                    ienv_maps2[input_keys[ik]][learnt_zs[i][k]].append(ienv_maps[input_keys[ik]][ac])
+        i = i + act_ind + 1 
+
+    #TODO leverage ienv_maps2
+
+    plt.rc('font', size=18)
+    ax = plt.gca()
+    latent = 0
+    for i in range(n_hidden):
+        latent = latent + 1
+        #if len(input_states[i]) == 0:
+        #    continue
+        for ik in range(len(input_keys)):
+            sns.kdeplot(ienv_maps2[input_keys[ik]][i], ax=ax, label="Latent State " + str(latent), color=color_list[i], alpha=0.5, fill=True, linewidth=0)
+            plt.legend()
+            plt.savefig(os.path.join(out_dir, input_keys[ik] + "_kdeplots.png"), bbox_inches='tight')
+
+            plt.clf()
+
+            plt.boxplot(env_states, labels=list(range(1,len(env_states)+1)))
+            plt.legend()
+            plt.tight_layout(h_pad=0.1)
+            plt.savefig(os.path.join(out_dir, input_keys[ik] + "_dist_bplot.png"), bbox_inches='tight')
+
+            plt.clf()
+  
+
 def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list, static_data): #, uids):
 
     env_states = []
@@ -1225,6 +1463,7 @@ def plot_density(learnt_zs, env_maps, paths, f, n_hidden, out_dir, color_list, s
         sns.kdeplot(env_states[i], ax=ax, label="Latent State " + str(latent), color=color_list[i], alpha=0.5, fill=True, linewidth=0, clip=(0,max_env))
     plt.legend()
     plt.show()
+    plt.savefig(os.path.join(out_dir, "env_kdeplots.png"), bbox_inches='tight')
     plt.savefig(os.path.join(out_dir, "env_kdeplots.png"), bbox_inches='tight')
  
     plt.clf()
@@ -1796,6 +2035,7 @@ def run_plots(yml_conf):
 
     plot_traj = yml_conf["plot_trajs"]
     plot_gifs = yml_conf["plot_gifs"]
+    plot_inputs = yml_conf["plot_inputs"]
 
     seed = yml_conf["seed"]
 
@@ -2028,6 +2268,16 @@ def run_plots(yml_conf):
  
         plt.clf()
         #plt.clear()
+
+    if plot_inputs:
+
+        input_keys = yml_conf["input_keys"]
+
+        learnt_zs = np.array(learnt_zs)
+        plot_density_inputs(learnt_zs, paths, converted_map, n_hidden, out_dir, color_list, input_keys, uids)
+        plot_time_series_input(learnt_zs, envs, input_keys, paths, converted_map, n_hidden, out_dir, color_list, uids)
+ 
+
 
 
 
