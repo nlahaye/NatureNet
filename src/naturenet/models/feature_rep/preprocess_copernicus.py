@@ -1,360 +1,341 @@
 import argparse
-import zarr
-import numpy as np
+import glob
+import json
 import os
-import copy
-import math
-import cv2
+import pickle
+import re
+import warnings
+from datetime import datetime, timedelta
+from pprint import pprint
 
+import cv2
+import numpy as np
+import pandas as pd
+import zarr
 from osgeo import gdal
 
-from sit_fuse.pipelines.inference.inference_utils import run_embed_gen_from_scene_arr
-from sit_fuse.preprocessing.colocate_and_resample import resample_scene
-from sit_fuse.datasets.dataset_utils import get_scenes
-from sit_fuse.utils import read_copernicus_generic, read_vars_copernicus_generic, read_yaml
+from sit_fuse.utils import read_yaml
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-from scipy.ndimage import map_coordinates, distance_transform_edt
+AUG_RE = re.compile(r"__aug\d+")
 
 
+# ---------------------------------------------------------------------------
+# Scene discovery / loading
+# ---------------------------------------------------------------------------
 
-def fill_missing_bilinear_like(
-    arr,
-    missing_value=np.nan,
-    radius=8,
-    n_angles=8,
-    step=1.0,
-    mode="nearest",
-):
+def _scene_file(yml_conf, i):
     """
-    Fast bilinear-like fill for missing pixels on a regular 2D raster grid.
+    Exactly one file for day index i.
 
-    Strategy
-    --------
-    1. For each missing pixel, sample the image at several nearby floating-point
-       coordinates using scipy.ndimage.map_coordinates(order=1), which performs
-       bilinear interpolation in 2D.
-    2. Ignore samples that still land on missing areas.
-    3. Average valid samples.
-    4. Fall back to nearest-neighbor fill for any unresolved pixels.
-
-    Parameters
-    ----------
-    arr : 2D ndarray
-        Input array.
-    missing_value : scalar, default np.nan
-        Missing-data marker.
-    radius : int, default 8
-        Max search radius in pixels.
-    n_angles : int, default 8
-        Number of directions to probe around each missing pixel.
-    step : float, default 1.0
-        Radial increment in pixels.
-    mode : str, default "nearest"
-        Boundary mode passed to map_coordinates.
-
-    Returns
-    -------
-    filled : 2D ndarray
-        Filled array.
+    Preferred: ``scene_file_template`` with an ``{i}`` placeholder (exact name).
+    Fallback: glob_start + i + glob_end, excluding matches where i is directly preceded or followed by
+    another digit (so "t1*" no longer matches t10, t11, ...). Raises unless exactly one file remains.
     """
-    arr = np.asarray(arr, dtype=float)
-
-    if np.isnan(missing_value):
-        mask_missing = np.isnan(arr)
-    else:
-        mask_missing = arr == missing_value
-
-    if not np.any(mask_missing):
-        return arr.copy()
-
-    filled = arr.copy()
-
-    # Nearest-neighbor fallback prepared once
-    valid_mask = ~mask_missing
-    _, nearest_idx = distance_transform_edt(mask_missing, return_indices=True)
-    nearest_fill = arr[tuple(nearest_idx)]
-
-    rows, cols = arr.shape
-    miss_y, miss_x = np.where(mask_missing)
-
-    angles = np.linspace(0, 2 * np.pi, n_angles, endpoint=False)
-    radii = np.arange(step, radius + step, step)
-
-    sample_sum = np.zeros(len(miss_y), dtype=float)
-    sample_count = np.zeros(len(miss_y), dtype=float)
-
-    # We only sample from known values, so create a version where missing entries are 0
-    # and a separate valid-mask sampler to test whether each bilinear sample is usable.
-    arr0 = arr.copy()
-    arr0[mask_missing] = 0.0
-    valid_float = valid_mask.astype(float)
-
-    for r in radii:
-        for theta in angles:
-            yq = miss_y + r * np.sin(theta)
-            xq = miss_x + r * np.cos(theta)
-
-            inside = (yq >= 0) & (yq <= rows - 1) & (xq >= 0) & (xq <= cols - 1)
-            if not np.any(inside):
-                continue
-
-            coords = np.vstack([yq[inside], xq[inside]])
-
-            # Bilinear sample of values
-            vals = map_coordinates(
-                arr0,
-                coords,
-                order=1,
-                mode=mode,
-                prefilter=False
-            )
-
-            # Bilinear sample of validity mask
-            weights = map_coordinates(
-                valid_float,
-                coords,
-                order=1,
-                mode=mode,
-                prefilter=False
-            )
-
-            # Keep samples mostly supported by valid neighbors
-            ok = weights > 0.95
-            if np.any(ok):
-                idx = np.where(inside)[0][ok]
-                sample_sum[idx] += vals[ok]
-                sample_count[idx] += 1
-
-    resolved = sample_count > 0
-    filled[miss_y[resolved], miss_x[resolved]] = (
-        sample_sum[resolved] / sample_count[resolved]
-    )
-
-    # Fallback for unresolved pixels
-    unresolved = ~resolved
-    if np.any(unresolved):
-        filled[miss_y[unresolved], miss_x[unresolved]] = nearest_fill[
-            miss_y[unresolved], miss_x[unresolved]
-        ]
-
-    return filled
+    tmpl = yml_conf.get("scene_file_template")
+    if tmpl:
+        fname = tmpl.format(i=i)
+        if not os.path.exists(fname):
+            raise FileNotFoundError(fname)
+        return fname
+    gs, ge, si = yml_conf["glob_start"], yml_conf["glob_end"], str(i)
+    cands = set(glob.glob(gs + si + ge))
+    cands -= set(glob.glob(gs + si + "[0-9]" + ge))
+    cands -= set(glob.glob(gs + "[0-9]" + si + ge))
+    cands = sorted(cands)
+    if len(cands) != 1:
+        raise ValueError(f"Day {i}: expected exactly one scene file for {gs + si + ge}, found {cands}")
+    return cands[0]
 
 
-
-def resample_or_fuse_scene(scene, init_location, resample_config):
-
-    resample_config["low_res"]["filenames"] = scene
-    resample_config["low_res"]["geo_filenames"] = scene
-
-
-    resample_config["return_products"] = True
-    output, location = resample_scene(scene, init_location, resample_config)
-    return output, location
+def _load_scene(fname):
+    if fname.endswith(".tif") or fname.endswith(".tiff") or ".tif" in os.path.basename(fname):
+        ds = gdal.Open(fname)
+        return ds.ReadAsArray(), ds.GetGeoTransform()
+    if "zarr" in fname:
+        return zarr.load(fname), None
+    raise ValueError(f"Unsupported scene format: {fname}")
 
 
-def run_subsampler(data_dict, n_days, fkey_input = ""):
-   
-    lonlat = None 
-    for key in data_dict.keys():
-        dat1 = None
-        lonlat = None
-        for fn_dict in data_dict[key]:
-            dat = read_copernicus_generic(fn_dict["fname"], fn_dict["vars"], depth = 0) #C x Time x Lat x Lon
-            print("INIT SHAPE", dat.shape)
-            if dat.shape[1] > n_days:
-                subsample = int(math.ceil(dat.shape[1] / n_days))
-                print(subsample, len(list(range(0, dat.shape[1], subsample))))
-                ind_sub = list(range(0, dat.shape[1], subsample))
-                dat = dat[:, ind_sub, :, :]
-            #if dat1 is None:
-            #    dat1 = dat 
-            #else:
-            #    dat1 = np.concatenate((dat1, dat), axis=0)
-
-            if lonlat is None:
-                geo = read_vars_copernicus_generic(fn_dict["fname"], ["latitude", "longitude"], depth = 0)
-                longr, latgr = np.meshgrid(geo[1], geo[0])
-                lonlat = np.array([longr, latgr]).astype(np.float32)
-
-
-            dims = copy.deepcopy(dat.shape)
-            print(dims)
-            dat = dat.reshape((dims[0]*dims[1], dims[2], dims[3]))
-            print(dat.shape, lonlat.shape, "HERE HERE")
-            data, location = resample_or_fuse_scene(dat, lonlat,  resample_config)
-            print(data.shape, location.shape)
-            data = data.reshape((dims[0], dims[1], data.shape[1], data.shape[2]))
-
-            data = np.swapaxes(data, 0,1) #T x C x Lat x Lon
-            print(data.shape, "FINAL SAVE")
-           
-            if fkey_input != "":
-                fkey = key + "_" + fkey_input + "_" + fn_dict["vars"][0]
-            else:
-               ufkey = key + "_" + fn_dict["vars"][0]
-            zarr.save("/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr", data)
-            del data
-        del lonlat
-
-
-
-def gen_copernicus_scenes_map(yml_conf): #yml_conf,  per_channel_stats):
-
-    data_dict = yml_conf["data_dict"]
-    resample_config = yml_conf["resample_config"]
-
-    ##For each file
-    ##Read vars - take top depth
-    #split by time
-    ##stack channels
-
-    ##Get lat/lon once
-    ##longr, latgr = np.meshgrid(data1[1], data1[0])
-    ##data1 = np.array([longr, latgr]).astype(np.float32)
-
-    #Get times
-
-    ##Read mask
-    ##Resample
-    ##Mask land
-    #Not using this mask because it it too coarse - coastal movement masked out.
-
-
-    #msk = read_copernicus_generic(mask_fname, ["mask"], depth=0)
-    #msk_geo = read_vars_copernicus_generic(mask_fname, ["latitude", "longitude"], depth = 0)
-    #longr, latgr = np.meshgrid(msk_geo[1], msk_geo[0])
-    #msk_lonlat = np.array([longr, latgr]).astype(np.float32)
-    #msk = np.expand_dims(np.squeeze(msk[0,0,:,:]), 0)
-    #mask, mask_loc = resample_or_fuse_scene(msk, msk_lonlat, resample_config)
-    #mask_inds = np.where(mask == 0)
-
-    #fill = -999999
- 
-    #data[:,inds[0], inds[1]] = fill
-
-    final_dict = {}
-
-    dat_final = None
-    lonlat = None
-
+def _scene_times(yml_conf):
+    """
+    Date of each day index. Uses ``scene_dates_file`` (JSON {"i": "ISO date"}, written by
+    preprocess_copernicus.py) when given; otherwise assumes start_time + i days.
+    """
     n_days = yml_conf["n_days"]
-    dt_start =  yml_conf["dt_start"]
-    day_gap = yml_conf["day_gap"]
+    dates_file = yml_conf.get("scene_dates_file")
+    if dates_file:
+        with open(dates_file) as f:
+            d = json.load(f)
+        missing = [i for i in range(n_days) if str(i) not in d]
+        if missing:
+            raise ValueError(f"{dates_file} is missing day indices {missing[:10]}")
+        return [pd.Timestamp(d[str(i)]).normalize() for i in range(n_days)]
+    tme = datetime.strptime(yml_conf["start_time"], "%Y-%m-%d")
+    return [pd.Timestamp(tme + timedelta(days=i)) for i in range(n_days)]
 
-    animal_tag = yml_conf["animal_tag"]
 
-    day_ind = 0
+def _extent(gt, shape_hw):
+    h, w = shape_hw
+    return np.array([gt[0], gt[3], gt[0] + gt[1] * w, gt[3] + gt[5] * h])
 
- 
-    if yml_conf["run_subsampler"]:
-        run_subsampler(data_dict, n_days, yml_conf["fkey_tag"])
- 
-    initial_water_mask = gdal.Open(yml_conf["water_mask"]).ReadAsArray()
+
+def _check_geotransform(mask_gt, mask_shape, scene_gt, scene_shape, tol_deg=1e-3):
+    if mask_gt is None or scene_gt is None:
+        return
+    em, es = _extent(mask_gt, mask_shape), _extent(scene_gt, scene_shape)
+    if not np.allclose(em, es, atol=tol_deg):
+        warnings.warn(f"Water mask extent {em.tolist()} differs from scene extent {es.tolist()}; "
+                      "resizing by shape will misalign land/water.")
+    if np.sign(mask_gt[5]) != np.sign(scene_gt[5]):
+        warnings.warn("Water mask and scene have opposite latitude orientation (north-up vs south-up).")
+
+
+def _load_scenes(yml_conf, apply_mask=True):
+    mask_ds = gdal.Open(yml_conf["mask_path"])
+    initial_water_mask = mask_ds.ReadAsArray()
+    land_value = yml_conf["land_value"]
     resized_water_mask = None
+    land = None
 
-    for d in range(dt_start, n_days+1, day_gap):
-        dat = {}
-        dat_init = {}
-        dt_end = d +  (day_gap)
-
-        for key in data_dict.keys():
-            for fn_dict in data_dict[key]:
-
-                if yml_conf["fkey_tag"] != "":
-                    fkey = key + "_" + yml_conf["fkey_tag"] + "_" + fn_dict["vars"][0]
-                else:
-                    fkey = key + "_" + fn_dict["vars"][0]
-
-                dt = zarr.load("/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr").astype(np.float32)
-                print("LOADED", "/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr")
-                print(dt.shape, "HERE1", dt.min())
-                dt = dt[d:dt_end]
-                inds = np.where(np.isinf(dt) | np.isnan(dt))
-                dt[inds] = -999999.0
-                print(dt.shape, "HERE2", dt.min())
-
-                dat_init[fkey] = dt
-                if resized_water_mask is None:
-                    resized_water_mask = cv2.resize(initial_water_mask, (dt.shape[3], dt.shape[2]), interpolation=cv2.INTER_CUBIC)
-                del dt
-
-        
-        for key in data_dict.keys():
-                for fn_dict in data_dict[key]:
-
-                    if yml_conf["fkey_tag"] != "":
-                        fkey = key + "_" + yml_conf["fkey_tag"] + "_" + fn_dict["vars"][0]
-                    else:
-                        fkey = key + "_" + fn_dict["vars"][0]
-
-                    dt = dat_init[fkey]
-                    if dt.ndim > 3:
-                        for v in range(dt.shape[1]):
-                            for t in range(dt.shape[0]):
-                                print(dt[t,v].min(), dt[t,v].max())
-                                sub = dt[t,v]
-                                inds = np.where((resized_water_mask == 1) & (sub >  -999999.0))
-                                mean_val = np.mean(sub[inds])
-                                sub[np.where((resized_water_mask == 0))] = mean_val #Data Imputation
-                                print("IMPUTED Stats", sub.min(), sub.max(), sub.mean(), mean_val)
-                                dt[t,v] = fill_missing_bilinear_like(sub, -999999.0, 8, 8, 1.0, "nearest")
-                                del sub
-                                print("COMPLETED", t, v, dt[t,v].min(), dt[t,v].max(), dt[t,v].mean(), dt[t,v].std(), dt.shape)
-                    else:
-                        for t in range(dt.shape[0]):
-                            print(dt[t].min(), dt[t].max())
-                            dt[t] = fill_missing_bilinear_like(dt[t], -999999.0, 8, 8, 1.0, "nearest")
-                            print("COMPLETED", t, dt[t].min(), dt[t].max(), dt[t,v].mean(), dt[t,v].std(), dt.shape)
-
-                    dat[fkey] = dt
-                    print("FIXED_FILL", "/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr")
-                    plt.imshow(np.squeeze(dt[0,0]))
-                    plt.savefig(fkey + ".png")
-                    del dt          
-
-        for day in range(d, dt_end): 
-            dat_cur = None
-            for key in data_dict.keys():
-                for fn_dict in data_dict[key]:
-                    
-                    if yml_conf["fkey_tag"] != "":
-                        fkey = key + "_" + yml_conf["fkey_tag"] + "_" + fn_dict["vars"][0]
-                    else:
-                        fkey = key + "_" + fn_dict["vars"][0]
-
-                    #dat = zarr.load("/data/nlahaye/NatureNet_Env/Copernicus/" + fkey + "_subsampled.zarr")            
-                    day_ind = day - d
-                    if dat_cur is None:
-                        dat_cur = copy.deepcopy(dat[fkey][day_ind,:,:,:])
-                    else:
-                        tmp = dat[fkey][day_ind,:,:,:]
-                        if len(tmp.shape) < 3:
-                            tmp = np.expand_dims(tmp, axis=0)
-                        print(dat_cur.shape, tmp.shape)
-                        dat_cur = np.concatenate((dat_cur, tmp), axis=0)
-                    if len(dat_cur.shape) < 3:
-                        dat_cur = np.expand_dims(dat_cur, axis=0)
-                    print("HERE DAY", dat_cur.min(), dat_cur.max(), dat_cur.mean(), dat_cur.std(), dat_cur.shape, day_ind, dat[fkey].shape, dat[fkey][day_ind,:,:,:].mean())
-
-            print("HERE FINAL", dat_cur.min(), dat_cur.max(), dat_cur.mean(), dat_cur.std(), dat_cur.shape)
-            zarr.save("/data/nlahaye/NatureNet_Env/Copernicus/cop_env_" + animal_tag + "_t" + str(day) + ".zarr", dat_cur)
-            del dat_cur
-
-        del dat
-        del dat_init
+    scenes = []
+    for i in range(yml_conf["n_days"]):
+        fname = _scene_file(yml_conf, i)
+        dat, gt = _load_scene(fname)
+        if apply_mask:
+            hw = dat.shape[-2:]
+            if resized_water_mask is None:
+                print("SHAPING WATER MASK", dat.shape)
+                _check_geotransform(mask_ds.GetGeoTransform(), initial_water_mask.shape, gt, hw)
+                # Nearest neighbour keeps the mask categorical (cubic created non-integer coast values).
+                resized_water_mask = cv2.resize(initial_water_mask.astype(np.float32), (hw[1], hw[0]),
+                                                interpolation=cv2.INTER_NEAREST)
+                land = np.rint(resized_water_mask) == land_value
+            if not np.issubdtype(dat.dtype, np.floating) and not np.issubdtype(dat.dtype, np.signedinteger):
+                dat = dat.astype(np.int32)
+            if dat.ndim > 2:
+                dat[:, land] = -1
+            else:
+                dat[land] = -1
+        print("SCENE", i, "LOADED", fname)
+        scenes.append(dat)
+    return scenes
 
 
+# ---------------------------------------------------------------------------
+# Track -> scene matching
+# ---------------------------------------------------------------------------
 
-if __name__ == '__main__':
+def _fix_dates(movement_df):
+    ts = pd.to_datetime(movement_df["timestamp"], utc=True, format="mixed")
+    return ts.dt.tz_convert(None).dt.normalize()
 
+
+def _segments_match(segs_a, segs_b):
+    if len(segs_a) != len(segs_b):
+        return False
+    for a, b in zip(segs_a, segs_b):
+        if len(a) != len(b):
+            return False
+        if not np.array_equal(pd.to_datetime(a["timestamp"], utc=True, format="mixed").to_numpy(),
+                              pd.to_datetime(b["timestamp"], utc=True, format="mixed").to_numpy()):
+            return False
+    return True
+
+
+def _match_track(segments, scenes, date_to_idx, nearest_days, sorted_dates):
+    """Per segment, list (len = n fixes) of the scene for that fix's date, or None if out of range."""
+    out, n_missing = [], 0
+    for seg in segments:
+        dates = _fix_dates(seg)
+        maps = []
+        for dt in dates:
+            idx = date_to_idx.get(dt)
+            if idx is None and nearest_days > 0 and len(sorted_dates):
+                j = np.searchsorted(sorted_dates, dt)
+                best = None
+                for jj in (j - 1, j):
+                    if 0 <= jj < len(sorted_dates):
+                        gap = abs((sorted_dates[jj] - dt).days)
+                        if gap <= nearest_days and (best is None or gap < best[0]):
+                            best = (gap, date_to_idx[sorted_dates[jj]])
+                idx = None if best is None else best[1]
+            if idx is None:
+                n_missing += 1
+                maps.append(None)
+            else:
+                maps.append(scenes[idx])
+        out.append(maps)
+    return out, n_missing
+
+
+def _pkl_path(out_dir, output_uid, uid):
+    return os.path.join(out_dir, output_uid + uid + ".pkl")
+
+
+def gen_scene_list(yml_conf):
+    df_uid = yml_conf["df_uid"]
+    df_dir = yml_conf["df_dir"]
+    out_dir = yml_conf["out_dir"]
+    output_uid = yml_conf["output_uid"]  # "final_env_maps_"
+    nearest_days = int(yml_conf.get("nearest_scene_days", 0))
+
+    times = _scene_times(yml_conf)
+    scenes = _load_scenes(yml_conf)
+    date_to_idx = {t: i for i, t in enumerate(times)}
+    sorted_dates = sorted(date_to_idx)
+
+    with open(os.path.join(df_dir, df_uid + "_dfs.pkl"), "rb") as f:
+        movement_dfs = pd.read_pickle(f)
+
+    for uid in movement_dfs:
+        pkl_file = _pkl_path(out_dir, output_uid, uid)
+        if AUG_RE.search(uid):
+            orig = AUG_RE.sub("", uid)
+            # Augmented copies reuse the original's scenes only if they segment identically
+            # (same timestamps per segment). Otherwise they are processed on their own.
+            if orig in movement_dfs and _segments_match(movement_dfs[uid], movement_dfs[orig]):
+                if os.path.lexists(pkl_file):
+                    os.remove(pkl_file)
+                os.symlink(_pkl_path(out_dir, output_uid, orig), pkl_file)
+                continue
+            print(f"{uid}: segmentation differs from {orig}; processing separately")
+
+        print("Matching movement tracks to scenes for track", uid)
+        scenes_per_uid, n_missing = _match_track(movement_dfs[uid], scenes, date_to_idx, nearest_days, sorted_dates)
+        n_fix = sum(len(s) for s in movement_dfs[uid])
+        if n_missing:
+            print(f"WARNING: {uid}: {n_missing}/{n_fix} fixes fall outside the scene dates; env map set to None")
+
+        if os.path.islink(pkl_file):
+            os.remove(pkl_file)
+        with open(pkl_file, "wb") as f:
+            pickle.dump({uid: scenes_per_uid}, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+# ---------------------------------------------------------------------------
+# Cluster relabelling
+# ---------------------------------------------------------------------------
+
+def _quantise(arr, scale):
+    arr = np.asarray(arr, dtype=np.float64)
+    q = np.full(arr.shape, -1, dtype=np.int64)
+    valid = np.isfinite(arr) & (arr > 0.0)
+    q[valid] = np.rint(arr[valid] * scale).astype(np.int64)
+    q[valid & (q <= 0)] = -1
+    return q
+
+
+def build_class_mapper(scenes, scale=1000):
+    """Valid (> 0) quantised cluster ids -> 0..K-1. Invalid (<= 0, land, nodata) -> -1."""
+    lst = np.unique(np.concatenate([np.unique(_quantise(s, scale)) for s in scenes]))
+    keys = lst[lst > 0]
+    return keys
+
+
+def remap_clusters(arr, keys, scale=1000):
+    """Vectorised remap (no chained in-place relabelling). Returns int16 with -1 for invalid."""
+    q = _quantise(arr, scale)
+    out = np.full(q.shape, -1, dtype=np.int16)
+    valid = q > 0
+    idx = np.searchsorted(keys, q[valid])
+    idx_c = np.clip(idx, 0, len(keys) - 1)
+    unknown = keys[idx_c] != q[valid]
+    if np.any(unknown):
+        raise ValueError(f"{int(unknown.sum())} cluster values are not in the mapper, e.g. {q[valid][unknown][:5]}")
+    out[valid] = idx_c.astype(np.int16)
+    return out
+
+
+def compress_clusters(yml_conf):
+    df_uid = yml_conf["df_uid"]
+    df_dir = yml_conf["df_dir"]
+    out_dir = yml_conf["out_dir"]
+    output_uid = yml_conf["output_uid"]
+    scale = yml_conf.get("cluster_scale", 1000)
+
+    scenes = _load_scenes(yml_conf, apply_mask=False)
+    keys = build_class_mapper(scenes, scale)
+    del scenes
+    mapper = {float(k): i for i, k in enumerate(keys)}
+    mapper[-1.0] = -1
+    print("MAPPER: K =", len(keys), "valid clusters (set n_clusters >= K; -1 = invalid)")
+    pprint(mapper)
+    with open(os.path.join(out_dir, output_uid + "_class_mapper.pkl"), "wb") as f:
+        pickle.dump(mapper, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(os.path.join(df_dir, df_uid + "_dfs.pkl"), "rb") as f:
+        movement_dfs = pd.read_pickle(f)
+
+    for key in movement_dfs.keys():
+        pkl_file = _pkl_path(out_dir, output_uid, key)
+        if os.path.islink(pkl_file):  # aliased augmented copy; original is processed
+            continue
+        with open(pkl_file, "rb") as f:
+            abstract_grid = pickle.load(f)
+
+        cache = {}  # scenes are shared across fixes: remap each unique array once and keep sharing
+        new_segs = []
+        for seg in abstract_grid[key]:
+            new_maps = []
+            for m in seg:
+                if m is None:
+                    new_maps.append(None)
+                    continue
+                if id(m) not in cache:
+                    cache[id(m)] = (m, remap_clusters(m, keys, scale))
+                new_maps.append(cache[id(m)][1])
+            new_segs.append(new_maps)
+        abstract_grid[key] = new_segs
+
+        with open(pkl_file, "wb") as f:
+            pickle.dump(abstract_grid, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def merge_compressed_maps(yml_conf):
+    out_dir = yml_conf["out_dir"]
+    output_uid = yml_conf["output_uid"]
+    df_uid = yml_conf["df_uid"]
+    out_fle = os.path.join(out_dir, output_uid + df_uid + ".pkl")
+
+    with open(os.path.join(yml_conf["df_dir"], df_uid + "_dfs.pkl"), "rb") as f:
+        movement_dfs = pd.read_pickle(f)
+
+    final_dict, aliases, missing = {}, [], []
+    # Iterate the movement keys explicitly (the old glob also picked up the class mapper and old merges).
+    for key in movement_dfs.keys():
+        pkl_file = _pkl_path(out_dir, output_uid, key)
+        if not os.path.exists(pkl_file):
+            missing.append(key)
+            continue
+        if os.path.islink(pkl_file):
+            aliases.append(key)
+            continue
+        with open(pkl_file, "rb") as f:
+            final_dict[key] = pickle.load(f)[key]
+
+    for key in aliases:
+        orig = AUG_RE.sub("", key)
+        if orig in final_dict:
+            final_dict[key] = final_dict[orig]  # same object; pickled once
+        else:
+            missing.append(key)
+    if missing:
+        print(f"WARNING: no env maps for {len(missing)} keys: {missing[:10]}")
+
+    with open(out_fle, "wb") as f:
+        pickle.dump(final_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-y", "--yaml", help="YAML file for fusion info.")
     args = parser.parse_args()
 
-    gen_copernicus_scenes_map(read_yaml(args.yaml))
+    yml_conf = read_yaml(args.yaml)
 
- 
+    gen_scene_list(yml_conf)
+
+    if yml_conf["sit_fuse_output"]:
+        compress_clusters(yml_conf)
+
+    merge_compressed_maps(yml_conf)

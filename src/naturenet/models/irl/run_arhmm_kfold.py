@@ -11,7 +11,7 @@ from ssm.swirl import ARHMMs
 
 from sit_fuse.utils import read_yaml
 
-from sklearn.model_selection import KFold
+from naturenet.models.irl.swirl_data import align_for_swirl, as_list, get_folds, load_swirl_dataset
 
 
 def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, positions, out_dir, run_uid, kf_ind):
@@ -35,6 +35,7 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
 
     #list_x = [row for row in positions[:, :, np.newaxis].astype(int)]
     epochs = 100
+    os.makedirs(out_dir, exist_ok=True)
     lls_arhmm = arhmm_s.initialize(list_x, num_init_iters=epochs)
     init_start = arhmm_s.init_state_distn.initial_state_distn
     logpi0_start = arhmm_s.init_state_distn.log_pi0
@@ -51,8 +52,15 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
     np.savez(fname_ll, log_likelihood=lls_arhmm)
 
 
-def run_arhmm(yml_conf):
- 
+def arhmm_fname(out_dir, run_uid, n_hidden, seed, kf_ind):
+    return os.path.join(out_dir, run_uid + "_" + str(n_hidden) + "_hidden_" + str(seed) + '_seed_arhmm_s_KF_' + str(kf_ind) + '.npz')
+
+
+def run_arhmm(yml_conf, data=None, folds_to_run=None):
+    """
+    ARHMM init per grouped fold, trained on the SAME aligned state sequences (x = states[:, 1:-1])
+    and the SAME animal-grouped folds that run_swirl_kfold uses.
+    """
     seed = yml_conf["seed"]
     n_hidden = yml_conf["n_hidden_init"]
     emission_dim = yml_conf["emission_dim"]
@@ -60,53 +68,32 @@ def run_arhmm(yml_conf):
     n_states = yml_conf["n_states"]
     out_dir = yml_conf["out_dir"]
     run_uid = yml_conf["run_uid"]
-    actions_fpath = yml_conf["actions"]
-    positions_fpath = yml_conf["positions"]
+    overwrite = yml_conf.get("overwrite", False)
+    folds_to_run = folds_to_run if folds_to_run is not None else yml_conf.get("folds_to_run")
 
-    actions = []
-    positions = []
-    max_len = -1
-    for i in range(len(actions_fpath)):
-        actions_tmp = np.load(actions_fpath[i], allow_pickle=True)
-        positions_tmp = np.load(positions_fpath[i], allow_pickle=True)
+    data = data if data is not None else load_swirl_dataset(yml_conf)
+    xs, _, _ = align_for_swirl(data["states"], data["actions"])
+    folds = get_folds(yml_conf, data["groups"])
 
-        for j in range(len(positions_tmp)):
-            max_len = max(max_len, len(positions_tmp[j]))
+    for kf_ind, (train_index, test_index) in enumerate(folds):
+        if folds_to_run is not None and kf_ind not in as_list(folds_to_run):
+            continue
+        if not overwrite and os.path.exists(arhmm_fname(out_dir, run_uid, n_hidden, seed, kf_ind)):
+            print("ARHMM fold", kf_ind, "exists; skipping")
+            continue
+        print("ARHMM fold", kf_ind, ":", len(train_index), "train /", len(test_index), "test sequences")
+        npr.seed(seed + kf_ind)
+        run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, xs[train_index], out_dir, run_uid, kf_ind)
 
-        actions.extend(actions_tmp)
-        positions.extend(positions_tmp)
-
-    #for now, at least, all path lengths have to be the same for SWIRL :(
-    positions_final = []
-    actions_final = []
-    for j in range(len(positions)):
-        if len(positions[j]) == max_len:
-            print(len(positions[j]), len(actions[j]), max_len)
-            positions_final.append(positions[j])
-            actions_final.append(actions[j])
-
-
-    kf = KFold(n_splits=5)
-    kf_ind = 0
-    for train_index, test_index in kf.split(actions_final):
-
-        print(train_index, len(actions))
-        actions = np.array(actions_final)[train_index]
-        positions = np.array(positions_final)[train_index]
-
-        run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, positions, out_dir, run_uid, kf_ind)
-
-
-        kf_ind = kf_ind + 1
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-y", "--yaml", help="YAML file for fusion info.")
+    parser.add_argument("--fold", type=int, nargs="*", default=None, help="Only run these fold indices.")
     args = parser.parse_args()
 
     #Translate config to dictionary 
     yml_conf = read_yaml(args.yaml)
 
-    run_arhmm(yml_conf)
-
+    run_arhmm(yml_conf, folds_to_run=args.fold)

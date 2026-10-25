@@ -1,524 +1,313 @@
 
 #Code adapted from https://github.com/BRAINML-GT/SWIRL
-from naturenet.models.irl.run_arhmm_kfold import run_arhmm
-from naturenet.models.irl.swirl_training import *
-from naturenet.models.irl.swirl_training_top_level import *
-from naturenet.models.irl.swirl_utils import *
-
-from sklearn.model_selection import KFold
+import argparse
+import os
 
 import numpy as np
-import numpy.random as npr
-from scipy.special import logsumexp
-import os
-import pickle
 import sparse
-
-import sparse
-import scipy
 
 import jax
 import jax.numpy as jnp
-from jax import lax, vmap, jit
-
-#from jax.lib import xla_bridge
-
-import jax.extend
- 
+from jax import vmap
 from functools import partial
-from jax.scipy.special import logsumexp as jax_logsumexp
-import optax
-jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_platform_name", "gpu")
+
+from naturenet.models.irl.run_arhmm_kfold import run_arhmm
+from naturenet.models.irl.swirl_training import *  # noqa: F401,F403
+from naturenet.models.irl.swirl_training_top_level import *  # noqa: F401,F403
+from naturenet.models.irl.swirl_utils import *  # noqa: F401,F403
+from naturenet.models.irl.swirl_data import (
+    align_for_swirl,
+    as_list,
+    seq_meta_arrays,
+    as_rs,
+    get_folds,
+    init_rewards,
+    load_swirl_dataset,
+    trans_prob_from_segments,
+)
+from naturenet.environment.pipeline_checks import check_swirl_inputs, check_trans_prob
 
 from sit_fuse.utils import read_yaml
 
-import argparse
-
- 
-#K = 2 number of hidden states
-#D_obs = 1 number of observed dimensions
-#D = number of latent dimensions
-#C = 25 number of states
-
-def run_swirl_init(yml_conf):
-
-    seed = yml_conf["seed"]
-    
-    n_hidden_init = yml_conf["n_hidden_init"]
-
-    trans_prob_fpath = yml_conf["trans_probs"]
-    actions_fpath = yml_conf["actions"]
-    positions_fpath = yml_conf["positions"]
-    out_dir = yml_conf["out_dir"]
-    run_uid = yml_conf["run_uid"]
-
-    trans_prob = sparse.load_npz(trans_prob_fpath)
- 
-    trans_prob = trans_prob.todense()
-
-    actions = []
-    positions = []
-    max_len = -1
-    for i in range(len(actions_fpath)):
-        actions_tmp = np.load(actions_fpath[i], allow_pickle=True)
-        positions_tmp = np.load(positions_fpath[i], allow_pickle=True)
- 
-        for j in range(len(positions_tmp)):
-            max_len = max(max_len, len(positions_tmp[j]))
-
-        actions.extend(actions_tmp)
-        positions.extend(positions_tmp)
- 
-    #for now, at least, all path lengths have to be the same for SWIRL :(
-    positions_final = []
-    actions_final = []
-    for j in range(len(positions)):
-        if len(positions[j]) == max_len:
-            positions_final.append(positions[j])
-            actions_final.append(actions[j])
-    actions = actions_final
-    positions = positions_final
-
-    print(len(positions), len(actions))
-
-    #actions = np.load(actions_fpath, allow_pickle=True)
-    #positions = np.load(positions_fpath, allow_pickle=True)
-
-    positions = np.array(positions) #[:-1])
-    actions  = np.array(actions) #[:-1])
-
-    while len(positions[-1]) < len(positions[0]):
-        positions = positions[:-1]
-        actions  = actions[:-1]
+jax.config.update("jax_enable_x64", True)
+_platform = os.environ.get("NATURENET_JAX_PLATFORM", "gpu")
+if _platform:
+    try:
+        jax.config.update("jax_platform_name", _platform)
+    except Exception as e:  # noqa: BLE001
+        print("Could not select JAX platform", _platform, ":", e)
 
 
-    global n_states
-    global n_actions
-    n_states, n_actions, _ = trans_prob.shape
+#K = number of hidden modes, D_obs = 1, C = number of (abstract) states
 
-    #TODO train test split
 
-    # Compute the prev_state_map based on the transitions
- 
-    next_state_map_fname = os.path.join(out_dir, run_uid + "_next_state_map_init.pkl")
-    prev_state_map_fname = os.path.join(out_dir, run_uid + "_prev_state_map_init.pkl")
+# ---------------------------------------------------------------------------
+# Shared preparation (done ONCE, outside the fold loop)
+# ---------------------------------------------------------------------------
 
- 
-    if os.path.exists(next_state_map_fname):
-        next_state_map = np.load(next_state_map_fname, allow_pickle=True)
-    else: 
-        print("Computing next state map")
-        next_state_map = compute_next_state_map(trans_prob, n_states, n_actions)
-        with open(next_state_map_fname, "wb") as f:
-             pickle.dump(next_state_map, f, protocol=pickle.HIGHEST_PROTOCOL)
+def prepare_data(yml_conf, data=None):
+    data = data if data is not None else load_swirl_dataset(yml_conf)
+    if "xohs" in data:  # already prepared
+        return data
+    n_states = int(yml_conf["n_states"])
+    n_actions = 9
+    x, x_prev, a = align_for_swirl(data["states"], data["actions"])
+    check_swirl_inputs(data["states"], data["actions"], n_states, n_actions)
 
-    if os.path.exists(prev_state_map_fname):
-        prev_state_map = np.load(prev_state_map_fname, allow_pickle=True)
+    one_hotx = vmap(partial(one_hotx_partial, n_states=n_states))
+    one_hota = vmap(partial(one_hota_partial, n_actions=n_actions))
+    data.update(x=x, x_prev=x_prev, a=a, n_states=n_states, n_actions=n_actions,
+                xohs=one_hotx(jnp.asarray(x)), aohs=one_hota(jnp.asarray(a)))
+    return data
+
+
+def fold_trans_prob(yml_conf, data, train_index):
+    """Per-fold T from the TRAIN animals only (default), or the global T from yml 'trans_probs'."""
+    n_states, n_actions = data["n_states"], data["n_actions"]
+    key = ("T", _idx_key(train_index), yml_conf.get("per_fold_trans_prob", True))
+    cache = data.setdefault("_cache", {})  # reused across (K, run) in get_stats loops
+    if key in cache:
+        return cache[key]
+    if yml_conf.get("per_fold_trans_prob", True) and train_index is not None:
+        train_groups = set(data["groups"][train_index])
+        T = trans_prob_from_segments(data["segments"], n_states, n_actions, keep_groups=train_groups,
+                                     fill_unobserved=yml_conf.get("fill_unobserved", "self_loop"))
     else:
-        print("Computing prev state map")
-        prev_state_map = compute_prev_state_map(trans_prob, n_states, n_actions)
-
-        with open(prev_state_map_fname, "wb") as f:
-            pickle.dump(prev_state_map, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-    r1 = np.zeros((n_states, n_actions))
-    r2 = np.zeros((n_states, n_actions))
-
-    np.random.seed(seed)
-    if n_hidden_init == 1:
-        R_start = [r1]
-    elif n_hidden_init >= 2:
-        R_start = [r1, r2]
-        if n_hidden_init > 2:
-            for i in range(2, n_hidden_init):
-                r = npr.rand(n_states)[:, None]
-                r = jnp.tile(r, (1, n_actions))
-                R_start.append(r)
-
-    R_start = np.array(R_start)
-    R_start2 = R_start.mean(axis=-1)
-  
-    """
-    if n_hidden_init == 3:
-        r3 = npr.rand(n_states)[:, None]
-        r3 = jnp.tile(r3, (1, n_actions))
-        R_start = np.array([r1, r2, r3])
-        R_start2 = R_start.mean(axis=-1)
-    elif n_hidden_init == 2:
-        r3 = npr.rand(n_states)[:, None]
-        r3 = jnp.tile(r3, (1, n_actions))
-        R_start = np.array([r1, r3])
-        R_start2 = R_start.mean(axis=-1)
-    elif n_hidden_init == 4:
-        r3 = npr.rand(n_states)[:, None]
-        r3 = jnp.tile(r3, (1, n_actions))
-        r4 = npr.rand(n_states)[:, None]
-        r4 = jnp.tile(r4, (1, n_actions))
-        R_start = np.array([r1, r2, r3, r4])
-        R_start2 = R_start.mean(axis=-1)
-    elif n_hidden_init == 5:
-        r3 = npr.rand(n_states)[:, None]
-        r3 = jnp.tile(r3, (1, n_actions))
-        r4 = npr.rand(n_states)[:, None]
-        r4 = jnp.tile(r4, (1, n_actions))
-        r5 = npr.rand(n_states)[:, None]
-        r5 = jnp.tile(r5, (1, n_actions))
-        R_start = np.array([r1, r2, r3, r4, r5])
-        R_start2 = R_start.mean(axis=-1)
-    """  
-
-    print("Preprocessing variables")
+        T = sparse.load_npz(yml_conf["trans_probs"])
+    if T.shape[0] != n_states:
+        raise ValueError(f"trans_prob has {T.shape[0]} states but n_states = {n_states}")
+    check_trans_prob(T, n_actions=n_actions, require_full=yml_conf.get("require_full_trans_prob", True))
+    cache[key] = T
+    return T
 
 
-    one_hotx = vmap(partial(one_hotx_partial, n_states=n_states))
-    one_hotx2 = vmap(partial(one_hotx2_partial, n_states=n_states, n_actions=n_actions))
-    one_hota = vmap(partial(one_hota_partial, n_actions=n_actions))
- 
+def _idx_key(idx):
+    return None if idx is None else hash(np.asarray(idx, dtype=np.int64).tobytes())
 
-    print(positions.shape, positions[:, 1:].shape, n_actions, n_states)
-    all_xs_prev = preprocess_xs_prev_np(positions[:, 1:], positions[:, :-1], prev_state_map, n_actions, n_states)
-    all_xohs = one_hotx(positions[:, 1:])
-    all_xohs_prev = one_hotx(positions[:, :-1])
-    all_xohs2 = one_hotx2(positions[:, 1:], all_xs_prev)
-    all_aohs = one_hota(actions[:, 1:])
- 
-    temps = jnp.array([1] + [1] * (n_hidden_init- 1))
 
-    print(all_xs_prev.shape, all_xohs.shape, all_xohs_prev.shape, all_xohs2.shape, all_aohs.shape, "HERE TEST")
+def s2_inputs(yml_conf, data, T):
+    """Prev-slot table (from T support + all observed pairs), S-2 tensor and one-hots over (x, slot)."""
+    n_states, n_actions = data["n_states"], data["n_actions"]
+    cache = data.setdefault("_cache", {})
+    key = ("S2", id(T))
+    if key in cache:
+        return cache[key]
+    prev_state_map = compute_prev_state_map(T, n_states, n_actions, observed_pairs=[(data["x"], data["x_prev"])])
+    M = n_prev_slots(prev_state_map)
+    new_T, _ = construct_new_trans_probs_limited(
+        T, prev_state_map, None, n_states, n_actions, n_slots=M,
+        max_dense_entries=float(yml_conf.get("s2_max_dense_entries", DEFAULT_S2_MAX_DENSE_ENTRIES)))
+    check_trans_prob(new_T, n_actions=n_actions, name="S-2 trans_prob")
+    xs_prev = preprocess_xs_prev_np(data["x"], data["x_prev"], prev_state_map, n_actions, n_states)
+    one_hotx2 = vmap(partial(one_hotx2_partial, n_states=n_states, n_actions=M))
+    xohs2 = one_hotx2(jnp.asarray(data["x"]), jnp.asarray(xs_prev))
+    out = (jnp.asarray(new_T), xohs2, M)
+    cache[("S2psm", id(T))] = prev_state_map  # small; kept for plots (reward2 layout = x * M + slot)
+    if yml_conf.get("cache_fold_inputs", True):  # set False if 5 folds of S-2 tensors do not fit in memory
+        cache[key] = out
+    return out
 
-    # S-1
+
+def load_arhmm(out_dir, run_uid, n_hidden, seed, kf_ind=None):
+    suffix = '_seed_arhmm_s.npz' if kf_ind is None else '_seed_arhmm_s_KF_' + str(kf_ind) + '.npz'
+    p = np.load(os.path.join(out_dir, run_uid + "_" + str(n_hidden) + "_hidden_" + str(seed) + suffix), allow_pickle=True)
+    Rs = as_rs((p['W1_start'], p['b1_start'], p['W2_start'], p['b2_start']))
+    return jnp.asarray(p['logpi0_start']), jnp.asarray(p['log_Ps_start']), Rs
+
+
+def _save(path, **kw):
+    if "new_Rs" in kw:
+        kw["new_Rs"] = np.array(kw["new_Rs"], dtype=object)
+    jnp.savez(path, **kw)
+
+
+def _temps(yml_conf, key, K, default):
+    t = yml_conf.get(key)
+    t = default if t is None else list(as_list(t))
+    if len(t) != K:
+        raise ValueError(f"{key} has {len(t)} entries, expected n_hidden = {K}")
+    return jnp.array(t, dtype=jnp.float64)
+
+
+# ---------------------------------------------------------------------------
+# Fit stages (shared with run_swirl.py)
+# ---------------------------------------------------------------------------
+
+def fit_swirl_init(yml_conf, data, T, train_index, arhmm, tag):
+    """S-1 with all temps = 1 (default). Saves *_init0{tag}.npz and *_init1{tag}.npz."""
+    out_dir, run_uid, seed = yml_conf["out_dir"], yml_conf["run_uid"], yml_conf["seed"]
+    K = int(yml_conf["n_hidden_init"])
+    S, A = data["n_states"], data["n_actions"]
+    tol = yml_conf.get("em_tol")
+    temps = _temps(yml_conf, "temps_init", K, [1.0] * K)
+    _, R_start2 = init_rewards(K, S, A, seed)
+    logpi0, log_Ps, Rs = arhmm
+    xo, ao = data["xohs"][train_index], data["aohs"][train_index]
+    Td = jnp.asarray(T.todense() if hasattr(T, "todense") else T)
+
     print("Training initial model step 1")
-    epochs = 50 #50
-    epochs_2 = 30 #100
+    new_logpi0, new_log_Ps, new_Rs, new_reward, LL_list = em_train_temp(
+        logpi0, log_Ps, Rs, jnp.array(R_start2)[:, None], temps, Td, xo, ao,
+        int(yml_conf.get("epochs_init", 50)), init=False, trans=False, tol=tol)
+    _save(os.path.join(out_dir, run_uid + "_swirl_run_" + str(K) + '_' + str(seed) + "_naturenet_init0" + tag + ".npz"),
+          new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=new_Rs, new_reward=new_reward, LL_list=LL_list, temps=temps)
+
+    print("Training initial model step 2")
+    new_logpi0, new_log_Ps, new_Rs, new_reward, LL_list = em_train_temp(
+        jnp.array(new_logpi0), jnp.array(new_log_Ps), new_Rs, jnp.array(new_reward), temps, Td, xo, ao,
+        int(yml_conf.get("epochs_init_2", 30)), tol=tol)
+    # Raw reward is saved (and used downstream); the (r-min)^4 version is for plots only.
+    _save(os.path.join(out_dir, run_uid + "_swirl_run_" + str(K) + '_' + str(seed) + "_naturenet_init1" + tag + ".npz"),
+          new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=new_Rs, new_reward=new_reward,
+          new_reward_normalized=normalize_reward(np.asarray(new_reward)), LL_list=LL_list, temps=temps)
 
 
-    kf = KFold(n_splits=5)
-    kf_ind = 0
-    for train_index, test_index in kf.split(all_aohs):
-        #if kf_ind < 3:
-        #    kf_ind = kf_ind + 1
-        #    continue
+def fit_swirl_final(yml_conf, data, T, train_index, test_index, arhmm, tag, name_fmt="kfold"):
+    """
+    S-2 (optional) and S-1 with temps_final, then train / test LLs with the RAW rewards.
+    name_fmt "kfold" keeps the run_swirl_kfold file names, "final" keeps the run_swirl ones.
+    """
+    out_dir, run_uid, seed = yml_conf["out_dir"], yml_conf["run_uid"], yml_conf["seed"]
+    K, K_init = int(yml_conf["n_hidden"]), int(yml_conf["n_hidden_init"])
+    if K != K_init:
+        raise ValueError(f"n_hidden ({K}) must equal n_hidden_init ({K_init}): the ARHMM / init params are for "
+                         f"{K_init} modes")
+    S, A = data["n_states"], data["n_actions"]
+    tol = yml_conf.get("em_tol")
+    epochs, epochs_2 = int(yml_conf.get("epochs", 50)), int(yml_conf.get("epochs_2", 30))
+    temps = _temps(yml_conf, "temps_final", K, [0.01] + [1.0] * (K - 1))
+    _, R_start2 = init_rewards(K, S, A, seed)
+    R_start2 = jnp.array(R_start2)[:, None]  # (K, 1, S)
+    if yml_conf.get("use_init_reward", False):
+        p = jnp.load(os.path.join(out_dir, run_uid + "_swirl_run_" + str(K_init) + '_' + str(seed) +
+                                  "_naturenet_init1" + tag + ".npz"), allow_pickle=True)
+        R_start2 = jnp.asarray(p["new_reward"])
+        print("Warm-starting final S-1 / S-2 rewards from init1")
+    logpi0, log_Ps, Rs = arhmm
+    Td = jnp.asarray(T.todense() if hasattr(T, "todense") else T)
+    has_test = test_index is not None and len(test_index) > 0
+    xo, ao = data["xohs"], data["aohs"]
 
-        arhmm_s_fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden_init) + "_hidden_" + str(seed) + '_seed_arhmm_s_KF_' + str(kf_ind) + '.npz') #_KF_' + str(kf_ind) + '.npz')
-        arhmm_s_params = np.load(arhmm_s_fname, allow_pickle=True)
-        logpi0_start = arhmm_s_params['logpi0_start']
-        log_Ps_start = arhmm_s_params['log_Ps_start']
+    if name_fmt == "kfold":
+        n = lambda s: os.path.join(out_dir, run_uid + "_" + str(K) + '_' + str(seed) + s + tag + ".npz")  # noqa: E731
+        f_s2i, f_s2, f_s1i, f_s1 = "_naturenet_iter2_S2_init", "_naturenet_iter2_S2", "_naturenet_iter2_S1_temp_init", "_naturenet_iter2_S1_temp_2"
+        f_ll1, f_ll1t, f_ll2, f_ll2t = "_naturenet_S1_iter2_LL1", "_naturenet_S1_iter2_LL1_test", "_naturenet_S2_iter2_LL2", "_naturenet_S2_iter2_LL2_test"
+    else:
+        n = lambda s: os.path.join(out_dir, run_uid + "_" + str(K) + '_' + str(seed) + s + ".npz")  # noqa: E731
+        f_s2i, f_s2, f_s1i, f_s1 = "_S2_naturenet_iter2_init", "_S2_naturenet_iter2", "_S1_naturenet_iter2_temp_init", "_S1_naturenet_iter2_temp_2"
+        f_ll1, f_ll1t, f_ll2, f_ll2t = "_S1_naturenet_iter2_LL1", "_S1_naturenet_iter2_test_LL1", "_S2_naturenet_iter2_LL2", "_S2_naturenet_iter2_test_LL2"
 
-        Rs_start = arhmm_s_params['W1_start'], arhmm_s_params['b1_start'], arhmm_s_params['W2_start'], arhmm_s_params['b2_start']
-
-
-
-        train_aohs, test_aohs = all_aohs[train_index], all_aohs[test_index]
-        train_xohs, test_xohs = all_xohs[train_index], all_xohs[test_index]
-        train_xohs2, test_xohs2 = all_xohs2[train_index], all_xohs2[test_index]
-
-        print(train_aohs.shape, test_aohs.shape, train_aohs.shape)
- 
-        print(train_xohs.shape, prev_state_map.keys(), n_actions, n_states, len(Rs_start), len(R_start2))
-
-
-
-        new_logpi0, new_log_Ps, new_Rs, new_reward, LL_list = em_train_temp(jnp.array(logpi0_start), jnp.array(log_Ps_start), Rs_start, jnp.array(R_start2)[:, None], temps, trans_prob, train_xohs, train_aohs, epochs, init=False, trans=False)
-
-
-        fname = run_uid + "_swirl_run_" + str(n_hidden_init) + '_' + str(seed) + "_naturenet_init0_KF_" + str(kf_ind) + ".npz"
-        fname = os.path.join(out_dir, fname)
-        jnp.savez(fname, new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=np.array(new_Rs, dtype=object), new_reward=new_reward, LL_list=LL_list, temps=temps) 
-
-        print("Training initial model step 2")
-        new_logpi0, new_log_Ps, new_Rs, new_reward, LL_list = em_train_temp(jnp.array(new_logpi0), jnp.array(new_log_Ps), new_Rs, jnp.array(new_reward), temps, trans_prob, train_xohs, train_aohs, epochs_2)
-
-        new_reward = normalize_reward(new_reward)
-        print(new_reward.shape, "NEW_REWARD")
-        #if new_reward.shape[0] >=  3:
-        #    new_reward = new_reward[[1, 0, 2], ...] #TODO - viz this
-        #elif new_reward.shape[0] == 2:
-        #    new_reward = new_reward[[1, 0], ...]
-        #else:
-        #    new_reward = new_reward[[0], ...]
-        
-        fname = run_uid + "_swirl_run_" + str(n_hidden_init) + '_' + str(seed) + "_naturenet_init1_KF_" + str(kf_ind) + ".npz"
-        fname = os.path.join(out_dir, fname)
-        jnp.savez(fname, new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=np.array(new_Rs, dtype=object), new_reward=new_reward, LL_list=LL_list, temps=temps)
-
-        #TODO connect observed environmental conditions to emissions / emissions dimensionality
-        kf_ind = kf_ind + 1
-
-def construct_new_trans_probs_limited(trans_probs, prev_state_map, next_state_map, n_state, n_action):
-    new_trans_probs = np.zeros((n_state * n_action, n_action, n_state * n_action))
-    invalid_indices = np.ones((n_state, n_action), dtype=bool)
-    for x in range(n_state):
-        for prev_x_i in np.arange(n_action):
-            if prev_x_i < len(prev_state_map[x]):
-                invalid_indices[x, prev_x_i] = False
-            new_state = x * n_action + prev_x_i
-            for a in range(n_action):
-                next_x = next_state_map[x, a]
-                if next_x < 0:
-                    continue
-                new_next_state = next_x * n_action + prev_state_map[next_x].index(x)
-                new_trans_probs[new_state, a, new_next_state] = trans_probs[x, a, next_x]
-    return new_trans_probs, invalid_indices
-
-def run_swirl_final(yml_conf):
-
-    seed = yml_conf["seed"]
-
-    n_hidden = yml_conf["n_hidden"]
-    n_hidden_init = yml_conf["n_hidden_init"]
-    emission_dim = yml_conf["emission_dim"]
-
-    trans_prob_fpath = yml_conf["trans_probs"]
-    actions_fpath = yml_conf["actions"]
-    positions_fpath = yml_conf["positions"]
-    out_dir = yml_conf["out_dir"]
- 
-    run_uid = yml_conf["run_uid"]
-
-    trans_prob = sparse.load_npz(trans_prob_fpath)
-
-    actions = []
-    positions = []
-    max_len = -1
-    for i in range(len(actions_fpath)):
-        actions_tmp = np.load(actions_fpath[i], allow_pickle=True)
-        positions_tmp = np.load(positions_fpath[i], allow_pickle=True)
-
-        for j in range(len(positions_tmp)):
-            max_len = max(max_len, len(positions_tmp[j]))
-
-        actions.extend(actions_tmp)
-        positions.extend(positions_tmp)
-
-    #for now, at least, all path lengths have to be the same for SWIRL :(
-    positions_final = []
-    actions_final = []
-    for j in range(len(positions)):
-        if len(positions[j]) == max_len:
-            positions_final.append(positions[j])
-            actions_final.append(actions[j])
-    actions = actions_final
-    positions = positions_final
-    positions = np.array(positions)
-    actions  = np.array(actions)
- 
-
-    n_states, n_actions, _ = trans_prob.shape
-
-    kf = KFold(n_splits=5)
-    kf_ind = 0
-
-    one_hotx = vmap(partial(one_hotx_partial, n_states=n_states))
-    one_hotx2 = vmap(partial(one_hotx2_partial, n_states=n_states, n_actions=n_actions))
-    one_hota = vmap(partial(one_hota_partial, n_actions=n_actions))
-
- 
-    all_aohs = one_hota(actions[:, 1:])
-
-    trans_prob = trans_prob.todense()
-    for train_index, test_index in kf.split(all_aohs):
-        #if kf_ind < 3:
-        #    kf_ind = kf_ind + 1
-        #    continue
-
-
-        arhmm_s_fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden_init) + "_hidden_" + str(seed) + '_seed_arhmm_s_KF_' + str(kf_ind) + '.npz')
-        swirl_params = run_uid + "_swirl_run_" + str(n_hidden_init) + '_' + str(seed) + "_naturenet_init1_KF_" + str(kf_ind) + ".npz"
-
-
-        swirl_learnt_params = jnp.load(os.path.join(out_dir,swirl_params), allow_pickle=True)
-        init_reward = swirl_learnt_params['new_reward']
-
-        arhmm_s_params = np.load(arhmm_s_fname, allow_pickle=True)
-        logpi0_start = arhmm_s_params['logpi0_start']
-        log_Ps_start = arhmm_s_params['log_Ps_start']
-        Rs_start = arhmm_s_params['W1_start'], arhmm_s_params['b1_start'], arhmm_s_params['W2_start'], arhmm_s_params['b2_start']
-  
-        # Compute the prev_state_map based on the transitions
-
-        next_state_map_fname = os.path.join(out_dir, run_uid + "_next_state_map.pkl")
-        prev_state_map_fname = os.path.join(out_dir, run_uid + "_prev_state_map.pkl")
-
-
-        if os.path.exists(next_state_map_fname):
-            next_state_map = np.load(next_state_map_fname, allow_pickle=True)
-        else: 
-            print("Computing next state map")
-            next_state_map = compute_next_state_map(trans_prob, n_states, n_actions)
-            with open(next_state_map_fname, "wb") as f:
-                 pickle.dump(next_state_map, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-        if os.path.exists(prev_state_map_fname):
-            prev_state_map = np.load(prev_state_map_fname, allow_pickle=True)
-        else:
-            print("Computing prev state map")
-            prev_state_map = compute_prev_state_map(trans_prob, n_states, n_actions)
-
-            with open(prev_state_map_fname, "wb") as f:
-                 pickle.dump(prev_state_map, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-
-        r1 = np.zeros((n_states, n_actions))
-        r2 = np.zeros((n_states, n_actions))
- 
-        np.random.seed(seed)
-        if n_hidden_init == 1:
-            R_start = [r1]
-        elif n_hidden_init >= 2:
-            R_start = [r1, r2]
-            if n_hidden_init > 2:
-                for i in range(2, n_hidden_init):
-                    r = npr.rand(n_states)[:, None]
-                    r = jnp.tile(r, (1, n_actions))
-                    R_start.append(r)
-
-        R_start = np.array(R_start)
-        R_start2 = R_start.mean(axis=-1)
- 
- 
-        #r1 = init_reward[0].T
-        #r1 = normalize(r1)
-        #r1 = np.tile(r1, (1, n_actions))
-        #r2 = init_reward[1].T
-        #r2 = normalize(r2)
-        #r2 = np.tile(r2, (1, n_actions))
-        #np.random.seed(seed)
-
-        #np.random.seed(seed)
-        #R_start = [r1, r2]
-        #for i in range(2, n_hidden_init):
-        #   r = npr.rand(n_states)[:, None]
-        #    r = jnp.tile(r, (1, n_actions))
-        #    R_start.append(r)
-
-        #R_start = np.array(R_start)
-        #R_start2 = R_start.mean(axis=-1)
-
-    
-        print("Finalizing preprocessing") 
-        all_xs_prev = preprocess_xs_prev_np(positions[:, 1:], positions[:, :-1], prev_state_map, n_actions, n_states)
-        all_xohs = one_hotx(positions[:, 1:])
-        all_xohs_prev = one_hotx(positions[:, :-1])
-        all_xohs2 = one_hotx2(positions[:, 1:], all_xs_prev)
-
-        train_aohs, test_aohs = all_aohs[train_index], all_aohs[test_index]
-        train_xohs, test_xohs = all_xohs[train_index], all_xohs[test_index]
-        train_xohs2, test_xohs2 = all_xohs2[train_index], all_xohs2[test_index]
-        train_xohs_prev, test_xohs_prev = all_xohs_prev[train_index], all_xohs_prev[test_index]
-        train_xs_prev, test_xs_prev = all_xs_prev[train_index], all_xs_prev[test_index]
-
-        temps = jnp.array([0.01] + [1] * (n_hidden - 1))
-
-        new_trans_prob, _ = construct_new_trans_probs_limited(trans_prob, prev_state_map, next_state_map, n_states, n_actions)
-        #new_trans_prob = new_trans_prob.todense()
-
-
-        # S-2
-        epochs = 50 #50
-        epochs_2 = 30
-        print("Training second model step 1")
-        new_logpi02, new_log_Ps2, new_Rs2, new_reward2, LL_list2 = em_train2_naturenet(jnp.array(logpi0_start), jnp.array(log_Ps_start), Rs_start, jnp.array(R_start)[:, None].reshape(n_hidden, emission_dim, n_states*n_actions),\
-             new_trans_prob, train_xohs, train_xohs2, train_aohs, epochs)
-        fname = run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_iter2_S2_init_KF_" + str(kf_ind) + ".npz" 
-        fname = os.path.join(out_dir, fname) 
-        jnp.savez(fname, new_logpi0=new_logpi02, new_log_Ps=new_log_Ps2, new_Rs=np.array(new_Rs2, dtype=object), new_reward=new_reward2, LL_list=LL_list2, temps=temps)
-
+    if yml_conf.get("run_s2", True):
+        new_T, xohs2, M = s2_inputs(yml_conf, data, T)
+        psm = data["_cache"][("S2psm", id(T))]
+        psm_arr = np.empty(S, dtype=object)  # psm is a dict {state: [predecessors in slot order]}
+        for s_ in range(S):
+            psm_arr[s_] = np.asarray(psm.get(s_, []), dtype=np.int64)
+        s2_layout = dict(n_slots=M, prev_state_map=psm_arr)
+        R2 = jnp.repeat(R_start2[:, :, :, None], M, axis=3).reshape(K, 1, S * M)  # (K, 1, S*M)
+        x2 = xohs2[train_index]
+        print("Training second model step 1 (S-2, M =", M, "predecessor slots)")
+        r = em_train2_naturenet(logpi0, log_Ps, Rs, R2, new_T, xo[train_index], x2, ao[train_index], epochs, tol=tol)
+        _save(n(f_s2i), new_logpi0=r[0], new_log_Ps=r[1], new_Rs=r[2], new_reward=r[3], LL_list=r[4], temps=temps)
         print("Training second model step 2")
-        new_logpi02, new_log_Ps2, new_Rs2, new_reward2, LL_list2 = em_train2_temp(jnp.array(new_logpi02), jnp.array(new_log_Ps2), new_Rs2, jnp.array(new_reward2), temps, new_trans_prob, train_xohs, train_xohs2, train_aohs, epochs_2)
-        fname = run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_iter2_S2_KF_" + str(kf_ind) + ".npz"
-        fname = os.path.join(out_dir, fname)
-        jnp.savez(fname, new_logpi0=new_logpi02, new_log_Ps=new_log_Ps2, new_Rs=np.array(new_Rs2, dtype=object), new_reward=new_reward2, LL_list=LL_list2, temps=temps)
- 
-        # # S-1
-        print("Training third model step 1")
-        new_logpi0, new_log_Ps, new_Rs, new_reward, LL_list = em_train_naturenet(jnp.array(logpi0_start), jnp.array(log_Ps_start), Rs_start, jnp.array(R_start2)[:, None],\
-             trans_prob, train_xohs, train_aohs, epochs)
-        fname = run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_iter2_S1_temp_init_KF_" + str(kf_ind) + ".npz"
-        fname = os.path.join(out_dir, fname)
-        jnp.savez(fname, new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=np.array(new_Rs, dtype=object), new_reward=new_reward, LL_list=LL_list, temps=temps)
+        r = em_train2_temp(jnp.array(r[0]), jnp.array(r[1]), r[2], jnp.array(r[3]), temps, new_T, xo[train_index], x2,
+                           ao[train_index], epochs_2, tol=tol)
+        _save(n(f_s2), new_logpi0=r[0], new_log_Ps=r[1], new_Rs=r[2], new_reward=r[3],
+              new_reward_normalized=normalize_reward(np.asarray(r[3])), LL_list=r[4], temps=temps, **s2_layout)
 
-        print("Training third model step 2")
-        new_logpi0, new_log_Ps, new_Rs, new_reward, LL_list = em_train_temp(jnp.array(new_logpi0), jnp.array(new_log_Ps), new_Rs, jnp.array(new_reward), temps, trans_prob, train_xohs, train_aohs, epochs_2)
-        fname = run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_iter2_S1_temp_2_KF_" + str(kf_ind) + ".npz"
-        fname = os.path.join(out_dir, fname)
-        jnp.savez(fname, new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=np.array(new_Rs, dtype=object), new_reward=new_reward, LL_list=LL_list, temps=temps)
-
-
-        new_reward = normalize_reward(new_reward)
-        print(new_reward.shape, "NEW_REWARD")
-        #if new_reward.shape[0] >=  3:
-        #    new_reward = new_reward[[1, 0, 2], ...] #TODO - viz this
-        #elif new_reward.shape[0] == 2:
-        #    new_reward = new_reward[[1, 0], ...]
-        #else:
-        #    new_reward = new_reward[[0], ...]
-
-
-        print("Final computations", "S1")
-        LL, jax_path_vmap = learnt_LL1(new_logpi0, new_log_Ps, new_Rs, new_reward, temps, n_states, n_actions, trans_prob, train_xohs, train_aohs)
-        print(LL)
-        fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_S1_iter2_LL1_KF_" + str(kf_ind) + ".npz") 
-        jnp.savez(fname, LL=LL, jax_path_vmap=jax_path_vmap)
-
-        LL, jax_path_vmap = learnt_LL1(new_logpi0, new_log_Ps, new_Rs, new_reward, temps, n_states, n_actions, trans_prob, test_xohs, test_aohs)
-        print(LL)
-        fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_S1_iter2_LL1_test_KF_" + str(kf_ind) + ".npz")
-        jnp.savez(fname, LL=LL, jax_path_vmap=jax_path_vmap)
-
-
-  
-        # Load S-2 params
-        print("Load params and set reward values")
-        fname = run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_iter2_S2_KF_" + str(kf_ind) + ".npz"
-        fname = os.path.join(out_dir, fname)
-        params2 = jnp.load(fname, allow_pickle=True)
-        new_logpi02, new_log_Ps2, new_Rs2, new_reward2, LL_list2 = params2['new_logpi0'], params2['new_log_Ps'], params2['new_Rs'], params2['new_reward'], params2['LL_list']
-
-        new_reward2 = normalize_reward(new_reward2)
-        print(new_reward2.shape, "NEW_REWARD")
-        #if new_reward2.shape[0] >=  3:
-        #    new_reward2 = new_reward2[[1, 0, 2], ...] #TODO - viz this
-        #elif new_reward2.shape[0] == 2:
-        #    new_reward2 = new_reward2[[1, 0], ...]
-        #else:
-        #    new_reward2 = new_reward2[[0], ...]
-
-
-
-        #TODO - change to all, train, test
         print("Final computations", "S2")
-        LL, jax_path_vmap = learnt_LL2(new_logpi02, new_log_Ps2, new_Rs2, new_reward2, temps, n_states, n_actions, new_trans_prob, train_xohs, train_xohs2, train_aohs)
-        print(LL)
-        fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_S2_iter2_LL2_KF_" + str(kf_ind) + ".npz")
-        jnp.savez(fname, LL=LL, jax_path_vmap=jax_path_vmap)
+        LL, path = learnt_LL2(r[0], r[1], r[2], jnp.asarray(r[3]), temps, S, A, new_T, xo[train_index], x2, ao[train_index])
+        print("S2 train LL", LL)
+        np.savez(n(f_ll2), LL=LL, jax_path_vmap=np.asarray(path), **seq_meta_arrays(data, train_index))
+        if has_test:
+            LL, path = learnt_LL2(r[0], r[1], r[2], jnp.asarray(r[3]), temps, S, A, new_T, xo[test_index],
+                                  xohs2[test_index], ao[test_index])
+            print("S2 test LL", LL)
+            np.savez(n(f_ll2t), LL=LL, jax_path_vmap=np.asarray(path), **seq_meta_arrays(data, test_index))
 
-        LL, jax_path_vmap = learnt_LL2(new_logpi02, new_log_Ps2, new_Rs2, new_reward2, temps, n_states, n_actions, new_trans_prob, test_xohs, test_xohs2, test_aohs)
-        print(LL)
-        fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_S2_iter2_LL2_test_KF_" + str(kf_ind) + ".npz")
-        jnp.savez(fname, LL=LL, jax_path_vmap=jax_path_vmap)
+    print("Training third model step 1 (S-1)")
+    r = em_train_naturenet(logpi0, log_Ps, Rs, R_start2, Td, xo[train_index], ao[train_index], epochs, tol=tol)
+    _save(n(f_s1i), new_logpi0=r[0], new_log_Ps=r[1], new_Rs=r[2], new_reward=r[3], LL_list=r[4], temps=temps)
+    print("Training third model step 2")
+    r = em_train_temp(jnp.array(r[0]), jnp.array(r[1]), r[2], jnp.array(r[3]), temps, Td, xo[train_index],
+                      ao[train_index], epochs_2, tol=tol)
+    _save(n(f_s1), new_logpi0=r[0], new_log_Ps=r[1], new_Rs=r[2], new_reward=r[3],
+          new_reward_normalized=normalize_reward(np.asarray(r[3])), LL_list=r[4], temps=temps)
 
-        kf_ind = kf_ind + 1
+    # LLs use the RAW learned reward (previously normalize_reward() was applied first, so the reported
+    # LLs were for a different reward than the one that was fit).
+    print("Final computations", "S1")
+    LL, path = learnt_LL1(r[0], r[1], r[2], jnp.asarray(r[3]), temps, S, A, Td, xo[train_index], ao[train_index])
+    print("S1 train LL", LL)
+    np.savez(n(f_ll1), LL=LL, jax_path_vmap=np.asarray(path), **seq_meta_arrays(data, train_index))
+    if has_test:
+        LL, path = learnt_LL1(r[0], r[1], r[2], jnp.asarray(r[3]), temps, S, A, Td, xo[test_index], ao[test_index])
+        print("S1 test LL", LL)
+        np.savez(n(f_ll1t), LL=LL, jax_path_vmap=np.asarray(path), **seq_meta_arrays(data, test_index))
+
+
+# ---------------------------------------------------------------------------
+# K-fold drivers
+# ---------------------------------------------------------------------------
+
+def _fold_iter(yml_conf, data, folds_to_run):
+    folds = get_folds(yml_conf, data["groups"])
+    sel = folds_to_run if folds_to_run is not None else yml_conf.get("folds_to_run")
+    sel = None if sel is None else set(int(k) for k in as_list(sel))
+    for kf_ind, (tr, te) in enumerate(folds):
+        if sel is None or kf_ind in sel:
+            yield kf_ind, tr, te
+
+
+def run_swirl_init(yml_conf, data=None, folds_to_run=None):
+    data = prepare_data(yml_conf, data)
+    out_dir, run_uid, seed, K = yml_conf["out_dir"], yml_conf["run_uid"], yml_conf["seed"], yml_conf["n_hidden_init"]
+    for kf_ind, tr, te in _fold_iter(yml_conf, data, folds_to_run):
+        tag = "_KF_" + str(kf_ind)
+        out = os.path.join(out_dir, run_uid + "_swirl_run_" + str(K) + '_' + str(seed) + "_naturenet_init1" + tag + ".npz")
+        if os.path.exists(out) and not yml_conf.get("overwrite", False):
+            print("init fold", kf_ind, "exists; skipping")
+            continue
+        print("SWIRL init fold", kf_ind, ":", len(tr), "train /", len(te), "test sequences")
+        T = fold_trans_prob(yml_conf, data, tr)
+        fit_swirl_init(yml_conf, data, T, tr, load_arhmm(out_dir, run_uid, K, seed, kf_ind), tag)
+
+
+def run_swirl_final(yml_conf, data=None, folds_to_run=None):
+    data = prepare_data(yml_conf, data)
+    out_dir, run_uid, seed, K = yml_conf["out_dir"], yml_conf["run_uid"], yml_conf["seed"], yml_conf["n_hidden"]
+    for kf_ind, tr, te in _fold_iter(yml_conf, data, folds_to_run):
+        tag = "_KF_" + str(kf_ind)
+        out = os.path.join(out_dir, run_uid + "_" + str(K) + '_' + str(seed) + "_naturenet_S1_iter2_LL1_test" + tag + ".npz")
+        if os.path.exists(out) and not yml_conf.get("overwrite", False):
+            print("final fold", kf_ind, "exists; skipping")
+            continue
+        print("SWIRL final fold", kf_ind, ":", len(tr), "train /", len(te), "test sequences")
+        T = fold_trans_prob(yml_conf, data, tr)
+        fit_swirl_final(yml_conf, data, T, tr, te, load_arhmm(out_dir, run_uid, yml_conf["n_hidden_init"], seed, kf_ind), tag)
+
+
+def run_all(yml_conf, folds_to_run=None):
+    """ARHMM + SWIRL init + final with the data loaded once."""
+    data = None
+    if yml_conf.get("run_arhmm", False) or yml_conf.get("run_swirl_init", False) or yml_conf.get("run_swirl_final", False):
+        data = load_swirl_dataset(yml_conf)
+    if yml_conf.get("run_arhmm", False):
+        run_arhmm(yml_conf, data=data, folds_to_run=folds_to_run)
+    if yml_conf.get("run_swirl_init", False) or yml_conf.get("run_swirl_final", False):
+        data = prepare_data(yml_conf, data)
+    if yml_conf.get("run_swirl_init", False):
+        run_swirl_init(yml_conf, data=data, folds_to_run=folds_to_run)
+    if yml_conf.get("run_swirl_final", False):
+        run_swirl_final(yml_conf, data=data, folds_to_run=folds_to_run)
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-y", "--yaml", help="YAML file for fusion info.")
+    parser.add_argument("--fold", type=int, nargs="*", default=None, help="Only run these fold indices (job arrays).")
     args = parser.parse_args()
 
-    #Translate config to dictionary 
     yml_conf = read_yaml(args.yaml)
- 
-    if yml_conf["run_arhmm"]:
-        run_arhmm(yml_conf)    
- 
-    if yml_conf["run_swirl_init"]:
-        run_swirl_init(yml_conf)
- 
-    if yml_conf["run_swirl_final"]:
-        run_swirl_final(yml_conf)
-
-
-
+    run_all(yml_conf, folds_to_run=args.fold)

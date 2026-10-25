@@ -5,9 +5,13 @@ import numpy as np
 import numpy.random as npr
 import os
 
+import argparse
+
 from ssm.swirl import ARHMMs 
 
 from sit_fuse.utils import read_yaml
+
+from naturenet.models.irl.swirl_data import align_for_swirl, holdout_split, load_swirl_dataset
 
 
 def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, positions, out_dir, run_uid):
@@ -30,6 +34,7 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
             
 
     #list_x = [row for row in positions[:, :, np.newaxis].astype(int)]
+    os.makedirs(out_dir, exist_ok=True)
     lls_arhmm = arhmm_s.initialize(list_x, num_init_iters=500)
     init_start = arhmm_s.init_state_distn.initial_state_distn
     logpi0_start = arhmm_s.init_state_distn.log_pi0
@@ -42,8 +47,8 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
     np.savez(fname, init_start=init_start, logpi0_start=logpi0_start, log_Ps_start=log_Ps_start, W1_start=Rs_start[0], b1_start=Rs_start[1], W2_start=Rs_start[2], b2_start=Rs_start[3])
 
 
-def run_arhmm(yml_conf):
- 
+def run_arhmm(yml_conf, data=None):
+    """ARHMM init for the final run, on the aligned states of the TRAIN animals of the holdout split."""
     seed = yml_conf["seed"]
     n_hidden = yml_conf["n_hidden_init"]
     emission_dim = yml_conf["emission_dim"]
@@ -51,34 +56,13 @@ def run_arhmm(yml_conf):
     n_states = yml_conf["n_states"]
     out_dir = yml_conf["out_dir"]
     run_uid = yml_conf["run_uid"]
-    actions_fpath = yml_conf["actions"]
-    positions_fpath = yml_conf["positions"]
 
-    actions = []
-    positions = []
-    max_len = -1
-    for i in range(len(actions_fpath)):
-        actions_tmp = np.load(actions_fpath[i], allow_pickle=True)
-        positions_tmp = np.load(positions_fpath[i], allow_pickle=True)
+    data = data if data is not None else load_swirl_dataset(yml_conf)
+    xs, _, _ = align_for_swirl(data["states"], data["actions"])
+    train_index, _, _ = holdout_split(yml_conf, data["groups"])
 
-        for j in range(len(positions_tmp)):
-            max_len = max(max_len, len(positions_tmp[j]))
-
-        actions.extend(actions_tmp)
-        positions.extend(positions_tmp)
-
-    #for now, at least, all path lengths have to be the same for SWIRL :(
-    positions_final = []
-    actions_final = []
-    for j in range(len(positions)):
-        if len(positions[j]) == max_len:
-            positions_final.append(positions[j])
-            actions_final.append(actions[j])
-    actions = actions_final
-    positions = positions_final
-
-
-    run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, positions, out_dir, run_uid)
+    npr.seed(seed)
+    run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, xs[train_index], out_dir, run_uid)
 
 
 if __name__ == '__main__':
@@ -91,4 +75,3 @@ if __name__ == '__main__':
     yml_conf = read_yaml(args.yaml)
 
     run_arhmm(yml_conf)
-

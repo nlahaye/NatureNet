@@ -7,7 +7,7 @@ from scipy.optimize import minimize
 import jax
 import jax.numpy as jnp
 from jax import lax, vmap
-from jax import grad as jax_grad
+from jax import grad as jax_grad  # noqa: F401 (kept for star-importers)
 from functools import partial
 from jax.scipy.special import logsumexp as jax_logsumexp
 import optax
@@ -194,304 +194,142 @@ def jax_e_step_logpi(pi0, log_Ps, Rs, logemit, trans_probs, xoh, aoh):
     gamma_jax, xi_jax = expected_states(alpha_jax, beta_jax, Ps_jax, log_likes_jax)
     return gamma_jax, xi_jax, alpha_jax
 
+LOG_EPS = 1e-12
+
+
+def _safe_log(p):
+    return jnp.log(jnp.clip(p, LOG_EPS))
+
+
+def _rewards_sa(rewards, n_states, n_actions):
+    # (K, 1, S) state-only reward broadcast over actions -> (K, S, A)
+    return jnp.expand_dims(rewards[:, 0, :], axis=2) * jnp.ones((1, n_states, n_actions))
+
+
+def _log_policy(rewards, trans_probs, temps=None, use_temp=False):
+    """Log policy (K, S, A). Always log(pi): the *_naturenet variants previously used pi itself as logits."""
+    n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
+    rewards_sa = _rewards_sa(rewards, n_states, n_actions)
+    if use_temp:
+        pi = vmap(lambda r, t: jax_soft_find_policy_temp(trans_probs, r, 0.95, t)[2])(rewards_sa, temps)
+    else:
+        pi = vmap(lambda r: jax_soft_find_policy(trans_probs, r, 0.95)[2])(rewards_sa)
+    return _safe_log(pi)
+
+
+# ---------------------------------------------------------------------------
+# E-step (jitted: compiled once per input shape and reused every EM iteration)
+# ---------------------------------------------------------------------------
+
+@jax.jit
 def jax_e_step_batch2_naturenet(pi0, log_Ps, Rs, rewards, trans_probs, xoh_list, xoh_list2, aoh_list):
-    n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
-    rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-    pi, _, _ = vmap(partial(vi, trans_probs))(rewards_sa)
-    logemit = pi
-    gamma_jax_list, xi_jax_list, alpha_jax_list = vmap(partial(jax_e_step_logpi2, jnp.array(pi0), jnp.array(log_Ps), Rs, jnp.array(logemit), jnp.array(trans_probs)))(jnp.array(xoh_list), jnp.array(xoh_list2), jnp.array(aoh_list))
-    return gamma_jax_list, xi_jax_list, alpha_jax_list
+    logemit = _log_policy(rewards, trans_probs)
+    return vmap(partial(jax_e_step_logpi2, pi0, log_Ps, Rs, logemit, trans_probs))(xoh_list, xoh_list2, aoh_list)
 
+
+@jax.jit
 def jax_e_step_batch_naturenet(pi0, log_Ps, Rs, rewards, trans_probs, xoh_list, aoh_list):
-    n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
-    rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-    pi, _, _ = vmap(partial(vi, trans_probs))(rewards_sa)
-    logemit = pi
-    gamma_jax_list, xi_jax_list, alpha_jax_list = vmap(partial(jax_e_step_logpi, jnp.array(pi0), jnp.array(log_Ps), Rs, jnp.array(logemit), jnp.array(trans_probs)))(jnp.array(xoh_list), jnp.array(aoh_list))
-    return gamma_jax_list, xi_jax_list, alpha_jax_list
+    logemit = _log_policy(rewards, trans_probs)
+    return vmap(partial(jax_e_step_logpi, pi0, log_Ps, Rs, logemit, trans_probs))(xoh_list, aoh_list)
 
+
+@jax.jit
 def jax_e_step_batch2_temp(pi0, log_Ps, Rs, rewards, trans_probs, temps, xoh_list, xoh_list2, aoh_list):
-    n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
-    rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-    pi, _, _ = vmap(partial(vi_temp, trans_probs))(rewards_sa, temps)
-    logemit = jnp.log(pi)
-    gamma_jax_list, xi_jax_list, alpha_jax_list = vmap(partial(jax_e_step_logpi2, jnp.array(pi0), jnp.array(log_Ps), Rs, jnp.array(logemit), jnp.array(trans_probs)))(jnp.array(xoh_list), jnp.array(xoh_list2), jnp.array(aoh_list))
-    return gamma_jax_list, xi_jax_list, alpha_jax_list
+    logemit = _log_policy(rewards, trans_probs, temps, use_temp=True)
+    return vmap(partial(jax_e_step_logpi2, pi0, log_Ps, Rs, logemit, trans_probs))(xoh_list, xoh_list2, aoh_list)
 
+
+@jax.jit
 def jax_e_step_batch_temp(pi0, log_Ps, Rs, rewards, trans_probs, temps, xoh_list, aoh_list):
-    n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
-    rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-    pi, _, _ = vmap(partial(vi_temp, trans_probs))(rewards_sa, temps)
-    logemit = jnp.log(pi)
-    gamma_jax_list, xi_jax_list, alpha_jax_list = vmap(partial(jax_e_step_logpi, jnp.array(pi0), jnp.array(log_Ps), Rs, jnp.array(logemit), jnp.array(trans_probs)))(jnp.array(xoh_list), jnp.array(aoh_list))
-    return gamma_jax_list, xi_jax_list, alpha_jax_list
+    logemit = _log_policy(rewards, trans_probs, temps, use_temp=True)
+    return vmap(partial(jax_e_step_logpi, pi0, log_Ps, Rs, logemit, trans_probs))(xoh_list, aoh_list)
+
+
+# ---------------------------------------------------------------------------
+# M-steps. The objectives are module-level and jitted (value_and_grad), so they are traced once per
+# shape instead of being re-built and run op-by-op on every EM iteration; scipy gets f and grad from
+# one call (jac=True) instead of two separate passes.
+# ---------------------------------------------------------------------------
+
+def _emit_loss(flat, trans_probs, temps, gammas, xohs, aohs, n_total, shape, use_temp):
+    rewards = flat.reshape(shape)
+    logemit = _log_policy(rewards, trans_probs, temps, use_temp=use_temp)
+    lls = vmap(partial(comp_ll_jax, logemit))(xohs, aohs)  # (N, T, K)
+    return -jnp.sum(gammas * lls) / n_total
+
+
+_emit_vg = jax.jit(jax.value_and_grad(_emit_loss), static_argnames=("shape", "use_temp"))
+
+
+def _unflatten_trans(flat, shapes):
+    out, i = [], 0
+    for shp in shapes:
+        n = int(np.prod(shp))
+        out.append(flat[i:i + n].reshape(shp))
+        i += n
+    return out[0], tuple(out[1:])
+
+
+def _trans_loss(flat, xis, xohs, n_total, shapes):
+    log_Ps, Rs = _unflatten_trans(flat, shapes)
+    log_trans = vmap(lambda x: comp_log_transP(log_Ps, Rs, x))(xohs)  # (N, T-1, K, K)
+    return -jnp.sum(xis * log_trans) / n_total
+
+
+_trans_vg = jax.jit(jax.value_and_grad(_trans_loss), static_argnames=("shapes",))
+
+
+def _minimize(vg, x0, method, num_iters, **kw):
+    def f(x):
+        v, g = vg(jnp.asarray(x), **kw)
+        return float(v), np.asarray(g, dtype=np.float64)
+
+    return minimize(f, np.asarray(x0, dtype=np.float64), jac=True, method=method,
+                    options=dict(maxiter=num_iters), tol=1e-4)
 
 
 def trans_m_step_jax_scipy2(log_Ps, Rs, expectations, one_hot_xs, num_iters=1000, **kwargs):
-    # Maximize the expected log joint
-    def _expected_log_joint(params, expectations):
-        # Reshape flat parameters back to original shapes
-        log_Ps, Rs_flatten = params[:log_Ps_size].reshape(log_Ps_shape), params[log_Ps_size:]
-        W1, b1, W2, b2 = Rs_flatten[:W1_size].reshape(W1_shape), Rs_flatten[W1_size:W1_size+b1_size].reshape(b1_shape), Rs_flatten[W1_size+b1_size:W1_size+b1_size+W2_size].reshape(W2_shape), Rs_flatten[W1_size+b1_size+W2_size:].reshape(b2_shape)
-        Rs = (W1, b1, W2, b2)
-        
-        def scan_func(carry, inputs):
-            elbo = carry
-            one_hot_x, expected_states, expected_joints = inputs
-            log_trans = comp_log_transP(log_Ps, Rs, one_hot_x)
-            return elbo + jnp.sum(expected_joints * log_trans), 0
-
-        elbo, _ = lax.scan(scan_func, 0, (one_hot_xs, expectations[0], expectations[1]))
-        return elbo
-
-    T = sum([one_hot_x.shape[0] for one_hot_x in one_hot_xs])
-
-    # Define the objective function for BFGS
-    def objective(flat_params, itr):
-        elbo = _expected_log_joint(flat_params, expectations)
-        return -elbo / T
-
-    # Initial parameter values
+    one_hot_xs = jnp.asarray(one_hot_xs)
     W1, b1, W2, b2 = Rs
-    initial_params = (log_Ps, W1, b1, W2, b2)
-    log_Ps_shape = log_Ps.shape
-    W1_shape, b1_shape, W2_shape, b2_shape = W1.shape, b1.shape, W2.shape, b2.shape
-    log_Ps_size = log_Ps.size
-    W1_size, b1_size, W2_size, b2_size = W1.size, b1.size, W2.size, b2.size
-    flat_initial_params = jnp.concatenate([log_Ps.flatten(), W1.flatten(), b1.flatten(), W2.flatten(), b2.flatten()])
+    parts = [jnp.asarray(p) for p in (log_Ps, W1, b1, W2, b2)]
+    shapes = tuple(tuple(int(d) for d in p.shape) for p in parts)
+    flat0 = jnp.concatenate([p.ravel() for p in parts])
+    n_total = float(one_hot_xs.shape[0] * one_hot_xs.shape[1])
+    result = _minimize(_trans_vg, flat0, "L-BFGS-B", num_iters, xis=jnp.asarray(expectations[1]),
+                       xohs=one_hot_xs, n_total=n_total, shapes=shapes)
+    log_Ps_opt, Rs_opt = _unflatten_trans(result.x, shapes)
+    return log_Ps_opt, Rs_opt
 
-    # Run the optimization using jax.scipy.optimize.minimize with BFGS
-    def safe_grad_jax(x, itr):
-        g = jax_grad(objective)(x, itr)
-        # g[~np.isfinite(g)] = 1e8
-        return g
 
-    result = minimize(objective, flat_initial_params, args=(-1,),
-                      jac=safe_grad_jax,
-                      method="L-BFGS-B",
-                      callback=None,
-                      options=dict(maxiter=num_iters, disp=False),
-                      tol=1e-4)
-
-    # Reshape the optimized parameters back to their original shapes
-    optimized_log_Ps = result.x[:log_Ps_size].reshape(log_Ps_shape)
-    optimized_Rs = result.x[log_Ps_size:]
-    optimized_W1 = optimized_Rs[:W1_size].reshape(W1_shape)
-    optimized_b1 = optimized_Rs[W1_size:W1_size+b1_size].reshape(b1_shape)
-    optimized_W2 = optimized_Rs[W1_size+b1_size:W1_size+b1_size+W2_size].reshape(W2_shape)
-    optimized_b2 = optimized_Rs[W1_size+b1_size+W2_size:].reshape(b2_shape)
-
-    return (optimized_log_Ps, (optimized_W1, optimized_b1, optimized_W2, optimized_b2))
+def _emit_m_step(rewards, trans_probs, temps, expectations, one_hot_xs, one_hot_acs, num_iters, use_temp):
+    rewards = jnp.asarray(rewards)
+    one_hot_xs = jnp.asarray(one_hot_xs)
+    shape = tuple(int(d) for d in rewards.shape)
+    n_total = float(one_hot_xs.shape[0] * one_hot_xs.shape[1])
+    result = _minimize(_emit_vg, rewards.ravel(), "BFGS", num_iters, trans_probs=jnp.asarray(trans_probs),
+                       temps=None if temps is None else jnp.asarray(temps), gammas=jnp.asarray(expectations[0]),
+                       xohs=one_hot_xs, aohs=jnp.asarray(one_hot_acs), n_total=n_total, shape=shape,
+                       use_temp=use_temp)
+    return result.x.reshape(shape)
 
 
 def emit_m_step_jax_scipy2(rewards, trans_probs, expectations, one_hot_xs, one_hot_acs, num_iters=1000, **kwargs):
-    
-    # Maximize the expected log joint
-    def _expected_log_joint(params, expectations):
-        # Reshape the flattened parameters back to their original shape
-        rewards = params.reshape(initial_params_shape)
-        n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
-        rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-        pi, _, _ = vmap(partial(vi, trans_probs))(rewards_sa)
-        logemit = jnp.log(pi)
+    return _emit_m_step(rewards, trans_probs, None, expectations, one_hot_xs, one_hot_acs, num_iters, False)
 
-        def scan_func(carry, inputs):
-            elbo = carry
-            one_hot_x, one_hot_a, expected_states, expected_joints = inputs
-            lls = comp_ll_jax(logemit, one_hot_x, one_hot_a)
-            return elbo + jnp.sum(expected_states * lls), 0
-
-        elbo, _ = lax.scan(scan_func, 0, (one_hot_xs, one_hot_acs, expectations[0], expectations[1]))
-        return elbo
-
-    T = sum([one_hot_x.shape[0] for one_hot_x in one_hot_xs])
-    
-    # Define the objective function for BFGS
-    def objective(flat_params, itr):
-        elbo = _expected_log_joint(flat_params, expectations)
-        return -elbo / T
-
-    # Initial parameter values
-    initial_params = rewards
-    initial_params_shape = rewards.shape
-    flat_initial_params = rewards.flatten()
-
-    
-
-    # Run the optimization using jax.scipy.optimize.minimize with BFGS
-    def safe_grad_jax(x, itr):
-        g = jax_grad(objective)(x, itr)
-        # g[~np.isfinite(g)] = 1e8
-        return g
-
-    result = minimize(objective, flat_initial_params, args=(-1,),
-                      jac=safe_grad_jax,
-                      method="BFGS",
-                      callback=None,
-                      options=dict(maxiter=num_iters, disp=False),
-                      tol=1e-4)
-
-    # Reshape the optimized parameters back to their original shape
-    optimal_params = result.x.reshape(initial_params_shape)
-
-    return optimal_params
 
 def emit_m_step_jax_scipy2_naturenet(rewards, trans_probs, expectations, one_hot_xs, one_hot_acs, num_iters=1000, **kwargs):
-    
-    # Maximize the expected log joint
-    def _expected_log_joint(params, expectations):
-        # Reshape the flattened parameters back to their original shape
-        rewards = params.reshape(initial_params_shape)
-        n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
-        rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-        pi, _, _ = vmap(partial(vi, trans_probs))(rewards_sa)
-        logemit = pi
+    # Same objective as emit_m_step_jax_scipy2 now that log(pi) is used (was: logemit = pi).
+    return _emit_m_step(rewards, trans_probs, None, expectations, one_hot_xs, one_hot_acs, num_iters, False)
 
-        def scan_func(carry, inputs):
-            elbo = carry
-            one_hot_x, one_hot_a, expected_states, expected_joints = inputs
-            lls = comp_ll_jax(logemit, one_hot_x, one_hot_a)
-            return elbo + jnp.sum(expected_states * lls), 0
-
-        elbo, _ = lax.scan(scan_func, 0, (one_hot_xs, one_hot_acs, expectations[0], expectations[1]))
-        return elbo
-
-    T = sum([one_hot_x.shape[0] for one_hot_x in one_hot_xs])
-    
-    # Define the objective function for BFGS
-    def objective(flat_params, itr):
-        elbo = _expected_log_joint(flat_params, expectations)
-        return -elbo / T
-
-    # Initial parameter values
-    initial_params = rewards
-    initial_params_shape = rewards.shape
-    flat_initial_params = rewards.flatten()
-
-    
-
-    # Run the optimization using jax.scipy.optimize.minimize with BFGS
-    def safe_grad_jax(x, itr):
-        g = jax_grad(objective)(x, itr)
-        # g[~np.isfinite(g)] = 1e8
-        return g
-
-    result = minimize(objective, flat_initial_params, args=(-1,),
-                      jac=safe_grad_jax,
-                      method="BFGS",
-                      callback=None,
-                      options=dict(maxiter=num_iters, disp=False),
-                      tol=1e-4)
-
-    # Reshape the optimized parameters back to their original shape
-    optimal_params = result.x.reshape(initial_params_shape)
-
-    return optimal_params
 
 def emit_m_step_jax_scipy2_temp(rewards, trans_probs, temps, expectations, one_hot_xs, one_hot_acs, num_iters=1000, **kwargs):
-    
-    # Maximize the expected log joint
-    def _expected_log_joint(params, expectations):
-        # Reshape the flattened parameters back to their original shape
-        rewards = params.reshape(initial_params_shape)
-        n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
-        rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-        pi, _, _ = vmap(partial(vi_temp, trans_probs))(rewards_sa, temps)
-        logemit = jnp.log(pi)
+    return _emit_m_step(rewards, trans_probs, temps, expectations, one_hot_xs, one_hot_acs, num_iters, True)
 
-        def scan_func(carry, inputs):
-            elbo = carry
-            one_hot_x, one_hot_a, expected_states, expected_joints = inputs
-            lls = comp_ll_jax(logemit, one_hot_x, one_hot_a)
-            return elbo + jnp.sum(expected_states * lls), 0
-
-        elbo, _ = lax.scan(scan_func, 0, (one_hot_xs, one_hot_acs, expectations[0], expectations[1]))
-        return elbo
-
-    T = sum([one_hot_x.shape[0] for one_hot_x in one_hot_xs])
-    
-    # Define the objective function for BFGS
-    def objective(flat_params, itr):
-        elbo = _expected_log_joint(flat_params, expectations)
-        return -elbo / T
-
-    # Initial parameter values
-    initial_params = rewards
-    initial_params_shape = rewards.shape
-    flat_initial_params = rewards.flatten()
-
-    
-
-    # Run the optimization using jax.scipy.optimize.minimize with BFGS
-    def safe_grad_jax(x, itr):
-        g = jax_grad(objective)(x, itr)
-        # g[~np.isfinite(g)] = 1e8
-        return g
-
-    result = minimize(objective, flat_initial_params, args=(-1,),
-                      jac=safe_grad_jax,
-                      method="BFGS",
-                      callback=None,
-                      options=dict(maxiter=num_iters, disp=False),
-                      tol=1e-4)
-
-    # Reshape the optimized parameters back to their original shape
-    optimal_params = result.x.reshape(initial_params_shape)
-
-    return optimal_params
 
 def emit_m_step_jax_scipy_temp_reg(rewards, trans_probs, temps, expectations, one_hot_xs, one_hot_acs, num_iters=1000, **kwargs):
-    
-    # Maximize the expected log joint
-    def _expected_log_joint(params, expectations):
-        # Reshape the flattened parameters back to their original shape
-        rewards = params.reshape(initial_params_shape)
-        n_states, n_actions = trans_probs.shape[0], trans_probs.shape[1]
-        rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-        pi, _, _ = vmap(partial(vi_temp, trans_probs))(rewards_sa, temps)
-        logemit = jnp.log(pi)
+    # Regularisation terms were commented out in the original; identical to the temp M-step.
+    return _emit_m_step(rewards, trans_probs, temps, expectations, one_hot_xs, one_hot_acs, num_iters, True)
 
-        def scan_func(carry, inputs):
-            elbo = carry
-            one_hot_x, one_hot_a, expected_states, expected_joints = inputs
-            lls = comp_ll_jax(logemit, one_hot_x, one_hot_a)
-            return elbo + jnp.sum(expected_states * lls), 0
-
-        elbo, _ = lax.scan(scan_func, 0, (one_hot_xs, one_hot_acs, expectations[0], expectations[1]))
-        return elbo
-
-    T = sum([one_hot_x.shape[0] for one_hot_x in one_hot_xs])
-    
-    # Define the objective function for BFGS
-    def objective(flat_params, itr):
-        elbo = _expected_log_joint(flat_params, expectations)
-        rewards = flat_params.reshape(initial_params_shape)
-        return -elbo / T #+ 0.01 * jnp.sum(jnp.abs(rewards[0])) + 0.007 * jnp.sum(jnp.abs(rewards[1])) + 0.001 * jnp.sum(jnp.square(rewards[2]))
-
-    # Initial parameter values
-    initial_params = rewards
-    initial_params_shape = rewards.shape
-    flat_initial_params = rewards.flatten()
-
-    
-
-    # Run the optimization using jax.scipy.optimize.minimize with BFGS
-    def safe_grad_jax(x, itr):
-        g = jax_grad(objective)(x, itr)
-        # g[~np.isfinite(g)] = 1e8
-        return g
-
-    result = minimize(objective, flat_initial_params, args=(-1,),
-                      jac=safe_grad_jax,
-                      method="BFGS",
-                      callback=None,
-                      options=dict(maxiter=num_iters, disp=False),
-                      tol=1e-4)
-
-    # Reshape the optimized parameters back to their original shape
-    optimal_params = result.x.reshape(initial_params_shape)
-
-    return optimal_params
 
 def pi0_m_step(gammas):
     pi0 = sum(gammas[:, 0]) + 1e-8

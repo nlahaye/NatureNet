@@ -1,192 +1,233 @@
 
 #Code adapted from https://github.com/BRAINML-GT/SWIRL
-from naturenet.models.irl.run_arhmm import run_arhmm
-from naturenet.models.irl.swirl_training import *
-from naturenet.models.irl.swirl_training_top_level_nn import *
-from naturenet.models.irl.swirl_utils import *
-from naturenet.models.irl.swirl_nn_model import *
+"""
+NN-SWIRL K-fold (S-1 here; S-2 in run_swirl_nn_2_kfold.py; final holdout run in run_swirl_nn.py).
 
-from sklearn.model_selection import KFold
+Fixes vs. the original:
+- data via swirl_data (aligned x / x_prev / a; the old positions[:, 1:] / actions[:, 1:] no longer match
+  the preprocessing output), animal-grouped folds shared with the ARHMM, per-fold T from train animals;
+- per-(run, fold) PRNG keys (was PRNGKey(0) everywhere, so all runs were identical apart from the ARHMM),
+  independent keys for the two networks;
+- output names include run_uid (the model files were overwritten by every run) and have no stray space;
+- "train" LL is computed on the train split (the old _LL file used all data, test fold included); one LL
+  per file (the old train_LL was the same number computed twice);
+- the saved S-2 reward is the full pair table (K, S, S, A) (was the S-1 expanded evaluation);
+- no dense S^2 x A x S^2 tensor (it was built even for S-1), no bfloat16, finished folds skipped.
+
+Config keys (defaults): nn_hidden_size 32, nn_learning_rate 5e-3, nn_reward_bound None,
+nn_epochs_init / nn_epochs (S-1 20 / 20, S-2 10 / 10), nn_emit_iters 800, nn_emit_tol None,
+nn_s1_warmup_iters (S-2 warm start on the S-1 objective, 0), discount 0.95, vi_iters 100, em_tol None.
+"""
+import argparse
+import os
 
 import numpy as np
-import numpy.random as npr
-from scipy.special import logsumexp
-import os
-import pickle
 import sparse
-
-import sparse
-import scipy
 
 import jax
 import jax.numpy as jnp
-from jax import lax, vmap, jit
+from flax import serialization
 
-#from jax.lib import xla_bridge
-
-import jax.extend
- 
-from functools import partial
-from jax.scipy.special import logsumexp as jax_logsumexp
-import optax
-jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_platform_name", "gpu")
+from naturenet.models.irl.run_arhmm_kfold_nn import arhmm_nn_fname, run_arhmm
+from naturenet.models.irl.swirl_data import (
+    align_for_swirl,
+    as_list,
+    get_folds,
+    load_swirl_dataset,
+    seq_meta_arrays,
+    trans_prob_from_segments,
+)
+from naturenet.models.irl.swirl_nn_model import create_train_state
+from naturenet.models.irl.swirl_training_top_level_nn import em_train_nn, learnt_LL_nn, reward_tables
+from naturenet.environment.pipeline_checks import check_folds, check_swirl_inputs, check_trans_prob
 
 from sit_fuse.utils import read_yaml
 
-import argparse
+jax.config.update("jax_enable_x64", True)
+_platform = os.environ.get("NATURENET_JAX_PLATFORM", "gpu")
+if _platform:
+    try:
+        jax.config.update("jax_platform_name", _platform)
+    except Exception as e:  # noqa: BLE001
+        print("Could not select JAX platform", _platform, ":", e)
 
- 
-#K = 2 number of hidden states
-#D_obs = 1 number of observed dimensions
-#D = number of latent dimensions
-#C = 25 number of states
-
-def get_reward_m(trans_probs, R_params, apply_fn):
-    n_states, n_actions, _ = trans_probs.shape
-    reshape_func = lambda x: (jnp.tile(jnp.expand_dims(x, axis=-1), (1,) * (x.ndim) + (n_states,)) / n_states).reshape(*x.shape[:-1], x.shape[-1] * x.shape[-1])
-    def get_reward_single(curr_s):
-        one_hot_input = jax.nn.one_hot(curr_s, n_states)
-        # Combine one-hot encodings
-        return apply_fn({'params': R_params}, reshape_func(one_hot_input))
-        
-    reward_net = vmap(get_reward_single)(jnp.arange(n_states)).transpose(1, 0, 2)
-    return reward_net
+N_ACTIONS = 9
+_DEFAULT_EPOCHS = {"s1": (20, 20), "s2": (10, 10)}
 
 
-def run_swirl_nn(yml_conf):
+# ---------------------------------------------------------------------------
+# Data / settings (prepared once, reused across folds and (K, run))
+# ---------------------------------------------------------------------------
 
-    seed = yml_conf["seed"]
-
-    n_hidden = yml_conf["n_hidden"]
-    n_hidden_init = yml_conf["n_hidden_init"]
-    emission_dim = yml_conf["emission_dim"]
-
-    trans_prob_fpath = yml_conf["trans_probs"]
-    actions_fpath = yml_conf["actions"]
-    positions_fpath = yml_conf["positions"]
-    out_dir = yml_conf["out_dir"]
- 
-    run_uid = yml_conf["run_uid"]
-    #time_interval_params = run_uid + "_time_interval_run_" + str(n_hidden_init) + '_' + str(seed) + "_naturenet_init1.npz"
-
-    trans_probs = sparse.load_npz(trans_prob_fpath)
-
-    actions = []
-    positions = []
-    max_len = -1
-    for i in range(len(actions_fpath)):
-        actions_tmp = np.load(actions_fpath[i], allow_pickle=True)
-        positions_tmp = np.load(positions_fpath[i], allow_pickle=True)
-
-        for j in range(len(positions_tmp)):
-            max_len = max(max_len, len(positions_tmp[j]))
-
-        actions.extend(actions_tmp)
-        positions.extend(positions_tmp)
-
-    #for now, at least, all path lengths have to be the same for SWIRL :(
-    positions_final = []
-    actions_final = []
-    for j in range(len(positions)):
-        if len(positions[j]) == max_len:
-            positions_final.append(positions[j])
-            actions_final.append(actions[j])
-    actions = actions_final
-    positions = positions_final
-    positions = np.array(positions)
-    actions  = np.array(actions)
- 
-
-    n_states, n_actions, _ = trans_probs.shape
-
-  
-    rng = jax.random.PRNGKey(0)
-    hidden_size = 32
-    learning_rate = 5e-3
-
-    # Initialize the model and training state
-    R_state = create_train_state(rng, learning_rate, n_states, n_hidden, hidden_size, n_actions)
-    R_state2 = create_train_state(rng, learning_rate, n_states, n_hidden, hidden_size, n_actions) 
- 
-    trans_probs = trans_probs.todense()
- 
-    new_trans_probs = np.zeros((n_states * n_states, n_actions, n_states * n_states))
-    for s_prev in range(n_states):
-        for s in range(n_states):
-            for a in range(n_actions):
-                for s_prime in range(n_states):
-                    if trans_probs[s, a, s_prime] > 0:
-                        new_trans_probs[s * n_states + s_prev, a, s_prime * n_states + s] = trans_probs[s, a, s_prime]
- 
-    one_hotx = vmap(partial(one_hotx_partial_nn, n_states=n_states))
-    #one_hotx2 = vmap(partial(one_hotx2_partial_nn, n_states=n_states))
-    one_hota = vmap(partial(one_hota_partial_nn, n_actions=n_actions))
-
-    print("Finalizing preprocessing") 
-    all_xohs = one_hotx(positions[:, 1:])
-    #all_xohs2, all_xs2 = one_hotx2(positions[:, 1:], jnp.roll(positions[:, 1:], 1))
-    all_aohs = one_hota(actions[:, 1:])
-
- 
-    kf = KFold(n_splits=5)
-    kf_ind = 0
-    for train_index, test_index in kf.split(all_aohs):
-  
-        arhmm_s_fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden_init) + "_hidden_" + str(seed) + '_seed_arhmm_nn_s_KF_' + str(kf_ind) + '.npz')
-
-        arhmm_s_params = np.load(arhmm_s_fname, allow_pickle=True)
-        logpi0_start = arhmm_s_params['logpi0_start']
-        log_Ps_start = arhmm_s_params['log_Ps_start']
-        Rs_start = arhmm_s_params["Rs_start"] #arhmm_s_params['W1_start'], arhmm_s_params['b1_start'], arhmm_s_params['W2_start'], arhmm_s_params['b2_start']
+def prepare_nn_data(yml_conf, data=None):
+    data = data if data is not None else load_swirl_dataset(yml_conf)
+    if "nn_xoh" in data:
+        return data
+    S = int(yml_conf["n_states"])
+    check_swirl_inputs(data["states"], data["actions"], S, N_ACTIONS)
+    x, x_prev, a = align_for_swirl(data["states"], data["actions"])
+    data.update(n_states=S, n_actions=N_ACTIONS, x=x, x_prev=x_prev, a=a,
+                nn_xoh=jax.nn.one_hot(jnp.asarray(x), S, dtype=jnp.float64)[:, :, None, :],
+                nn_xe={"s1": jnp.asarray(x, dtype=jnp.int32),
+                       "s2": jnp.asarray(x * S + x_prev, dtype=jnp.int32)})  # pair index s * S + p
+    return data
 
 
-        train_aohs, test_aohs = all_aohs[train_index], all_aohs[test_index]
-        train_xohs, test_xohs = all_xohs[train_index], all_xohs[test_index]
-        #train_xohs2, test_xohs2 = all_xohs2[train_index], all_xohs2[test_index]
-
-        print(all_aohs.shape, test_aohs.shape, train_aohs.shape)
-
-        # S-1
-        new_logpi0, new_log_Ps, new_Rs, new_R_state, LL_list = em_train_jaxopt_netadam(train_xohs, train_aohs, jnp.array(logpi0_start), jnp.array(log_Ps_start), jnp.array(Rs_start), R_state2, trans_probs, 20, init=False, trans=False)
-        #jnp.savez(folder + '/DAar1_rand/' + str(K) + '_' + str(seed) + '_NM_DAsa_net1_Ronly.npz', new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=new_Rs, new_R_state=new_R_state.params, LL_list=LL_list)
-        new_logpi0, new_log_Ps, new_Rs, new_R_state, LL_list = em_train_jaxopt_netadam(train_xohs, train_aohs, jnp.array(new_logpi0), jnp.array(new_log_Ps), jnp.array(new_Rs), new_R_state, trans_probs, 20)
-        jnp.savez(os.path.join(out_dir, str(n_hidden) + '_' + str(seed) + '_MLP_S1_net1_KF_' + str(kf_ind) + '.npz'), new_logpi0=new_logpi0, new_log_Ps=new_log_Ps, new_Rs=new_Rs, new_R_state=new_R_state.params, LL_list=LL_list)
-
-        #TODO - change to all, train, test
-        print("Final computations")
-        reward_m1 = get_reward_m(trans_probs, new_R_state.params, R_state.apply_fn)
-        reward_m1_filtered = np.copy(reward_m1).reshape((n_hidden, n_states, n_actions))
-        fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_MLP_S1_new1_reward_filtered_KF_" + str(kf_ind) + ".npz")
-        jnp.savez(fname, reward_filtered=reward_m1_filtered)
+def nn_settings(yml_conf, mode):
+    e0, e1 = _DEFAULT_EPOCHS[mode]
+    rb = yml_conf.get("nn_reward_bound")
+    return dict(hidden_size=int(yml_conf.get("nn_hidden_size", 32)),
+                learning_rate=float(yml_conf.get("nn_learning_rate", 5e-3)),
+                reward_bound=None if rb is None else float(rb),
+                epochs_init=int(yml_conf.get("nn_epochs_init" + ("_s2" if mode == "s2" else ""), e0)),
+                epochs=int(yml_conf.get("nn_epochs" + ("_s2" if mode == "s2" else ""), e1)),
+                em=dict(emit_iters=int(yml_conf.get("nn_emit_iters", 800)),
+                        emit_tol=yml_conf.get("nn_emit_tol"),
+                        s1_warmup_iters=int(yml_conf.get("nn_s1_warmup_iters", 0)) if mode == "s2" else 0,
+                        discount=float(yml_conf.get("discount", 0.95)),
+                        vi_iters=int(yml_conf.get("vi_iters", 100)),
+                        tol=yml_conf.get("em_tol")))
 
 
-        LL, train_LL, learnt_zs = learnt_LL21(new_logpi0, new_log_Ps, new_Rs, new_R_state.params, R_state.apply_fn, trans_probs, all_aohs, all_xohs)    
-        fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_MLP_S1_new1_LL_KF_" + str(kf_ind) + ".npz") 
-        print(LL, train_LL)
-        jnp.savez(fname, LL=LL, train_LL=train_LL, learnt_zs=learnt_zs) #test_LL
+def fold_trans_prob_nn(yml_conf, data, train_index):
+    """Dense (S, A, S) T from the train animals (cached per split; reused by S-1 and S-2 and every (K, run))."""
+    S, A = data["n_states"], data["n_actions"]
+    cache = data.setdefault("_cache", {})
+    per_fold = yml_conf.get("per_fold_trans_prob", True) and train_index is not None
+    key = ("T_nn", None if not per_fold else hash(np.asarray(train_index, dtype=np.int64).tobytes()))
+    if key not in cache:
+        if per_fold:
+            T = trans_prob_from_segments(data["segments"], S, A, keep_groups=set(data["groups"][train_index]),
+                                         fill_unobserved=yml_conf.get("fill_unobserved", "self_loop"))
+        else:
+            T = sparse.load_npz(yml_conf["trans_probs"])
+        if T.shape[0] != S:
+            raise ValueError(f"trans_prob has {T.shape[0]} states but n_states = {S}")
+        check_trans_prob(T, n_actions=A, require_full=yml_conf.get("require_full_trans_prob", True))
+        cache[key] = jnp.asarray(T.todense() if hasattr(T, "todense") else T, dtype=jnp.float64)
+    return cache[key]
 
-        LL, train_LL, learnt_zs = learnt_LL21(new_logpi0, new_log_Ps, new_Rs, new_R_state.params, R_state.apply_fn, trans_probs, test_aohs, test_xohs)
-        fname = os.path.join(out_dir, run_uid + "_" + str(n_hidden) + '_' + str(seed) + "_naturenet_MLP_S1_new1_LL_test_KF_" + str(kf_ind) + ".npz")
-        print(LL, train_LL)
-        jnp.savez(fname, LL=LL, train_LL=train_LL, learnt_zs=learnt_zs) #test_LL
 
-        kf_ind = kf_ind + 1
- 
+def load_arhmm_nn(out_dir, run_uid, n_hidden, seed, kf_ind=None):
+    f = arhmm_nn_fname(out_dir, run_uid, n_hidden, seed, kf_ind)
+    if not os.path.exists(f):
+        raise FileNotFoundError(f"{f} not found: run get_stats_nn.py / run_arhmm_kfold_nn.py "
+                                f"({'--holdout' if kf_ind is None else 'K-fold'}) first")
+    p = np.load(f, allow_pickle=True)
+    return (jnp.asarray(p["logpi0_start"], dtype=jnp.float64), jnp.asarray(p["log_Ps_start"], dtype=jnp.float64),
+            jnp.asarray(np.asarray(p["Rs_start"], dtype=np.float64)))
+
+
+def _names(yml_conf, mode, tag):
+    out_dir, run_uid = yml_conf["out_dir"], yml_conf["run_uid"]
+    K, seed = yml_conf["n_hidden"], yml_conf["seed"]
+    base = os.path.join(out_dir, run_uid + "_" + str(K) + "_" + str(seed))
+    lvl = {"s1": ("S1", "net1", "new1"), "s2": ("S2", "net2", "new2")}[mode]
+    return {"model": base + "_MLP_" + lvl[0] + "_" + lvl[1] + tag + ".npz",
+            "reward": base + "_naturenet_MLP_" + lvl[0] + "_" + lvl[2] + "_reward_filtered" + tag + ".npz",
+            "ll": base + "_naturenet_MLP_" + lvl[0] + "_" + lvl[2] + "_LL" + tag + ".npz",
+            "ll_test": base + "_naturenet_MLP_" + lvl[0] + "_" + lvl[2] + "_LL_test" + tag + ".npz"}
+
+
+def _rng(seed, kf_ind):
+    key = jax.random.PRNGKey(int(seed))
+    return jax.random.split(jax.random.fold_in(key, 0 if kf_ind is None else int(kf_ind) + 1), 2)
+
+
+# ---------------------------------------------------------------------------
+# One fit (shared by K-fold and final runs)
+# ---------------------------------------------------------------------------
+
+def check_arhmm_nn(arhmm, K, S):
+    """Stage check: ARHMM init shapes / finiteness (Rs is (S, 1, K): dot(one_hot(x)[:, 0, :], Rs[:, 0, :]))."""
+    logpi0, log_Ps, Rs = arhmm
+    for name, v, shp in (("logpi0", logpi0, (K,)), ("log_Ps", log_Ps, (K, K)), ("Rs", Rs, (S, 1, K))):
+        if tuple(v.shape) != shp:
+            raise ValueError(f"ARHMM init {name} has shape {tuple(v.shape)}, expected {shp}")
+        if not bool(jnp.all(jnp.isfinite(v))):
+            raise ValueError(f"ARHMM init {name} has non-finite values")
+
+
+def fit_swirl_nn(yml_conf, data, train_index, test_index, arhmm, mode, tag, kf_ind=None):
+    S, A = data["n_states"], data["n_actions"]
+    K = int(yml_conf["n_hidden"])
+    if K != int(yml_conf["n_hidden_init"]):
+        raise ValueError("n_hidden must equal n_hidden_init (the ARHMM init is for n_hidden_init modes)")
+    check_arhmm_nn(arhmm, K, S)
+    st = nn_settings(yml_conf, mode)
+    names = _names(yml_conf, mode, tag)
+    T = fold_trans_prob_nn(yml_conf, data, train_index)
+    xoh, xe, a = data["nn_xoh"], data["nn_xe"][mode], jnp.asarray(data["a"], dtype=jnp.int32)
+    tr = np.asarray(train_index)
+
+    _, k_net = _rng(yml_conf["seed"], kf_ind)
+    R_state = create_train_state(k_net, st["learning_rate"], S, K, st["hidden_size"], A, st["reward_bound"])
+
+    logpi0, log_Ps, Rs = arhmm
+    print(f"NN-SWIRL {mode} stage 1 (emission only):", len(tr), "train sequences")
+    logpi0, log_Ps, Rs, R_state, LL1 = em_train_nn(logpi0, log_Ps, Rs, R_state, T, xoh[tr], xe[tr], a[tr], mode,
+                                                   st["epochs_init"], init=False, trans=False, **st["em"])
+    print(f"NN-SWIRL {mode} stage 2 (all parameters)")
+    em2 = dict(st["em"], s1_warmup_iters=0)
+    logpi0, log_Ps, Rs, R_state, LL2 = em_train_nn(logpi0, log_Ps, Rs, R_state, T, xoh[tr], xe[tr], a[tr], mode,
+                                                   st["epochs"], **em2)
+
+    np.savez(names["model"], new_logpi0=np.asarray(logpi0), new_log_Ps=np.asarray(log_Ps), new_Rs=np.asarray(Rs),
+             new_R_state=np.array([serialization.to_state_dict(jax.device_get(R_state.params))], dtype=object),
+             LL_list=np.concatenate([LL1, LL2]), LL_list_stage1=LL1, mode=mode, hidden_size=st["hidden_size"],
+             reward_bound=np.nan if st["reward_bound"] is None else st["reward_bound"])
+    reward = reward_tables(R_state, S, mode)
+    extra = {}
+    if mode == "s2":  # which (s, p) pairs can occur: p -> s possible under T
+        extra["valid_pairs"] = (np.asarray(T).sum(axis=1) > 0).T  # [s, p]
+        extra["reward_expand"] = reward_tables(R_state, S, "s1")
+    np.savez(names["reward"], reward_filtered=reward, reward_layout="k,s,a" if mode == "s1" else "k,s,p,a", **extra)
+
+    LL, paths = learnt_LL_nn(logpi0, log_Ps, Rs, R_state, T, xoh[tr], xe[tr], a[tr], mode,
+                             st["em"]["discount"], st["em"]["vi_iters"])
+    print(mode, "train LL", LL)
+    np.savez(names["ll"], LL=LL, learnt_zs=paths, **seq_meta_arrays(data, tr))
+    if test_index is not None and len(test_index):
+        te = np.asarray(test_index)
+        LL, paths = learnt_LL_nn(logpi0, log_Ps, Rs, R_state, T, xoh[te], xe[te], a[te], mode,
+                                 st["em"]["discount"], st["em"]["vi_iters"])
+        print(mode, "test LL", LL)
+        np.savez(names["ll_test"], LL=LL, learnt_zs=paths, **seq_meta_arrays(data, te))
+    return names
+
+
+def run_swirl_nn_kfold(yml_conf, mode="s1", data=None, folds_to_run=None):
+    data = prepare_nn_data(yml_conf, data)
+    sel = folds_to_run if folds_to_run is not None else yml_conf.get("folds_to_run")
+    sel = None if sel is None else set(int(k) for k in as_list(sel))
+    for kf_ind, (tr, te) in enumerate(get_folds(yml_conf, data["groups"])):
+        if sel is not None and kf_ind not in sel:
+            continue
+        check_folds(data["groups"], tr, te, name=f"fold {kf_ind}")
+        tag = "_KF_" + str(kf_ind)
+        if os.path.exists(_names(yml_conf, mode, tag)["ll_test"]) and not yml_conf.get("overwrite", False):
+            print(mode, "fold", kf_ind, "exists; skipping")
+            continue
+        arhmm = load_arhmm_nn(yml_conf["out_dir"], yml_conf["run_uid"], yml_conf["n_hidden_init"], yml_conf["seed"],
+                              kf_ind)
+        fit_swirl_nn(yml_conf, data, tr, te, arhmm, mode, tag, kf_ind)
+
+
+def run_swirl_nn(yml_conf, data=None, folds_to_run=None):
+    """S-1 NN K-fold (name kept for get_stats_3.py)."""
+    run_swirl_nn_kfold(yml_conf, "s1", data, folds_to_run)
+
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-y", "--yaml", help="YAML file for fusion info.")
+    parser.add_argument("--fold", type=int, nargs="*", default=None)
     args = parser.parse_args()
 
-    #Translate config to dictionary 
     yml_conf = read_yaml(args.yaml)
- 
-    if yml_conf["run_arhmm"]:
-        run_arhmm(yml_conf)    
- 
-    if yml_conf["run_swirl_nn"]:
-        run_swirl_nn(yml_conf)
-
-  
+    data = load_swirl_dataset(yml_conf)
+    if yml_conf.get("run_arhmm", False):
+        run_arhmm(yml_conf, data=data, folds_to_run=args.fold)
+    if yml_conf.get("run_swirl_nn", True):
+        run_swirl_nn(yml_conf, data=data, folds_to_run=args.fold)

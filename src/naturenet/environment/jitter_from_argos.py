@@ -6,17 +6,54 @@ import numpy as np
 import pandas as pd
 
 
-def argos_orientation_to_math_radians(theta_deg_from_north_ccw: np.ndarray) -> np.ndarray:
+GPS_LOCATION_CLASS = "G"
+GPS_ERROR_M = 50.0
+
+
+def argos_orientation_to_math_radians(theta_deg_from_north_cw: np.ndarray) -> np.ndarray:
     """
     Convert Argos orientation to a standard mathematical angle in radians.
 
-    Argos orientation is measured counter-clockwise from north.
-    Standard 2D rotation matrices expect counter-clockwise from +x (east).
+    Argos ellipse orientation is the angle of the semi-major axis measured
+    CLOCKWISE from true north (north -> east), in [0, 180] degrees
+    (CLS Argos User Manual). Standard 2D rotation matrices expect an angle
+    measured counter-clockwise from +x (east).
 
     So:
         phi = 90 degrees - theta_argos
+
+    NOTE: this formula is only correct for a clockwise-from-north convention.
+    Do not "fix" it to 90 + theta.
     """
-    return np.deg2rad(90.0 - np.asarray(theta_deg_from_north_ccw, dtype=float))
+    return np.deg2rad(90.0 - np.asarray(theta_deg_from_north_cw, dtype=float))
+
+
+def apply_gps_ellipse(
+    df: pd.DataFrame,
+    semi_major_col: str,
+    semi_minor_col: str,
+    orientation_col: str,
+    lc_col: str = "lc",
+    gps_error_m: float = GPS_ERROR_M,
+) -> pd.DataFrame:
+    """
+    Give GPS fixes (location class 'G') a circular error of ``gps_error_m``.
+
+    GPS rows usually have NaN ellipse columns. Without this, they get zero
+    variance and can never be jittered. Returns a copy; rows with an existing
+    finite ellipse are left alone. Does nothing if ``lc_col`` is missing.
+    """
+    out = df.copy()
+    if lc_col not in out.columns:
+        return out
+    is_gps = out[lc_col].astype(str).str.upper() == GPS_LOCATION_CLASS
+    no_ellipse = pd.to_numeric(out[semi_major_col], errors="coerce").isna() | \
+        pd.to_numeric(out[semi_minor_col], errors="coerce").isna()
+    cond = is_gps & no_ellipse
+    out.loc[cond, semi_major_col] = gps_error_m
+    out.loc[cond, semi_minor_col] = gps_error_m
+    out.loc[cond, orientation_col] = 0.0
+    return out
 
 
 def argos_ellipse_to_covariance(
@@ -34,7 +71,7 @@ def argos_ellipse_to_covariance(
     semi_minor_m : array-like
         Semi-minor axis length in meters.
     orientation_deg : array-like
-        Argos orientation in degrees, counter-clockwise from north.
+        Argos orientation in degrees, clockwise from north.
 
     Returns
     -------
@@ -90,11 +127,22 @@ def sample_argos_ellipse_offsets(
         Shape (n, 2), columns are [dx_m, dy_m].
     """
     rng = rng or np.random.default_rng()
-    covs = argos_ellipse_to_covariance(semi_major_m, semi_minor_m, orientation_deg)
+    semi_major_m = np.asarray(semi_major_m, dtype=float)
+    semi_minor_m = np.asarray(semi_minor_m, dtype=float)
+    orientation_deg = np.asarray(orientation_deg, dtype=float)
+    if not (len(semi_major_m) == len(semi_minor_m) == len(orientation_deg)):
+        raise ValueError("semi_major_m, semi_minor_m, and orientation_deg must have the same length.")
 
-    offsets = np.empty((covs.shape[0], 2), dtype=float)
-    for i, cov in enumerate(covs):
-        offsets[i] = rng.multivariate_normal(mean=[0.0, 0.0], cov=cov)
+    # Vectorised draw from N(0, R diag(lam) R^T): offset = R @ (sqrt(lam) * z).
+    # Same distribution as argos_ellipse_to_covariance, without a per-row loop.
+    sd_major = np.maximum(semi_major_m, 0.0) / np.sqrt(2.0)
+    sd_minor = np.maximum(semi_minor_m, 0.0) / np.sqrt(2.0)
+    phi = argos_orientation_to_math_radians(orientation_deg)
+    c, s = np.cos(phi), np.sin(phi)
+    z = rng.standard_normal((len(phi), 2))
+    u = sd_major * z[:, 0]
+    v = sd_minor * z[:, 1]
+    offsets = np.stack([c * u - s * v, s * u + c * v], axis=1)
     return offsets
 
 
@@ -142,7 +190,7 @@ def jitter_argos_positions(
     ----------------
     lon_col, lat_col : decimal degrees
     semi_major_col, semi_minor_col : meters
-    orientation_col : degrees CCW from north
+    orientation_col : degrees clockwise from north (Argos convention)
     """
     rng = rng or np.random.default_rng()
     out = df.copy()
@@ -188,6 +236,8 @@ def augment_argos_tracks(
     id_col: Optional[str] = None,
     random_seed: int = 42,
     preserve_original: bool = True,
+    lc_col: str = "lc",
+    gps_error_m: float = GPS_ERROR_M,
 ) -> pd.DataFrame:
     """
     Create jittered replicas of Argos tracks by sampling each fix from its ellipse.
@@ -196,6 +246,9 @@ def augment_argos_tracks(
     - is_augmented
     - augmentation_id
     - source_group
+    - orig_<lon_col>, orig_<lat_col>: the un-jittered fix (used by
+      jitter_bad_points so land points are re-drawn from the ORIGINAL ellipse,
+      not around an already-jittered position)
     """
     if n_augmented_per_group < 1:
         raise ValueError("n_augmented_per_group must be >= 1")
@@ -212,6 +265,13 @@ def augment_argos_tracks(
     rng = np.random.default_rng(random_seed)
     frames: List[pd.DataFrame] = []
 
+    # GPS override is applied once, to originals and augmentations alike,
+    # so downstream steps (land re-jitter) see a valid ellipse for 'G' rows.
+    df = apply_gps_ellipse(df, semi_major_col, semi_minor_col, orientation_col,
+                           lc_col=lc_col, gps_error_m=gps_error_m)
+    df[f"orig_{lon_col}"] = pd.to_numeric(df[lon_col], errors="coerce")
+    df[f"orig_{lat_col}"] = pd.to_numeric(df[lat_col], errors="coerce")
+
     def _group_label(group_df: pd.DataFrame) -> pd.Series:
         if not group_cols:
             return pd.Series(["all_rows"] * len(group_df), index=group_df.index)
@@ -226,17 +286,8 @@ def augment_argos_tracks(
 
     grouped = [("all_rows", df)] if not group_cols else list(df.groupby(group_cols, dropna=False, sort=False))
 
-    print(df.keys())
     for group_key, group_df in grouped:
         for aug_id in range(1, n_augmented_per_group + 1):
-            
-            print(group_df.keys())
-            condition = group_df['lc'] == 'G'
-
-            group_df.loc[condition, semi_major_col] = 50 
-            group_df.loc[condition, semi_minor_col] = 50
-            group_df.loc[condition, orientation_col] = 0
-
             jittered = jitter_argos_positions(
                 group_df,
                 lon_col=lon_col,
@@ -250,7 +301,8 @@ def augment_argos_tracks(
 
             jittered["is_augmented"] = 1
             jittered["augmentation_id"] = aug_id
-            jittered["source_group"] = str(group_key)
+            # Same label format as the original rows (pandas>=2 returns tuple keys).
+            jittered["source_group"] = _group_label(group_df).to_numpy()
 
             if id_col is not None:
                 jittered[id_col] = jittered[id_col].astype(str) + f"__aug{aug_id}"

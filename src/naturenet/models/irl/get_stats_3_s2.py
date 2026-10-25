@@ -1,76 +1,29 @@
 
 #Code adapted from https://github.com/BRAINML-GT/SWIRL
+"""
+NN-SWIRL S-2 K-fold for every (K, run). Run get_stats_nn.py first (per-fold NN ARHMM init).
+Same loop as get_stats.py: K inclusive, seed + run, out_dir from YAML, data / one-hots / per-fold T built
+once and reused across (K, run), skip_n_states (list, default none) replaces the hard-coded n_states == 11
+skip, --n_hidden / --run / --fold for job arrays.
+"""
 from naturenet.models.irl.run_swirl_nn_2_kfold import run_swirl_nn
-from naturenet.models.irl.swirl_training import *
-from naturenet.models.irl.swirl_training_top_level import *
-from naturenet.models.irl.swirl_utils import *
-import copy
-import numpy as np
-import numpy.random as npr
-from scipy.special import logsumexp
-import os
-import pickle
-import sparse
-
-import sparse
-import scipy
-
-import jax
-import jax.numpy as jnp
-from jax import lax, vmap, jit
-
-#from jax.lib import xla_bridge
-
-import jax.extend
-
-from functools import partial
-from jax.scipy.special import logsumexp as jax_logsumexp
-import optax
-jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_platform_name", "gpu")
+from naturenet.models.irl.run_swirl_nn_kfold import prepare_nn_data
+from naturenet.models.irl.get_stats_nn import parse_args
+from naturenet.models.irl.swirl_data import as_list, iter_loop_configs, load_swirl_dataset
 
 from sit_fuse.utils import read_yaml
 
-import argparse
 
+def loop_swirl(yml_conf, args):
+    if int(yml_conf["n_states"]) in [int(s) for s in as_list(yml_conf.get("skip_n_states"))]:
+        print("n_states", yml_conf["n_states"], "is in skip_n_states; nothing to do")
+        return
+    data = prepare_nn_data(yml_conf, load_swirl_dataset(yml_conf))
+    for conf in iter_loop_configs(yml_conf, n_hidden=args.n_hidden, run=args.run):
+        print(conf["run_uid"], "seed", conf["seed"])
+        run_swirl_nn(conf, data=data, folds_to_run=args.fold)
 
-out_dir = "/data/nlahaye/NatureNet/Blue_Whale_LL_Test/"
- 
-def loop_arhmm(yml_conf):
-
-
-    base_uid = copy.deepcopy(yml_conf["run_uid"])
-
-
-    yml_conf["out_dir"] = out_dir
-    for n_states in range(yml_conf["min_latent"], yml_conf["max_latent"]):
-        yml_conf["n_hidden"] = n_states
-        yml_conf["n_hidden_init"] = n_states
-        for i in range(yml_conf["num_runs"]):
-            uid = base_uid + "_loop_" + str(i) + "_latent_" + str(n_states) + "_states"
-            yml_conf["run_uid"] = uid
-
-            print(uid, yml_conf["run_uid"])
-
-            run_swirl_nn(yml_conf)            
- 
 
 if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-y", "--yaml", help="YAML file for fusion info.")
-    args = parser.parse_args()
-
-    #Translate config to dictionary 
-    yml_conf = read_yaml(args.yaml)
-
-    #if yml_conf["run_arhmm"]:
-    loop_arhmm(yml_conf)
-    #run_arhmm(yml_conf)
- 
-    #if yml_conf["run_swirl_init"]:
-    #    run_swirl_init(yml_conf)
-
-    #if yml_conf["run_swirl_final"]:
-    #    run_swirl_final(yml_conf)
-
+    args = parse_args()
+    loop_swirl(read_yaml(args.yaml), args)

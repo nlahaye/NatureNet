@@ -20,12 +20,43 @@ from naturenet.models.irl.swirl_utils import *
 jax.config.update("jax_enable_x64", True)
 #jax.config.update("jax_platform_name", "gpu")
 
-def em_train_temp(logpi0, log_Ps, Rs, rewards, temps, trans_probs, train_xohs, train_aohs, iter=100, init=True, trans=True, emit=True):
+
+def _safe_log(p):
+    return jnp.log(jnp.clip(p, 1e-12))
+
+
+def _dense(tp):
+    return tp.todense() if hasattr(tp, "todense") else tp
+
+
+def _to_device(loc):
+    """Convert T and the one-hot inputs to device arrays ONCE (not on every E/M step)."""
+    tp = loc.get("trans_probs", loc.get("new_trans_probs"))
+    xohs2 = loc.get("train_xohs2")
+    return (jnp.asarray(_dense(tp)), jnp.asarray(loc["train_xohs"]),
+            None if xohs2 is None else jnp.asarray(xohs2), jnp.asarray(loc["train_aohs"]))
+
+
+def _converged(LL_list, tol):
+    """Relative LL change below tol (None disables early stopping, matching the old behaviour)."""
+    if tol is None or len(LL_list) < 2:
+        return False
+    prev, cur = float(LL_list[-2]), float(LL_list[-1])
+    return abs(cur - prev) <= tol * max(1.0, abs(prev))
+
+
+def em_train_temp(logpi0, log_Ps, Rs, rewards, temps, trans_probs, train_xohs, train_aohs, iter=100, init=True, trans=True, emit=True, tol=None, verbose=False):
     LL_list = []
+    _args = _to_device(locals())
+    trans_probs_j, xohs_j, xohs2_j, aohs_j = _args
     for i in range(iter):
         pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
-        all_gamma_jax, all_xi_jax, all_jax_alphas = jax_e_step_batch_temp(pi0, log_Ps, Rs, rewards, trans_probs, temps, train_xohs, train_aohs)
+        all_gamma_jax, all_xi_jax, all_jax_alphas = jax_e_step_batch_temp(pi0, log_Ps, Rs, rewards, trans_probs_j, temps, xohs_j, aohs_j)
         LL_list.append(jnp.sum(jax_logsumexp(all_jax_alphas[:, -1], axis=-1)))
+        if verbose:
+            print("EM iter", i, "LL", float(LL_list[-1]))
+        if _converged(LL_list, tol):
+            break
 
         if init == True:
             new_logpi0 = pi0_m_step(all_gamma_jax)
@@ -33,24 +64,30 @@ def em_train_temp(logpi0, log_Ps, Rs, rewards, temps, trans_probs, train_xohs, t
             new_logpi0 = logpi0
 
         if trans == True:
-            new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (all_gamma_jax, all_xi_jax), jnp.array(train_xohs))
+            new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (all_gamma_jax, all_xi_jax), xohs_j)
         else:
             new_log_Ps, new_Rs = log_Ps, Rs
 
         if emit == True:
-            new_rewards = emit_m_step_jax_scipy_temp_reg(rewards, trans_probs, temps,(all_gamma_jax, all_xi_jax), jnp.array(train_xohs), jnp.array(train_aohs))
+            new_rewards = emit_m_step_jax_scipy_temp_reg(rewards, trans_probs_j, temps, (all_gamma_jax, all_xi_jax), xohs_j, aohs_j)
         else:
             new_rewards = rewards
 
         logpi0, log_Ps, Rs, rewards = new_logpi0, new_log_Ps, new_Rs, new_rewards
     return logpi0, log_Ps, Rs, rewards, LL_list
 
-def em_train2_temp(logpi0, log_Ps, Rs, rewards, temps, new_trans_probs, train_xohs, train_xohs2, train_aohs, iter=100, init=True, trans=True, emit=True):
+def em_train2_temp(logpi0, log_Ps, Rs, rewards, temps, new_trans_probs, train_xohs, train_xohs2, train_aohs, iter=100, init=True, trans=True, emit=True, tol=None, verbose=False):
     LL_list = []
+    _args = _to_device(locals())
+    trans_probs_j, xohs_j, xohs2_j, aohs_j = _args
     for i in range(iter):
         pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
-        all_gamma_jax, all_xi_jax, all_jax_alphas = jax_e_step_batch2_temp(pi0, log_Ps, Rs, rewards, new_trans_probs, temps, train_xohs, train_xohs2, train_aohs)
+        all_gamma_jax, all_xi_jax, all_jax_alphas = jax_e_step_batch2_temp(pi0, log_Ps, Rs, rewards, trans_probs_j, temps, xohs_j, xohs2_j, aohs_j)
         LL_list.append(jnp.sum(jax_logsumexp(all_jax_alphas[:, -1], axis=-1)))
+        if verbose:
+            print("EM iter", i, "LL", float(LL_list[-1]))
+        if _converged(LL_list, tol):
+            break
 
         if init == True:
             new_logpi0 = pi0_m_step(all_gamma_jax)
@@ -58,12 +95,12 @@ def em_train2_temp(logpi0, log_Ps, Rs, rewards, temps, new_trans_probs, train_xo
             new_logpi0 = logpi0
 
         if trans == True:
-            new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (all_gamma_jax, all_xi_jax), jnp.array(train_xohs))
+            new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (all_gamma_jax, all_xi_jax), xohs_j)
         else:
             new_log_Ps, new_Rs = log_Ps, Rs
 
         if emit == True:
-            new_rewards = emit_m_step_jax_scipy2_temp(rewards, new_trans_probs, temps, (all_gamma_jax, all_xi_jax), jnp.array(train_xohs2), jnp.array(train_aohs))
+            new_rewards = emit_m_step_jax_scipy2_temp(rewards, trans_probs_j, temps, (all_gamma_jax, all_xi_jax), xohs2_j, aohs_j)
         else:
             new_rewards = rewards
 
@@ -71,12 +108,18 @@ def em_train2_temp(logpi0, log_Ps, Rs, rewards, temps, new_trans_probs, train_xo
     return logpi0, log_Ps, Rs, rewards, LL_list
 
 
-def em_train_naturenet(logpi0, log_Ps, Rs, rewards, trans_probs, train_xohs, train_aohs, iter=100, init=True, trans=True, emit=True):
+def em_train_naturenet(logpi0, log_Ps, Rs, rewards, trans_probs, train_xohs, train_aohs, iter=100, init=True, trans=True, emit=True, tol=None, verbose=False):
     LL_list = []
+    _args = _to_device(locals())
+    trans_probs_j, xohs_j, xohs2_j, aohs_j = _args
     for i in range(iter):
         pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
-        all_gamma_jax, all_xi_jax, all_jax_alphas = jax_e_step_batch_naturenet(pi0, log_Ps, Rs, rewards, trans_probs, train_xohs, train_aohs)
+        all_gamma_jax, all_xi_jax, all_jax_alphas = jax_e_step_batch_naturenet(pi0, log_Ps, Rs, rewards, trans_probs_j, xohs_j, aohs_j)
         LL_list.append(jnp.sum(jax_logsumexp(all_jax_alphas[:, -1], axis=-1)))
+        if verbose:
+            print("EM iter", i, "LL", float(LL_list[-1]))
+        if _converged(LL_list, tol):
+            break
 
         if init == True:
             new_logpi0 = pi0_m_step(all_gamma_jax)
@@ -84,24 +127,30 @@ def em_train_naturenet(logpi0, log_Ps, Rs, rewards, trans_probs, train_xohs, tra
             new_logpi0 = logpi0
 
         if trans == True:
-            new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (all_gamma_jax, all_xi_jax), jnp.array(train_xohs))
+            new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (all_gamma_jax, all_xi_jax), xohs_j)
         else:
             new_log_Ps, new_Rs = log_Ps, Rs
 
         if emit == True:
-            new_rewards = emit_m_step_jax_scipy2_naturenet(rewards, trans_probs, (all_gamma_jax, all_xi_jax), jnp.array(train_xohs), jnp.array(train_aohs))
+            new_rewards = emit_m_step_jax_scipy2_naturenet(rewards, trans_probs_j, (all_gamma_jax, all_xi_jax), xohs_j, aohs_j)
         else:
             new_rewards = rewards
 
         logpi0, log_Ps, Rs, rewards = new_logpi0, new_log_Ps, new_Rs, new_rewards
     return logpi0, log_Ps, Rs, rewards, LL_list
 
-def em_train2_naturenet(logpi0, log_Ps, Rs, rewards, new_trans_probs, train_xohs, train_xohs2, train_aohs, iter=100, init=True, trans=True, emit=True):
+def em_train2_naturenet(logpi0, log_Ps, Rs, rewards, new_trans_probs, train_xohs, train_xohs2, train_aohs, iter=100, init=True, trans=True, emit=True, tol=None, verbose=False):
     LL_list = []
+    _args = _to_device(locals())
+    trans_probs_j, xohs_j, xohs2_j, aohs_j = _args
     for i in range(iter):
         pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
-        all_gamma_jax, all_xi_jax, all_jax_alphas = jax_e_step_batch2_naturenet(pi0, log_Ps, Rs, rewards, new_trans_probs, train_xohs, train_xohs2, train_aohs)
+        all_gamma_jax, all_xi_jax, all_jax_alphas = jax_e_step_batch2_naturenet(pi0, log_Ps, Rs, rewards, trans_probs_j, xohs_j, xohs2_j, aohs_j)
         LL_list.append(jnp.sum(jax_logsumexp(all_jax_alphas[:, -1], axis=-1)))
+        if verbose:
+            print("EM iter", i, "LL", float(LL_list[-1]))
+        if _converged(LL_list, tol):
+            break
 
         if init == True:
             new_logpi0 = pi0_m_step(all_gamma_jax)
@@ -109,12 +158,12 @@ def em_train2_naturenet(logpi0, log_Ps, Rs, rewards, new_trans_probs, train_xohs
             new_logpi0 = logpi0
 
         if trans == True:
-            new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (all_gamma_jax, all_xi_jax), jnp.array(train_xohs))
+            new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (all_gamma_jax, all_xi_jax), xohs_j)
         else:
             new_log_Ps, new_Rs = log_Ps, Rs
 
         if emit == True:
-            new_rewards = emit_m_step_jax_scipy2_naturenet(rewards, new_trans_probs, (all_gamma_jax, all_xi_jax), jnp.array(train_xohs2), jnp.array(train_aohs))
+            new_rewards = emit_m_step_jax_scipy2_naturenet(rewards, trans_probs_j, (all_gamma_jax, all_xi_jax), xohs2_j, aohs_j)
            
         else:
             new_rewards = rewards
@@ -131,8 +180,9 @@ def comp_LLloss(pi0, trans_Ps, lls):
 def learnt_LL1(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, trans_probs, all_xohs, all_aohs):
     pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
     rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
+    trans_probs = jnp.asarray(_dense(trans_probs))
     pi, _, _ = vmap(partial(vi_temp, trans_probs))(rewards_sa, temps)
-    logemit = jnp.log(pi)
+    logemit = _safe_log(pi)
     new_lls_jax_vmap = vmap(partial(comp_ll_jax, logemit))(jnp.array(all_xohs), jnp.array(all_aohs))
     new_trans_Ps_vmap = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(all_xohs))
     jax_path_vmap = vmap(partial(viterbi_JAX, jnp.array(pi0)))(jnp.array(new_trans_Ps_vmap), jnp.array(new_lls_jax_vmap))
@@ -142,8 +192,9 @@ def learnt_LL2(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, new_tran
     n_states, n_actions, _ = new_trans_probs.shape
     pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
     rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
+    new_trans_probs = jnp.asarray(_dense(new_trans_probs))
     pi, _, _ = vmap(partial(vi_temp, new_trans_probs))(rewards_sa, temps)
-    logemit = jnp.log(pi)
+    logemit = _safe_log(pi)
     new_lls_jax_vmap = vmap(partial(comp_ll_jax, logemit))(jnp.array(all_xohs2), jnp.array(all_aohs))
     new_trans_Ps_vmap = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(all_xohs))
     jax_path_vmap = vmap(partial(viterbi_JAX, jnp.array(pi0)))(jnp.array(new_trans_Ps_vmap), jnp.array(new_lls_jax_vmap))

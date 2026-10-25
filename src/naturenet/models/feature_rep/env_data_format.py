@@ -1,344 +1,353 @@
 import argparse
-import copy
-import os
-import zarr
 import glob
+import json
+import os
 import pickle
-from osgeo import gdal
+import re
+import warnings
+from datetime import datetime, timedelta
+from pprint import pprint
+
+import cv2
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
+import zarr
+from osgeo import gdal
 
 from sit_fuse.utils import read_yaml
 
-import re
-import cv2
+AUG_RE = re.compile(r"__aug\d+")
 
-from pprint import pprint
+
+# ---------------------------------------------------------------------------
+# Scene discovery / loading
+# ---------------------------------------------------------------------------
+
+def _scene_file(yml_conf, i):
+    """
+    Exactly one file for day index i.
+
+    Preferred: ``scene_file_template`` with an ``{i}`` placeholder (exact name).
+    Fallback: glob_start + i + glob_end, excluding matches where i is directly preceded or followed by
+    another digit (so "t1*" no longer matches t10, t11, ...). Raises unless exactly one file remains.
+    """
+    tmpl = yml_conf.get("scene_file_template")
+    if tmpl:
+        fname = tmpl.format(i=i)
+        if not os.path.exists(fname):
+            raise FileNotFoundError(fname)
+        return fname
+    gs, ge, si = yml_conf["glob_start"], yml_conf["glob_end"], str(i)
+    cands = set(glob.glob(gs + si + ge))
+    cands -= set(glob.glob(gs + si + "[0-9]" + ge))
+    cands -= set(glob.glob(gs + "[0-9]" + si + ge))
+    cands = sorted(cands)
+    if len(cands) != 1:
+        raise ValueError(f"Day {i}: expected exactly one scene file for {gs + si + ge}, found {cands}")
+    return cands[0]
+
+
+def _load_scene(fname):
+    if fname.endswith(".tif") or fname.endswith(".tiff") or ".tif" in os.path.basename(fname):
+        ds = gdal.Open(fname)
+        return ds.ReadAsArray(), ds.GetGeoTransform()
+    if "zarr" in fname:
+        return zarr.load(fname), None
+    raise ValueError(f"Unsupported scene format: {fname}")
+
+
+def _scene_times(yml_conf):
+    """
+    Date of each day index. Uses ``scene_dates_file`` (JSON {"i": "ISO date"}, written by
+    preprocess_copernicus.py) when given; otherwise assumes start_time + i days.
+    """
+    n_days = yml_conf["n_days"]
+    dates_file = yml_conf.get("scene_dates_file")
+    if dates_file:
+        with open(dates_file) as f:
+            d = json.load(f)
+        missing = [i for i in range(n_days) if str(i) not in d]
+        if missing:
+            raise ValueError(f"{dates_file} is missing day indices {missing[:10]}")
+        return [pd.Timestamp(d[str(i)]).normalize() for i in range(n_days)]
+    tme = datetime.strptime(yml_conf["start_time"], "%Y-%m-%d")
+    return [pd.Timestamp(tme + timedelta(days=i)) for i in range(n_days)]
+
+
+def _extent(gt, shape_hw):
+    h, w = shape_hw
+    return np.array([gt[0], gt[3], gt[0] + gt[1] * w, gt[3] + gt[5] * h])
+
+
+def _check_geotransform(mask_gt, mask_shape, scene_gt, scene_shape, tol_deg=1e-3):
+    if mask_gt is None or scene_gt is None:
+        return
+    em, es = _extent(mask_gt, mask_shape), _extent(scene_gt, scene_shape)
+    if not np.allclose(em, es, atol=tol_deg):
+        warnings.warn(f"Water mask extent {em.tolist()} differs from scene extent {es.tolist()}; "
+                      "resizing by shape will misalign land/water.")
+    if np.sign(mask_gt[5]) != np.sign(scene_gt[5]):
+        warnings.warn("Water mask and scene have opposite latitude orientation (north-up vs south-up).")
+
+
+def _land_fill(yml_conf):
+    """
+    Value written over land. -1 (default) for cluster-id scenes (ids are >= 0, -1 = invalid).
+    Use land_fill: nan for raw / standardised feature scenes, where -1 is a valid value.
+    """
+    v = yml_conf.get("land_fill", -1)
+    return np.nan if (v is None or (isinstance(v, str) and v.lower() == "nan")) else float(v)
+
+
+def _load_scenes(yml_conf, apply_mask=True):
+    fill = _land_fill(yml_conf)
+    mask_ds = gdal.Open(yml_conf["mask_path"])
+    initial_water_mask = mask_ds.ReadAsArray()
+    land_value = yml_conf["land_value"]
+    resized_water_mask = None
+    land = None
+
+    scenes = []
+    for i in range(yml_conf["n_days"]):
+        fname = _scene_file(yml_conf, i)
+        dat, gt = _load_scene(fname)
+        if apply_mask:
+            hw = dat.shape[-2:]
+            if resized_water_mask is None:
+                print("SHAPING WATER MASK", dat.shape)
+                _check_geotransform(mask_ds.GetGeoTransform(), initial_water_mask.shape, gt, hw)
+                # Nearest neighbour keeps the mask categorical (cubic created non-integer coast values).
+                resized_water_mask = cv2.resize(initial_water_mask.astype(np.float32), (hw[1], hw[0]),
+                                                interpolation=cv2.INTER_NEAREST)
+                land = np.rint(resized_water_mask) == land_value
+            if np.isnan(fill) and not np.issubdtype(dat.dtype, np.floating):
+                dat = dat.astype(np.float32)
+            elif not np.issubdtype(dat.dtype, np.floating) and not np.issubdtype(dat.dtype, np.signedinteger):
+                dat = dat.astype(np.int32)
+            if dat.ndim > 2:
+                dat[:, land] = fill
+            else:
+                dat[land] = fill
+        print("SCENE", i, "LOADED", fname)
+        scenes.append(dat)
+    return scenes
+
+
+# ---------------------------------------------------------------------------
+# Track -> scene matching
+# ---------------------------------------------------------------------------
+
+def _fix_dates(movement_df):
+    ts = pd.to_datetime(movement_df["timestamp"], utc=True, format="mixed")
+    return ts.dt.tz_convert(None).dt.normalize()
+
+
+def _segments_match(segs_a, segs_b):
+    if len(segs_a) != len(segs_b):
+        return False
+    for a, b in zip(segs_a, segs_b):
+        if len(a) != len(b):
+            return False
+        if not np.array_equal(pd.to_datetime(a["timestamp"], utc=True, format="mixed").to_numpy(),
+                              pd.to_datetime(b["timestamp"], utc=True, format="mixed").to_numpy()):
+            return False
+    return True
+
+
+def _match_track(segments, scenes, date_to_idx, nearest_days, sorted_dates):
+    """Per segment, list (len = n fixes) of the scene for that fix's date, or None if out of range."""
+    out, n_missing = [], 0
+    for seg in segments:
+        dates = _fix_dates(seg)
+        maps = []
+        for dt in dates:
+            idx = date_to_idx.get(dt)
+            if idx is None and nearest_days > 0 and len(sorted_dates):
+                j = np.searchsorted(sorted_dates, dt)
+                best = None
+                for jj in (j - 1, j):
+                    if 0 <= jj < len(sorted_dates):
+                        gap = abs((sorted_dates[jj] - dt).days)
+                        if gap <= nearest_days and (best is None or gap < best[0]):
+                            best = (gap, date_to_idx[sorted_dates[jj]])
+                idx = None if best is None else best[1]
+            if idx is None:
+                n_missing += 1
+                maps.append(None)
+            else:
+                maps.append(scenes[idx])
+        out.append(maps)
+    return out, n_missing
+
+
+def _pkl_path(out_dir, output_uid, uid):
+    return os.path.join(out_dir, output_uid + uid + ".pkl")
 
 
 def gen_scene_list(yml_conf):
-    times = []
-    scenes = []
-
-
-    n_days = yml_conf["n_days"]
-    start_time = yml_conf["start_time"]
-    glob_start = yml_conf["glob_start"]
-    glob_end = yml_conf["glob_end"]
     df_uid = yml_conf["df_uid"]
     df_dir = yml_conf["df_dir"]
     out_dir = yml_conf["out_dir"]
+    output_uid = yml_conf["output_uid"]  # "final_env_maps_"
+    nearest_days = int(yml_conf.get("nearest_scene_days", 0))
 
+    times = _scene_times(yml_conf)
+    scenes = _load_scenes(yml_conf)
+    date_to_idx = {t: i for i, t in enumerate(times)}
+    sorted_dates = sorted(date_to_idx)
 
-    mask_path = yml_conf["mask_path"]
-    land_value = yml_conf["land_value"]
-
-    output_uid = yml_conf["output_uid"] #"final_env_maps_"
- 
-    initial_water_mask = gdal.Open(mask_path).ReadAsArray()
-    resized_water_mask = None
-    land_inds = None
-
-    tme = datetime.strptime(start_time,"%Y-%m-%d")
-    for i in range(n_days):
-        print(glob_start + str(i) + glob_end)
-        fname = glob.glob(glob_start + str(i) + glob_end)[0]
-        if "tif" in fname:
-            dat = gdal.Open(fname).ReadAsArray() 
-        elif "zarr" in fname:
-            dat = zarr.load(fname)
-
-        if resized_water_mask is None:
-            print("SHAPING WATER MASK", dat.shape)
-            dat_shp = (dat.shape[1], dat.shape[0])
-            if dat.ndim > 2:
-                dat_shp = (dat.shape[2], dat.shape[1])
-            resized_water_mask = cv2.resize(initial_water_mask, dat_shp, interpolation=cv2.INTER_CUBIC)
-            land_inds = np.where(resized_water_mask == land_value)
-            
-        if dat.ndim > 2:
-            for j in range(dat.shape[0]):
-                tmp = dat[j]
-                tmp[land_inds] = -1
-                dat[j] = tmp
-        else:
-            dat[land_inds] = -1
-
-        print("SCENE", i, "LOADED")        
-        scenes.append(dat)
-        times.append(tme)
-        tme = tme + timedelta(days=1)
-
-    
-
-    scenes_per_uid = {}
-    movement_dfs = None
-    print(os.path.join(df_dir, df_uid + '_dfs.pkl'))
-    with open(os.path.join(df_dir, df_uid + '_dfs.pkl'), "rb") as f:
+    with open(os.path.join(df_dir, df_uid + "_dfs.pkl"), "rb") as f:
         movement_dfs = pd.read_pickle(f)
- 
+
     for uid in movement_dfs:
-        if "__aug" in uid:
-            strng = re.sub("__aug\d+","", uid)
+        pkl_file = _pkl_path(out_dir, output_uid, uid)
+        if AUG_RE.search(uid):
+            orig = AUG_RE.sub("", uid)
+            # Augmented copies reuse the original's scenes only if they segment identically
+            # (same timestamps per segment). Otherwise they are processed on their own.
+            if orig in movement_dfs and _segments_match(movement_dfs[uid], movement_dfs[orig]):
+                if os.path.lexists(pkl_file):
+                    os.remove(pkl_file)
+                os.symlink(_pkl_path(out_dir, output_uid, orig), pkl_file)
+                continue
+            print(f"{uid}: segmentation differs from {orig}; processing separately")
 
-            print(strng, uid)
-            if not os.path.exists(os.path.join(out_dir, output_uid + uid + ".pkl")):
-                os.symlink(os.path.join(out_dir, output_uid + strng + ".pkl"), os.path.join(out_dir, output_uid + uid + ".pkl"))
-            continue
+        print("Matching movement tracks to scenes for track", uid)
+        scenes_per_uid, n_missing = _match_track(movement_dfs[uid], scenes, date_to_idx, nearest_days, sorted_dates)
+        n_fix = sum(len(s) for s in movement_dfs[uid])
+        if n_missing:
+            print(f"WARNING: {uid}: {n_missing}/{n_fix} fixes fall outside the scene dates; env map set to None")
 
-
-        run_uid_dist = df_uid + "_" + uid
-        #with open(os.path.join(df_dir, run_uid_dist + "_distances.pkl"), "rb") as f:
-        #    distances = pickle.load(f)
-
-
-        print("Matching movement tracks to scenes and adding track-specific environment info for track", uid)
-        movement_dfs_uid = movement_dfs[uid]
-
-        if uid not in scenes_per_uid:
-            scenes_per_uid[uid] = []
-
-
-        print(len(movement_dfs_uid))
-        for dind in range(len(movement_dfs_uid)):
-            movement_df = movement_dfs_uid[dind]
-            print(len(movement_df))
-            #distance_grids = distances[dind]
-            act_index = 0
-            scene_ind = 0
-
-            current_date = None
-            current_date_cntr = 0
-
-            if len(scenes_per_uid[uid]) < dind+1:
-                scenes_per_df = []
-            else:
-                scenes_per_df = scenes_per_uid[uid]
-
-            for index, row in movement_df.iterrows():
-                #act_index = 0
-                #if len(row["date"]) > 10:
-                #    row["date"] = row["date"][:10]
-                print(row['timestamp'])
-                row['timestamp'] = row['timestamp'].replace(" ", "T").replace("+00:00", "Z")
-                df_st_str = datetime.strptime(row['timestamp'],"%Y-%m-%dT%H:%M:%SZ")  #row['date'][0:10],"%Y-%m-%d")
-                st_str = times[scene_ind] #prelim_scene_map["times"][scene_ind]
- 
-                print(df_st_str, st_str, len(movement_df), scene_ind, act_index, uid)
-                while st_str.date() < df_st_str.date() and scene_ind < len(times)-1: #len(prelim_scene_map["times"])-1:
-                    scene_ind = scene_ind + 1
-                    st_str = times[scene_ind] #prelim_scene_map["times"][scene_ind]
-                    print(df_st_str, st_str, len(movement_df), uid, dind, scene_ind, act_index)
-                if current_date is None:
-                    current_date = copy.deepcopy(df_st_str)
-                else:
-                    if current_date.date() == df_st_str.date(): #year == df_st_str.year and current_date.day== df_st_str.day and current_date.month== df_st_str.month:
-                        current_date_cntr = current_date_cntr + 1
-                        #act_index = act_index + 1
-                    else:
-                        current_date = copy.deepcopy(df_st_str)
-                        current_date_cntr = 0
-                
-                #if st_str - df_st_str > timedelta(hours=15) or df_st_str - st_str > timedelta(hours=15):
-                #    if len(scenes_per_df) < act_index + 1:
-                #        scenes_per_df.append([])
-                #    act_index = act_index + 1
-                #    continue
-                #if scene_ind >= len(times): #len(prelim_scene_map["times"]):
-                #    act_index = act_index + 1
-                #    continue
-
-                #distance_grid = distance_grids[act_index]
-                #resample_shape = (scenes["combined_features"][scene_ind][0].shape[1], scenes["combined_features"][scene_ind][0].shape[0])
-                #distance_grid = cv2.resize(distance_grid, resample_shape, interpolation=cv2.INTER_CUBIC)
-                #distance_grid = np.reshape(distance_grid, (resample_shape[1], resample_shape[0], 1,1,1))
-              
-                print(st_str, df_st_str, scene_ind)
- 
-                if len(scenes_per_df) < act_index + 1:
-                    print("Appending new scene in ", uid, "at", act_index, "from", scene_ind)
-                    scenes_per_df.append(scenes[scene_ind])
-                else:
-                    print("Inserting scene in ", uid, "at", act_index, "from", scene_ind)
-                    scenes_per_df[act_index] = scene
+        if os.path.islink(pkl_file):
+            os.remove(pkl_file)
+        with open(pkl_file, "wb") as f:
+            pickle.dump({uid: scenes_per_uid}, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-                act_index = act_index + 1
+# ---------------------------------------------------------------------------
+# Cluster relabelling
+# ---------------------------------------------------------------------------
 
-            #print("Intermediate Scene Size", scenes["combined_features"][scene_ind][-1].shape, len(scenes["combined_features"][scene_ind]))
+def _quantise(arr, scale):
+    arr = np.asarray(arr, dtype=np.float64)
+    q = np.full(arr.shape, -1, dtype=np.int64)
+    valid = np.isfinite(arr) & (arr > 0.0)
+    q[valid] = np.rint(arr[valid] * scale).astype(np.int64)
+    q[valid & (q <= 0)] = -1
+    return q
 
-            if len(scenes_per_uid[uid]) < dind+1:
-                print("Appending new DF for", uid, "at", dind)
-                scenes_per_uid[uid].append(scenes_per_df)
-            else:
-                print("Inserting DF for", uid, "at", dind)
-                scenes_per_uid[uid] = scenes_per_df
 
-            pkl_file = os.path.join(out_dir, output_uid + uid + ".pkl")
-            with open(pkl_file, 'wb') as f:
-                pickle.dump({uid: scenes_per_uid[uid]}, f, protocol=pickle.HIGHEST_PROTOCOL)
+def build_class_mapper(scenes, scale=1000):
+    """Valid (> 0) quantised cluster ids -> 0..K-1. Invalid (<= 0, land, nodata) -> -1."""
+    lst = np.unique(np.concatenate([np.unique(_quantise(s, scale)) for s in scenes]))
+    keys = lst[lst > 0]
+    return keys
 
+
+def remap_clusters(arr, keys, scale=1000):
+    """Vectorised remap (no chained in-place relabelling). Returns int16 with -1 for invalid."""
+    q = _quantise(arr, scale)
+    out = np.full(q.shape, -1, dtype=np.int16)
+    valid = q > 0
+    idx = np.searchsorted(keys, q[valid])
+    idx_c = np.clip(idx, 0, len(keys) - 1)
+    unknown = keys[idx_c] != q[valid]
+    if np.any(unknown):
+        raise ValueError(f"{int(unknown.sum())} cluster values are not in the mapper, e.g. {q[valid][unknown][:5]}")
+    out[valid] = idx_c.astype(np.int16)
+    return out
 
 
 def compress_clusters(yml_conf):
-
-    times = []
-    scenes = []
-
-
-    n_days = yml_conf["n_days"]
-    start_time = yml_conf["start_time"]
-    glob_start = yml_conf["glob_start"]
-    glob_end = yml_conf["glob_end"]
     df_uid = yml_conf["df_uid"]
     df_dir = yml_conf["df_dir"]
     out_dir = yml_conf["out_dir"]
+    output_uid = yml_conf["output_uid"]
+    scale = yml_conf.get("cluster_scale", 1000)
 
-    output_uid = yml_conf["output_uid"] #"final_env_maps_"
-
-    final_env_maps = []
-    lst = None
-
-    tme = datetime.strptime(start_time,"%Y-%m-%d")
-
-    for i in range(n_days):
-        fname = glob.glob(glob_start + str(i) + glob_end)[0]
-        dat = gdal.Open(fname).ReadAsArray()
-        scenes.append(dat)
-        times.append(tme)
-        tme = tme + timedelta(days=1)
-
-        inds = np.where(dat <= 0.0)
-        dat = dat*1000
-        dat[inds] = -1
-
-        dat = np.round(dat, decimals=0, out=None).astype(np.int32)
-        scenes.append(fname)
-
-        unq = np.unique(dat)
-        if lst is None:
-            lst = unq
-        else:
-            lst = np.concatenate((lst, unq), axis=0)
-        lst = np.sort(np.unique(lst))
-
-
-    print("UNIQUE", lst)
-    mapper = {}
-    print(lst.shape)
-    for i in range(lst.shape[0]):
-        mapper[float(lst[i])] = i
-
-    mapper[float(-1.0)] = 0.0
-    mapper[float(0.0)] = 0.0
-
-    print("MAPPER")
+    scenes = _load_scenes(yml_conf, apply_mask=False)
+    keys = build_class_mapper(scenes, scale)
+    del scenes
+    mapper = {float(k): i for i, k in enumerate(keys)}
+    mapper[-1.0] = -1
+    print("MAPPER: K =", len(keys), "valid clusters (set n_clusters >= K; -1 = invalid)")
     pprint(mapper)
     with open(os.path.join(out_dir, output_uid + "_class_mapper.pkl"), "wb") as f:
         pickle.dump(mapper, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-
-    #for j in range(len(scenes)):
-    #    dat = gdal.Open(scenes[j])
-    #    for key in mapper.keys():
-    #        dat[np.where(dat == float(key))] = mapper[key]
-    #    print(dat.min(), dat.max())    
-
-
-    #with open(os.path.join(out_dir, output_uid + "_whale_class_mapper.pkl"), "rb") as f:
-    #    mapper = pd.read_pickle(f)
-
-    with open(os.path.join(df_dir, df_uid + '_dfs.pkl'), "rb") as f:
+    with open(os.path.join(df_dir, df_uid + "_dfs.pkl"), "rb") as f:
         movement_dfs = pd.read_pickle(f)
 
     for key in movement_dfs.keys():
-        if "__aug" in key:
+        pkl_file = _pkl_path(out_dir, output_uid, key)
+        if os.path.islink(pkl_file):  # aliased augmented copy; original is processed
             continue
-
-        #if "Bmu-008" not in key and "Bmu-01" not in key:
-        #    continue
-
-        with open(os.path.join(out_dir, output_uid + key + ".pkl"), "rb") as f:
+        with open(pkl_file, "rb") as f:
             abstract_grid = pickle.load(f)
 
-        movement_sub_df = movement_dfs[key]
-        
-        abstract_grid_sub = abstract_grid[key]
+        cache = {}  # scenes are shared across fixes: remap each unique array once and keep sharing
+        new_segs = []
+        for seg in abstract_grid[key]:
+            new_maps = []
+            for m in seg:
+                if m is None:
+                    new_maps.append(None)
+                    continue
+                if id(m) not in cache:
+                    cache[id(m)] = (m, remap_clusters(m, keys, scale))
+                new_maps.append(cache[id(m)][1])
+            new_segs.append(new_maps)
+        abstract_grid[key] = new_segs
 
-        processed = 0
-        for i in range(len(movement_sub_df)):
-            #for j in range(len(abstract_grid_sub[i])):
-            abstract_grid_sub[i] = np.array(abstract_grid_sub[i])
-            print("HERE1", abstract_grid_sub[i].min(), abstract_grid_sub[i].max(), abstract_grid_sub[i].mean(), abstract_grid_sub[i].shape)
-            #if abstract_grid_sub[i].max() > 100 and abstract_grid_sub[i].max() < 1000:
-            #    processed = processed + 1
-            #    continue
-            inds = np.where(abstract_grid_sub[i] <= 0.0)
-            #if abstract_grid_sub[i].max() >= 1000:
-            #    abstract_grid_sub[i] = abstract_grid_sub[i]/1000
-            #else:
-            print("HERE UNIQUE", abstract_grid_sub[i].min(), abstract_grid_sub[i].max(), abstract_grid_sub[i].mean(), np.unique(abstract_grid_sub[i]))
-
-            abstract_grid_sub[i] = abstract_grid_sub[i]*1000
-            abstract_grid_sub[i][inds] = -1
-            abstract_grid_sub[i] = np.round(abstract_grid_sub[i], decimals=0, out=None).astype(np.int32)
-
-            print("HERE UNIQUE", abstract_grid_sub[i].min(), abstract_grid_sub[i].max(), abstract_grid_sub[i].mean(), np.unique(abstract_grid_sub[i]))
-            for key2 in mapper.keys():
-                print(key, key2, mapper[key2], i)
-                abstract_grid_sub[i][np.where(abstract_grid_sub[i] == float(key2))] = mapper[key2]
-            print("HERE3", abstract_grid_sub[i].min(), abstract_grid_sub[i].max(), i)
-            abstract_grid_sub[i] = abstract_grid_sub[i].astype(np.int16)
-        #print(np.min(abstract_grid_sub), np.max(abstract_grid_sub))   
-        if processed >= len(movement_sub_df):
-            continue
-
-
-
-        abstract_grid[key] = abstract_grid_sub
-
-        pkl_file = os.path.join(out_dir, output_uid + key + ".pkl")
-        with open(pkl_file, 'wb') as f:
+        with open(pkl_file, "wb") as f:
             pickle.dump(abstract_grid, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-
 def merge_compressed_maps(yml_conf):
+    out_dir = yml_conf["out_dir"]
+    output_uid = yml_conf["output_uid"]
+    df_uid = yml_conf["df_uid"]
+    out_fle = os.path.join(out_dir, output_uid + df_uid + ".pkl")
 
-    merge_glob = os.path.join(yml_conf["out_dir"], yml_conf["output_uid"] + "*.pkl")
-    fles = glob.glob(merge_glob)
-    out_fle = os.path.join(yml_conf["out_dir"], yml_conf["output_uid"] + yml_conf["df_uid"] + ".pkl")
+    with open(os.path.join(yml_conf["df_dir"], df_uid + "_dfs.pkl"), "rb") as f:
+        movement_dfs = pd.read_pickle(f)
 
-    final_dict = {}
+    final_dict, aliases, missing = {}, [], []
+    # Iterate the movement keys explicitly (the old glob also picked up the class mapper and old merges).
+    for key in movement_dfs.keys():
+        pkl_file = _pkl_path(out_dir, output_uid, key)
+        if not os.path.exists(pkl_file):
+            missing.append(key)
+            continue
+        if os.path.islink(pkl_file):
+            aliases.append(key)
+            continue
+        with open(pkl_file, "rb") as f:
+            final_dict[key] = pickle.load(f)[key]
 
-    for fi in range(len(fles)):
-         if "__aug" in fles[fi]:
-             continue
-         print(fles[fi])
-         with open(fles[fi], "rb") as f:
-             abstract_grid = pickle.load(f)
-         for key in abstract_grid.keys():
-             print(fles[fi], key)
-             final_dict[key] = abstract_grid[key]
+    for key in aliases:
+        orig = AUG_RE.sub("", key)
+        if orig in final_dict:
+            final_dict[key] = final_dict[orig]  # same object; pickled once
+        else:
+            missing.append(key)
+    if missing:
+        print(f"WARNING: no env maps for {len(missing)} keys: {missing[:10]}")
 
-    with open(out_fle, 'wb') as f:
+    with open(out_fle, "wb") as f:
         pickle.dump(final_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-y", "--yaml", help="YAML file for fusion info.")
     args = parser.parse_args()
-  
+
     yml_conf = read_yaml(args.yaml)
 
     gen_scene_list(yml_conf)
- 
+
     if yml_conf["sit_fuse_output"]:
         compress_clusters(yml_conf)
 
     merge_compressed_maps(yml_conf)
-
