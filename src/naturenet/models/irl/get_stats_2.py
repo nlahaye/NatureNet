@@ -33,7 +33,8 @@ from sit_fuse.utils import read_yaml
 
 import argparse
 
-out_dir = "/data/nlahaye/NatureNet/Blue_Whale_LL_Test/"
+#out_dir = "/data/nlahaye/NatureNet/Blue_Whale_LL_Test/"
+out_dir = "/data/nlahaye/NatureNet/Hammerhead_LL_Test/"
 
 def loop_arhmm(yml_conf):
 
