@@ -49,7 +49,7 @@ swirl_nn_test_se = []
 latents = []
 
 #latent_set = [1,2,3,4,5,6,7,8,9,10,11,12,16,21,40]
-latent_set = [2,3,4,5,6] #,7,8,9]
+latent_set = [1,2,3,4,5,6,7,8,9]
 
 
 cl = 0.95 # confidence level
@@ -165,8 +165,8 @@ for i in range(len(arhmm_stds)):
     ub.append(arhmm_stds[i][1])
     lb.append(arhmm_stds[i][0])
  
-#plt.plot(latents, arhmm_mean, color='red', label="ARHMM")
-#plt.fill_between(latents, lb, ub, color='red', alpha=0.2)
+plt.plot(latents, arhmm_mean, color='red', label="ARHMM")
+plt.fill_between(latents, lb, ub, color='red', alpha=0.2)
  
 ub = []
 lb = []
@@ -260,5 +260,5 @@ lb = []
 
 plt.legend()
 
-plt.savefig("LL_SWIRL_WHALE_NO_ARHMM_v2.png")
+plt.savefig("LL_SWIRL_WHALE_WITH_ARHMM_v2.png")
 
