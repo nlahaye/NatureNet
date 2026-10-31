@@ -124,6 +124,31 @@ def load_segments(yml_conf):
     return segs
 
 
+def drop_report(segs, segment_policy="exact", seq_len=None):
+    """Per animal: segments, states, fraction invalid (-1), segments that are all -1 / partly -1 / clean."""
+    per = {}
+    for sg in segs:
+        s = np.asarray(sg["states"])
+        d = per.setdefault(sg["group"], dict(segs=0, states=0, invalid=0, all_bad=0, some_bad=0, clean=0, lens=[]))
+        nb = int((s == INVALID_STATE).sum())
+        d["segs"] += 1
+        d["states"] += len(s)
+        d["invalid"] += nb
+        d["all_bad" if nb == len(s) else "some_bad" if nb else "clean"] += 1
+        d["lens"].append(len(s))
+    print(f"Invalid-state report (policy={segment_policy}, seq_len={seq_len}; -1 = no env scene for the fix date, "
+          f"land / nodata, or outside the env grid):")
+    for g in sorted(per):
+        d = per[g]
+        print(f"  {g}: {d['segs']} segs, {d['invalid']}/{d['states']} states invalid "
+              f"({100.0 * d['invalid'] / max(d['states'], 1):.1f}%); all-invalid {d['all_bad']}, "
+              f"partly {d['some_bad']}, clean {d['clean']}; segment length {min(d['lens'])}..{max(d['lens'])}")
+    if segment_policy == "exact" and seq_len is None:
+        print("  NOTE: exact + seq_len None keeps only clean segments of the MAXIMUM length; "
+              "use segment_policy: chunk with seq_len to keep shorter / partly valid segments.")
+    return per
+
+
 def build_dataset(segs, seq_len=None, segment_policy="exact", min_len=3, verbose=True, return_meta=False):
     """
     Fixed-length (N, L) states / (N, L-1) actions for SWIRL.
@@ -144,8 +169,11 @@ def build_dataset(segs, seq_len=None, segment_policy="exact", min_len=3, verbose
         else:
             for s, a, st in _valid_runs(sg["states"], sg["actions"]):
                 runs.append((sg["group"], s, a, dict(m, start=int(st))))
+    if verbose or not runs:
+        drop_report(segs, segment_policy, seq_len)
     if not runs:
-        raise ValueError("No valid (fully observed) segments")
+        raise ValueError("No valid (fully observed) segments: every segment contains invalid (-1) states. "
+                         "See the report above (all -1 = no env scene for those dates / outside the env grid).")
     if seq_len is None:
         seq_len = max(len(r[1]) for r in runs)
     if seq_len < min_len:

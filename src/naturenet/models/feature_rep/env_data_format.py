@@ -69,9 +69,44 @@ def _scene_times(yml_conf):
         missing = [i for i in range(n_days) if str(i) not in d]
         if missing:
             raise ValueError(f"{dates_file} is missing day indices {missing[:10]}")
-        return [pd.Timestamp(d[str(i)]).normalize() for i in range(n_days)]
-    tme = datetime.strptime(yml_conf["start_time"], "%Y-%m-%d")
-    return [pd.Timestamp(tme + timedelta(days=i)) for i in range(n_days)]
+        return [_naive_day(d[str(i)]) for i in range(n_days)]
+    tme = _naive_day(yml_conf["start_time"])
+    return [tme + pd.Timedelta(days=i) for i in range(n_days)]
+
+
+def _naive_day(x):
+    """Any date / ISO string (tz-aware or not) -> tz-naive UTC midnight, the key type used for matching.
+    (A tz-aware key, e.g. from "2023-11-01T00:00:00+00:00" in scene_dates_file, never equals the tz-naive
+    fix dates, so every fix was reported as outside the scene dates.)"""
+    ts = pd.Timestamp(x)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return ts.normalize()
+
+
+def coverage_report(movement_dfs, times, nearest_days=0, strict=True):
+    """
+    Scene-date coverage per animal (original keys only): fixes, date range, fixes inside the scene
+    calendar (+- nearest_days). Raises if no fix of any animal falls inside it (wrong start_time / n_days /
+    scene_dates_file), instead of silently writing all-None env maps.
+    """
+    t0, t1 = min(times), max(times)
+    lo, hi = t0 - pd.Timedelta(days=nearest_days), t1 + pd.Timedelta(days=nearest_days)
+    tot_in, tot = 0, 0
+    print(f"Scene calendar: {t0.date()} .. {t1.date()} ({len(times)} days, nearest_scene_days={nearest_days})")
+    for uid in sorted(movement_dfs):
+        if AUG_RE.search(uid) or not len(movement_dfs[uid]):
+            continue
+        d = pd.concat([_fix_dates(s) for s in movement_dfs[uid]])
+        n_in = int(((d >= lo) & (d <= hi)).sum())
+        tot_in, tot = tot_in + n_in, tot + len(d)
+        flag = "" if n_in else "   <- no overlap"
+        print(f"  {uid}: {len(d)} fixes, {d.min().date()} .. {d.max().date()}, {n_in} in calendar{flag}")
+    print(f"  total: {tot_in}/{tot} fixes inside the scene calendar")
+    if strict and tot and tot_in == 0:
+        raise ValueError("No fixes fall inside the scene calendar. Check start_time / n_days / scene_dates_file "
+                         "against the track dates above.")
+    return tot_in, tot
 
 
 def _extent(gt, shape_hw):
@@ -138,7 +173,7 @@ def _load_scenes(yml_conf, apply_mask=True):
 # ---------------------------------------------------------------------------
 
 def _fix_dates(movement_df):
-    ts = pd.to_datetime(movement_df["timestamp"], utc=True, format="mixed")
+    ts = pd.to_datetime(movement_df["timestamp"], utc=True, format="mixed", errors="coerce")
     return ts.dt.tz_convert(None).dt.normalize()
 
 
@@ -192,6 +227,8 @@ def gen_scene_list(yml_conf):
     nearest_days = int(yml_conf.get("nearest_scene_days", 0))
 
     times = _scene_times(yml_conf)
+    with open(os.path.join(df_dir, df_uid + "_dfs.pkl"), "rb") as f:
+        coverage_report(pd.read_pickle(f), times, nearest_days, strict=yml_conf.get("strict_scene_coverage", True))
     scenes = _load_scenes(yml_conf)
     date_to_idx = {t: i for i, t in enumerate(times)}
     sorted_dates = sorted(date_to_idx)
