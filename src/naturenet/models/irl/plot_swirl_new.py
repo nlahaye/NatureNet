@@ -18,7 +18,7 @@ Rewritten; the extraction now lives in swirl_track_series.py. Main fixes vs. the
   dicts, inputs off by one); no prints in loops, no plt.show, GIFs at 120 dpi with PillowWriter.
 
 Config: out_dir, run_uid, seed, n_hidden (or n_hidden_init), n_states, df_dir, df_run_uid, actions,
-positions, lon_bounds, lat_bounds, swirl_model (linear | nn), swirl_orders ([s1, s2]), splits
+positions, lon_bounds, lat_bounds, swirl_model (linear | nn | hiavi; hiavi: s1 only), swirl_orders ([s1, s2]), splits
 ([train, test]), plot_trajs, plot_gifs, plot_inputs, input_keys, static_layers, envs (pickle
 {uid: [segment][fix] -> (H, W)} for GIFs), env_lat_bounds / env_lon_bounds, max_gifs (5), plot_dir.
 """

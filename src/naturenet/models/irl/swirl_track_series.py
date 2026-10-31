@@ -4,7 +4,8 @@ exploit_explore_init.py).
 
 Replaces the counter-based matching in the old plot_swirl_new.run_plots / plot_time_series:
 - latent rows are mapped to tracks with the sequence ids saved in every LL file (seq_key / seq_seg /
-  seq_start; latent step t of a row is segment position seq_start + 1 + t, the S-2 alignment);
+  seq_start; latent step t of a row is segment position seq_start + seq_offset + t, seq_offset 1 (the SWIRL
+  alignment) unless the LL file stores another (HIAVI hiavi_align: full -> 0));
 - tracks / states come from the same loader as training (swirl_data.load_segments), lat / lon / time from
   the movement DataFrames;
 - every column is computed on the full segment and then subset, so all columns have equal length:
@@ -38,6 +39,7 @@ SWIRL_FILES = {
     ("linear", "s2"): ("_S2_naturenet_iter2", "_S2_naturenet_iter2_LL2", "_S2_naturenet_iter2_test_LL2"),
     ("nn", "s1"): ("_naturenet_MLP_S1_new1_reward_filtered", "_naturenet_MLP_S1_new1_LL", "_naturenet_MLP_S1_new1_LL_test"),
     ("nn", "s2"): ("_naturenet_MLP_S2_new2_reward_filtered", "_naturenet_MLP_S2_new2_LL", "_naturenet_MLP_S2_new2_LL_test"),
+    ("hiavi", "s1"): ("_hiavi", "_hiavi_LL", "_hiavi_LL_test"),
 }
 
 
@@ -65,9 +67,13 @@ class RewardModel:
                only worked while M happened to equal A, and masked whole (K, S) rows)
     nn s1:     reward_filtered (K, S, A)     -> R[k, s, a]
     nn s2:     reward_filtered (K, S, S, A)  -> R[k, s, p, a], valid_pairs (S, S)
+    hiavi s1:  r (K, S, A) (IAVI reward)     -> R[k, s, a] (as nn s1); state_reward = E_{a ~ pi_k}[r_k(s, a)]
+               (IAVI fixes r only up to a per-state shift and returns mean_a r(s, a) = 0, so the plain action
+               mean would be identically 0)
     """
 
-    def __init__(self, model, order, R, n_states, prev_state_map=None, valid_pairs=None, normalize="none"):
+    def __init__(self, model, order, R, n_states, prev_state_map=None, valid_pairs=None, normalize="none",
+                 action_weights=None):
         self.model, self.order, self.S = model, order, n_states
         R = np.array(R, dtype=float)  # copy: never modify the caller's array
         if model == "linear":
@@ -96,6 +102,9 @@ class RewardModel:
                 if valid_pairs is not None:
                     R = np.where(np.asarray(valid_pairs, dtype=bool)[None, :, :, None], R, np.nan)
                 self.state_reward = np.nanmean(R, axis=(2, 3))
+            elif action_weights is not None:  # (K, S, A) policy: E_pi[r]
+                w = np.asarray(action_weights, dtype=float)
+                self.state_reward = (R * w).sum(axis=2) / np.maximum(w.sum(axis=2), 1e-300)
             else:
                 self.state_reward = R.mean(axis=2)
         if normalize == "global":
@@ -112,7 +121,7 @@ class RewardModel:
         ok = (k >= 0) & (s >= 0) & (s < self.S)
         if self.order == "s2":
             ok &= (p >= 0) & (p < self.S)
-        if self.model == "nn":
+        if self.model in ("nn", "hiavi"):
             ok &= (a >= 0) & (a < self.R.shape[-1])
         idx = np.nonzero(ok)[0]
         if self.model == "linear" and self.order == "s1":
@@ -142,6 +151,10 @@ def load_reward_model(yml_conf, model, order, tag=""):
         if psm is not None and psm.ndim == 0:  # a pickled dict
             psm = psm.item()
         return RewardModel(model, order, p[key], S, prev_state_map=psm, normalize=norm)
+    if model == "hiavi":
+        if order != "s1":
+            raise ValueError("HIAVI has first-order (s1) rewards only")
+        return RewardModel(model, order, p[yml_conf.get("reward_key", "r")], S, normalize=norm, action_weights=p["pis"])
     return RewardModel(model, order, p["reward_filtered"], S,
                        valid_pairs=p["valid_pairs"] if "valid_pairs" in p.files else None, normalize=norm)
 
@@ -162,10 +175,12 @@ def load_latents(yml_conf, model, order, splits=("train", "test"), tag=""):
         zs = z["learnt_zs"] if "learnt_zs" in z.files else z["jax_path_vmap"]
         meta = {k: (z[k] if k in z.files else None) for k in ("seq_key", "seq_seg", "seq_start")}
         check_latent_file(zs, meta["seq_key"], name=os.path.basename(f))
-        rows.append(dict(zs=np.asarray(zs), split=np.full(len(zs), split), **meta))
+        off = int(z["seq_offset"]) if "seq_offset" in z.files else 1  # latent t <-> fix seq_start + off + t
+        rows.append(dict(zs=np.asarray(zs), split=np.full(len(zs), split), seq_offset=np.full(len(zs), off), **meta))
     if not rows:
         raise FileNotFoundError("No LL / latent files found for " + _base(yml_conf) + f" ({model}, {order})")
-    return {k: np.concatenate([r[k] for r in rows]) for k in ("zs", "split", "seq_key", "seq_seg", "seq_start")}
+    return {k: np.concatenate([r[k] for r in rows]) for k in ("zs", "split", "seq_key", "seq_seg", "seq_start",
+                                                                "seq_offset")}
 
 
 # ---------------------------------------------------------------------------
@@ -303,11 +318,12 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
     lab = {}
     for i in range(len(lat_["zs"])):
         key, seg, st = str(lat_["seq_key"][i]), int(lat_["seq_seg"][i]), int(lat_["seq_start"][i])
+        off = int(lat_["seq_offset"][i]) if "seq_offset" in lat_ else 1
         if not include_aug and re.search(r"__aug\d+", key):
             continue
         d = lab.setdefault((key, seg), {})
         for t, z in enumerate(lat_["zs"][i]):
-            d[st + 1 + t] = (int(z), str(lat_["split"][i]))
+            d[st + off + t] = (int(z), str(lat_["split"][i]))
 
     inputs_cache = {}
     out = {}
