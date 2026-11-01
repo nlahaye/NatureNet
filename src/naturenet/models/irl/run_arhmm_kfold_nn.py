@@ -24,8 +24,15 @@ def arhmm_nn_fname(out_dir, run_uid, n_hidden, seed, kf_ind=None):
     return os.path.join(out_dir, run_uid + "_" + str(n_hidden) + "_hidden_" + str(seed) + suffix)
 
 
+def _has_split_lls(path):
+    if not os.path.exists(path):
+        return False
+    with np.load(path, allow_pickle=True) as f:
+        return "test_ll" in f.files
+
+
 def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, positions, out_dir, run_uid,
-                       kf_ind=None, num_init_iters=100):
+                       kf_ind=None, num_init_iters=100, test_positions=None):
     from ssm.swirl import ARHMMs
 
     arhmm_s = ARHMMs(emission_dim, n_hidden_states, latent_state_dim, n_states,
@@ -38,7 +45,16 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
     np.savez(fname, init_start=arhmm_s.init_state_distn.initial_state_distn,
              logpi0_start=arhmm_s.init_state_distn.log_pi0, log_Ps_start=arhmm_s.transitions.log_Ps,
              Rs_start=arhmm_s.transitions.Rs)
-    np.savez(fname.replace("_seed_arhmm_nn_s", "_seed_arhmm_nn_s_LLs"), log_likelihood=lls_arhmm)
+    # train_ll / test_ll: per-step LLs (ARHMMs.log_likelihood / total steps) for plot_ll_comparison.py.
+    test_x = [np.expand_dims(np.asarray(p).astype(np.int32), axis=1) for p in test_positions] \
+        if test_positions is not None and len(test_positions) else None
+    n_tr = int(sum(len(x) for x in list_x))
+    n_te = int(sum(len(x) for x in test_x)) if test_x else 0
+    train_ll = float(arhmm_s.log_likelihood(list_x)) / n_tr
+    test_ll = float(arhmm_s.log_likelihood(test_x)) / n_te if test_x else np.nan
+    print("ARHMM-nn train LL", train_ll, "test LL", test_ll)
+    np.savez(fname.replace("_seed_arhmm_nn_s", "_seed_arhmm_nn_s_LLs"), log_likelihood=lls_arhmm,
+             train_ll=train_ll, test_ll=test_ll, n_train_steps=n_tr, n_test_steps=n_te)
 
 
 def _conf(yml_conf):
@@ -55,13 +71,16 @@ def run_arhmm(yml_conf, data=None, folds_to_run=None):
     for kf_ind, (train_index, test_index) in enumerate(get_folds(yml_conf, data["groups"])):
         if folds_to_run is not None and kf_ind not in as_list(folds_to_run):
             continue
-        if not yml_conf.get("overwrite", False) and os.path.exists(arhmm_nn_fname(out_dir, run_uid, K, seed, kf_ind)):
+        f_model = arhmm_nn_fname(out_dir, run_uid, K, seed, kf_ind)
+        if not yml_conf.get("overwrite", False) and os.path.exists(f_model) and \
+                _has_split_lls(f_model.replace("_seed_arhmm_nn_s", "_seed_arhmm_nn_s_LLs")):
             print("ARHMM-nn fold", kf_ind, "exists; skipping")
             continue
         print("ARHMM-nn fold", kf_ind, ":", len(train_index), "train /", len(test_index), "test sequences")
         npr.seed(seed + kf_ind)
         run_arhmm_internal(seed, D, K, L, S, xs[train_index], out_dir, run_uid, kf_ind,
-                           int(yml_conf.get("arhmm_init_iters", 100)))
+                           int(yml_conf.get("arhmm_init_iters", 100)),
+                           test_positions=xs[test_index] if len(test_index) else None)
 
 
 def run_arhmm_holdout(yml_conf, data=None):
@@ -69,10 +88,11 @@ def run_arhmm_holdout(yml_conf, data=None):
     seed, K, D, L, S, out_dir, run_uid = _conf(yml_conf)
     data = data if data is not None else load_swirl_dataset(yml_conf)
     xs, _, _ = align_for_swirl(data["states"], data["actions"])
-    train_index, _, _ = holdout_split(yml_conf, data["groups"])
+    train_index, test_index, _ = holdout_split(yml_conf, data["groups"])
     npr.seed(seed)
     run_arhmm_internal(seed, D, K, L, S, xs[train_index], out_dir, run_uid, None,
-                       int(yml_conf.get("arhmm_init_iters_final", 500)))
+                       int(yml_conf.get("arhmm_init_iters_final", 500)),
+                       test_positions=xs[test_index] if test_index is not None and len(test_index) else None)
 
 
 if __name__ == '__main__':

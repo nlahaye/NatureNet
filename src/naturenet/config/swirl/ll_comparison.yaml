@@ -1,0 +1,27 @@
+# Train / test LL comparison across ARHMM, SWIRL, NN-SWIRL, HIAVI (and the hiql IAVI baseline).
+#   python -m naturenet.models.irl.plot_ll_comparison -y ll_comparison.yaml [--methods swirl_s1 hiavi]
+#
+# Each method points at the YAML its runs used; out_dir / run_uid / seed / n_folds and the sweep
+# (min_latent, max_latent, num_runs -> get_stats naming) are read from it. Any of those keys (or Ks: [..],
+# sweep: true|false) can be set on the entry to override. Relative YAML paths are resolved from this file.
+# Remove entries you have not run; missing files are reported and skipped.
+
+out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/ll_comparison/"
+out_prefix: "hammerhead_v1"
+title: "Hammerhead K-fold log-likelihood"
+ci: 0.95
+compare_k: null          # K for the per-fold plot; null = each method's best test K
+reference: "swirl_s1"    # paired test-LL differences vs this method (needs shared folds: same folds_dir / fold_seed)
+
+methods:
+  - {name: arhmm,       yaml: "swirl_kfold.yaml"}        # run_arhmm_kfold.py (linear-SWIRL init)
+  - {name: swirl_s1,    yaml: "swirl_kfold.yaml"}        # run_swirl_kfold.py / get_stats_2.py
+  - {name: swirl_s2,    yaml: "swirl_kfold.yaml"}
+  - {name: arhmm_nn,    yaml: "swirl_nn_kfold.yaml"}     # run_arhmm_kfold_nn.py (NN-SWIRL init)
+  - {name: swirl_nn_s1, yaml: "swirl_nn_kfold.yaml"}     # run_swirl_nn_kfold.py / get_stats_nn.py
+  - {name: swirl_nn_s2, yaml: "swirl_nn_kfold.yaml"}
+  - {name: hiavi,       yaml: "hiavi_kfold.yaml"}        # run_hiavi_kfold.py / get_stats_hiavi.py
+  - {name: hiql_iavi,   csv: "/mnt/data/NatureNet/Hammerhead_Out_v1/hiql/ll_iavi.csv"}   # run_hiql_iavi.py
+  # Overrides, e.g. a single (non-sweep) run in another directory:
+  # - {name: swirl_s1, yaml: "swirl_kfold.yaml", sweep: false, n_hidden: 3, run_uid: "SWIRL_TEST",
+  #    out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/", label: "SWIRL S-1 (K=3)"}

@@ -14,7 +14,20 @@ from sit_fuse.utils import read_yaml
 from naturenet.models.irl.swirl_data import align_for_swirl, as_list, get_folds, load_swirl_dataset
 
 
-def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, positions, out_dir, run_uid, kf_ind):
+def arhmm_split_ll(arhmm_s, list_x):
+    """Per-step LL of one split: ARHMMs.log_likelihood (summed over sequences) / total steps (SWIRL's LL / (N*T))."""
+    if list_x is None or len(list_x) == 0:
+        return np.nan
+    n_steps = int(sum(len(x) for x in list_x))
+    return float(arhmm_s.log_likelihood(list_x)) / n_steps
+
+
+def _as_list_x(positions):
+    return [np.expand_dims(np.asarray(p).astype(np.int32), axis=1) for p in positions]
+
+
+def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, positions, out_dir, run_uid, kf_ind,
+                       test_positions=None):
 
     arhmm_s = ARHMMs( emission_dim, n_hidden_states, latent_state_dim, n_states,\
         transitions="mlprecurrent", dynamics="arcategorical",\
@@ -49,11 +62,28 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
     fname_ll = os.path.join(out_dir, fname_ll)
 
     np.savez(fname, init_start=init_start, logpi0_start=logpi0_start, log_Ps_start=log_Ps_start, W1_start=Rs_start[0], b1_start=Rs_start[1], W2_start=Rs_start[2], b2_start=Rs_start[3]) 
-    np.savez(fname_ll, log_likelihood=lls_arhmm)
+    # train_ll / test_ll: per-step LLs of the fitted ARHMM (used by plot_ll_comparison.py); log_likelihood is the EM trace.
+    test_x = _as_list_x(test_positions) if test_positions is not None else None
+    train_ll, test_ll = arhmm_split_ll(arhmm_s, list_x), arhmm_split_ll(arhmm_s, test_x)
+    print("ARHMM train LL", train_ll, "test LL", test_ll)
+    np.savez(fname_ll, log_likelihood=lls_arhmm, train_ll=train_ll, test_ll=test_ll,
+             n_train_steps=int(sum(len(x) for x in list_x)),
+             n_test_steps=int(sum(len(x) for x in test_x)) if test_x else 0)
 
 
 def arhmm_fname(out_dir, run_uid, n_hidden, seed, kf_ind):
     return os.path.join(out_dir, run_uid + "_" + str(n_hidden) + "_hidden_" + str(seed) + '_seed_arhmm_s_KF_' + str(kf_ind) + '.npz')
+
+
+def arhmm_ll_fname(out_dir, run_uid, n_hidden, seed, kf_ind):
+    return os.path.join(out_dir, run_uid + "_" + str(n_hidden) + "_hidden_" + str(seed) + '_seed_arhmm_s_LLs_KF_' + str(kf_ind) + '.npz')
+
+
+def _has_split_lls(path):
+    if not os.path.exists(path):
+        return False
+    with np.load(path, allow_pickle=True) as f:
+        return "test_ll" in f.files
 
 
 def run_arhmm(yml_conf, data=None, folds_to_run=None):
@@ -78,12 +108,15 @@ def run_arhmm(yml_conf, data=None, folds_to_run=None):
     for kf_ind, (train_index, test_index) in enumerate(folds):
         if folds_to_run is not None and kf_ind not in as_list(folds_to_run):
             continue
-        if not overwrite and os.path.exists(arhmm_fname(out_dir, run_uid, n_hidden, seed, kf_ind)):
+        # Re-run folds whose LL file predates the train / test LLs (needed by plot_ll_comparison.py).
+        if not overwrite and os.path.exists(arhmm_fname(out_dir, run_uid, n_hidden, seed, kf_ind)) and \
+                _has_split_lls(arhmm_ll_fname(out_dir, run_uid, n_hidden, seed, kf_ind)):
             print("ARHMM fold", kf_ind, "exists; skipping")
             continue
         print("ARHMM fold", kf_ind, ":", len(train_index), "train /", len(test_index), "test sequences")
         npr.seed(seed + kf_ind)
-        run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, xs[train_index], out_dir, run_uid, kf_ind)
+        run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, xs[train_index], out_dir, run_uid, kf_ind,
+                           test_positions=xs[test_index] if len(test_index) else None)
 
 
 if __name__ == '__main__':
