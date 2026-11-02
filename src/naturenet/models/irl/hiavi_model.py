@@ -23,6 +23,11 @@ Differences from hiql.algorithms.HIAVI (same model and fixed points):
   responsibilities (Bernoulli(gamma) per step). EM stops on a log-likelihood tolerance, unchanged MAP
   paths, or max_iters (hiql's while-True loop can cycle forever with sampling);
 - seeded numpy Generator, vectorised forward-backward / Viterbi over sequences of equal length (N, T).
+
+Optional per-intention kinematic emissions (kinematics.KinematicEmissions; `kinematics=` config dict and
+`kin=` KinFeatures in fit / loglik / posteriors / decode): the step emission becomes
+pi_k(a | s) f_k(step) vM_k(turn); f_k / vM_k have closed-form M-steps inside the same EM loop. kin=None at
+evaluation scores actions only (kinematics marginalised), kinematics=None is the original model.
 """
 import numpy as np
 from scipy.special import logsumexp
@@ -128,7 +133,8 @@ class HIAVI:
     """
 
     def __init__(self, n_latents, T_env, discount=0.9, seed=0, mstep="soft", pseudocount=0.0, eps=EPS,
-                 max_iters=200, tol=1e-6, sticky=0.95, iavi_tol=1e-3, iavi_max_iters=10000, verbose=False):
+                 max_iters=200, tol=1e-6, sticky=0.95, iavi_tol=1e-3, iavi_max_iters=10000, verbose=False,
+                 kinematics=None):
         self.K = int(n_latents)
         self.T_env = np.asarray(T_env, dtype=float)
         self.S, self.A, _ = self.T_env.shape
@@ -139,6 +145,8 @@ class HIAVI:
         self.mstep, self.pseudocount, self.eps = mstep, float(pseudocount), float(eps)
         self.max_iters, self.tol, self.sticky = int(max_iters), float(tol), float(sticky)
         self.iavi_tol, self.iavi_max_iters, self.verbose = iavi_tol, iavi_max_iters, verbose
+        self.kin_cfg = kinematics
+        self.kin_model = None
 
     # -- initialisation (as hiql: random policies, sticky Lambda, random pi0) --
     def _init(self):
@@ -169,16 +177,34 @@ class HIAVI:
         p = pis + self.eps
         return np.log(p / p.sum(axis=-1, keepdims=True))
 
-    def fit(self, s, a):
+    # -- kinematics --
+    def _init_kin(self, kin):
+        if kin is None or self.kin_cfg is None or self.kin_model is not None:
+            return
+        from naturenet.models.irl.kinematics import KinematicEmissions
+        if kin.shape != self._shape:
+            raise ValueError(f"kinematics {kin.shape} do not match s {self._shape}")
+        self.kin_model = KinematicEmissions.from_conf(self.K, self.kin_cfg).init_quantiles(kin, rng=self.rng)
+
+    def _kll(self, kin, shape):
+        if kin is None or self.kin_model is None:
+            return 0.0
+        if kin.shape != tuple(shape):
+            raise ValueError(f"kinematics {kin.shape} do not match s {tuple(shape)}")
+        return self.kin_model.loglik(kin)
+
+    def fit(self, s, a, kin=None):
         s, a = np.asarray(s, dtype=np.int64), np.asarray(a, dtype=np.int64)
         if s.shape != a.shape or s.ndim != 2:
             raise ValueError(f"s and a must both be (N, T); got {s.shape}, {a.shape}")
         if s.min() < 0 or s.max() >= self.S or a.min() < 0 or a.max() >= self.A:
             raise ValueError("state / action index out of range")
         logp_init, logp_tr, logpis = self._init()
+        self._shape = s.shape
+        self._init_kin(kin)
         prev_z, prev_ll, hist = None, -np.inf, []
         for it in range(self.max_iters):
-            lg, xi, ll = forward_backward(logp_init, logp_tr, emission_loglik(logpis, s, a))
+            lg, xi, ll = forward_backward(logp_init, logp_tr, emission_loglik(logpis, s, a) + self._kll(kin, s.shape))
             tot = float(ll.sum() / s.size)
             if not np.isfinite(tot):
                 raise FloatingPointError(f"HIAVI log-likelihood is {tot} at iteration {it}")
@@ -190,6 +216,8 @@ class HIAVI:
             g = np.exp(lg)
             w = (self.rng.uniform(size=g.shape) <= g).astype(float) if self.mstep == "sample" else g
             logpis = self._logpis(self._policies_from_counts(w, s, a))
+            if self.kin_model is not None and kin is not None:
+                self.kin_model.m_step(g, kin)
             logp_init = logsumexp(lg[:, 0], axis=0) - np.log(s.shape[0])
             logp_tr = np.log(np.maximum(xi, 1e-300))
             logp_tr -= logsumexp(logp_tr, axis=1, keepdims=True)
@@ -197,7 +225,7 @@ class HIAVI:
                 print(f"HIAVI iter {it}: LL/step {tot:.5f}")
         self.logp_init, self.logp_tr, self.ll_history = logp_init, logp_tr, np.asarray(hist)
         # final E-step responsibilities -> expert policies -> IAVI once per latent
-        lg, _, _ = forward_backward(logp_init, logp_tr, emission_loglik(logpis, s, a))
+        lg, _, _ = forward_backward(logp_init, logp_tr, emission_loglik(logpis, s, a) + self._kll(kin, s.shape))
         expert = self._policies_from_counts(np.exp(lg), s, a)
         self.r = np.zeros((self.K, self.S, self.A))
         self.q = np.zeros((self.K, self.S, self.A))
@@ -208,21 +236,25 @@ class HIAVI:
         return self
 
     # -- evaluation with the IAVI policies --
-    def _lls(self, s, a):
-        return emission_loglik(np.log(self.pis), np.asarray(s, dtype=np.int64), np.asarray(a, dtype=np.int64))
+    def _lls(self, s, a, kin=None):
+        s = np.asarray(s, dtype=np.int64)
+        return emission_loglik(np.log(self.pis), s, np.asarray(a, dtype=np.int64)) + self._kll(kin, s.shape)
 
-    def loglik(self, s, a):
-        """Mean forward log-likelihood per step (comparable to SWIRL's LL / (N * T))."""
-        _, _, ll = forward_backward(self.logp_init, self.logp_tr, self._lls(s, a))
+    def loglik(self, s, a, kin=None):
+        """Mean forward log-likelihood per step (comparable to SWIRL's LL / (N * T); joint with kin)."""
+        _, _, ll = forward_backward(self.logp_init, self.logp_tr, self._lls(s, a, kin))
         return float(ll.sum() / np.asarray(s).size)
 
-    def posteriors(self, s, a):
-        lg, _, _ = forward_backward(self.logp_init, self.logp_tr, self._lls(s, a))
+    def posteriors(self, s, a, kin=None):
+        lg, _, _ = forward_backward(self.logp_init, self.logp_tr, self._lls(s, a, kin))
         return np.exp(lg)
 
-    def decode(self, s, a):
-        return viterbi(self.logp_init, self.logp_tr, self._lls(s, a))
+    def decode(self, s, a, kin=None):
+        return viterbi(self.logp_init, self.logp_tr, self._lls(s, a, kin))
 
     def params(self):
-        return dict(logp_init=self.logp_init, logp_tr=self.logp_tr, pis=self.pis, r=self.r, q=self.q,
-                    ll_history=self.ll_history)
+        p = dict(logp_init=self.logp_init, logp_tr=self.logp_tr, pis=self.pis, r=self.r, q=self.q,
+                 ll_history=self.ll_history)
+        if self.kin_model is not None:
+            p.update(self.kin_model.params())
+        return p

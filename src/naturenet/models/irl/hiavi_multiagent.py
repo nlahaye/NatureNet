@@ -220,6 +220,8 @@ class CoupledHIAVI(HIAVI):
         self.logp_init, self.logp_tr = np.array(m.logp_init), np.array(m.logp_tr)
         self.pis = np.array(m.pis)
         self._logpis_em = np.log(self.pis)
+        self.kin_cfg = getattr(m, "kin_cfg", None)
+        self.kin_model = m.kin_model.copy() if getattr(m, "kin_model", None) is not None else None
         return self
 
     def _alpha_mstep(self, xi, rho, w):
@@ -239,7 +241,7 @@ class CoupledHIAVI(HIAVI):
         res = minimize_scalar(nq, bounds=(0.0, 1.0 - 1e-6), method="bounded", options=dict(xatol=1e-6))
         return float(res.x)
 
-    def fit_em(self, s, a, w, c, max_iters=None, tol=None, verbose=False):
+    def fit_em(self, s, a, w, c, max_iters=None, tol=None, verbose=False, kin=None):
         s, a = np.asarray(s, dtype=np.int64), np.asarray(a, dtype=np.int64)
         w, c = np.asarray(w, dtype=float), np.asarray(c, dtype=float)
         if w.shape != s.shape or c.shape != s.shape + (self.K,):
@@ -254,7 +256,7 @@ class CoupledHIAVI(HIAVI):
         hist, prev = [], -np.inf
         for it in range(max_iters):
             lP = coupled_log_transitions(logp_tr, alpha, w, c)
-            lg, xi, ll, _ = forward_backward_tv(logp_init, lP, emission_loglik(logpis, s, a))
+            lg, xi, ll, _ = forward_backward_tv(logp_init, lP, emission_loglik(logpis, s, a) + self._kll(kin, s.shape))
             tot = float(ll.sum() / s.size)
             if not np.isfinite(tot):
                 raise FloatingPointError(f"CoupledHIAVI LL is {tot} at iteration {it}")
@@ -264,6 +266,8 @@ class CoupledHIAVI(HIAVI):
             prev = tot
             g = np.exp(lg)
             logpis = self._logpis(self._policies_from_counts(g, s, a))
+            if self.kin_model is not None and kin is not None:
+                self.kin_model.m_step(g, kin)
             logp_init = logsumexp(lg[:, 0], axis=0) - np.log(s.shape[0])
             # mixture transition M-step
             lam = np.exp(logp_tr)[None, None]
@@ -280,9 +284,9 @@ class CoupledHIAVI(HIAVI):
         self.ll_history = np.asarray(hist)
         return self
 
-    def finalize(self, s, a, w, c):
+    def finalize(self, s, a, w, c, kin=None):
         """IAVI once per intention from the final responsibilities (as HIAVI.fit)."""
-        lg, _, _, _ = self._fb(s, a, w, c, self._logpis_em)
+        lg, _, _, _ = self._fb(s, a, w, c, self._logpis_em, kin)
         expert = self._policies_from_counts(np.exp(lg), np.asarray(s, dtype=np.int64), np.asarray(a, dtype=np.int64))
         self.r = np.zeros((self.K, self.S, self.A))
         self.q = np.zeros((self.K, self.S, self.A))
@@ -293,26 +297,28 @@ class CoupledHIAVI(HIAVI):
         self._logpis_em = np.log(self.pis)
         return self
 
-    def _fb(self, s, a, w, c, logpis=None):
+    def _fb(self, s, a, w, c, logpis=None, kin=None):
         logpis = np.log(self.pis) if logpis is None else logpis
+        s = np.asarray(s, dtype=np.int64)
         lP = coupled_log_transitions(self.logp_tr, self.alpha, np.asarray(w, float), np.asarray(c, float))
-        return forward_backward_tv(self.logp_init, lP, emission_loglik(logpis, np.asarray(s, dtype=np.int64),
-                                                                       np.asarray(a, dtype=np.int64)))
+        return forward_backward_tv(self.logp_init, lP, emission_loglik(logpis, s, np.asarray(a, dtype=np.int64))
+                                   + self._kll(kin, s.shape))
 
-    def loglik(self, s, a, w, c):
-        _, _, ll, _ = self._fb(s, a, w, c)
+    def loglik(self, s, a, w, c, kin=None):
+        _, _, ll, _ = self._fb(s, a, w, c, kin=kin)
         return float(ll.sum() / np.asarray(s).size)
 
-    def step_loglik(self, s, a, w, c):
-        return self._fb(s, a, w, c)[3]
+    def step_loglik(self, s, a, w, c, kin=None):
+        return self._fb(s, a, w, c, kin=kin)[3]
 
-    def posteriors(self, s, a, w, c):
-        return np.exp(self._fb(s, a, w, c)[0])
+    def posteriors(self, s, a, w, c, kin=None):
+        return np.exp(self._fb(s, a, w, c, kin=kin)[0])
 
-    def decode(self, s, a, w, c):
+    def decode(self, s, a, w, c, kin=None):
+        s = np.asarray(s, dtype=np.int64)
         lP = coupled_log_transitions(self.logp_tr, self.alpha, np.asarray(w, float), np.asarray(c, float))
-        return viterbi_tv(self.logp_init, lP, emission_loglik(np.log(self.pis), np.asarray(s, dtype=np.int64),
-                                                              np.asarray(a, dtype=np.int64)))
+        return viterbi_tv(self.logp_init, lP, emission_loglik(np.log(self.pis), s, np.asarray(a, dtype=np.int64))
+                          + self._kll(kin, s.shape))
 
     def params(self):
         p = super().params()
@@ -320,30 +326,31 @@ class CoupledHIAVI(HIAVI):
         return p
 
 
-def hiavi_step_loglik(m, s, a):
+def hiavi_step_loglik(m, s, a, kin=None):
     """One-step predictive LLs (N, T) of a plain HIAVI model (zero context)."""
     N, T = np.asarray(s).shape
     lP = np.broadcast_to(m.logp_tr, (N, max(T - 1, 0), m.K, m.K))
-    return forward_backward_tv(m.logp_init, lP, emission_loglik(np.log(m.pis), np.asarray(s, dtype=np.int64),
-                                                                np.asarray(a, dtype=np.int64)))[3]
+    return forward_backward_tv(m.logp_init, lP, m._lls(s, a, kin))[3]
 
 
 def fit_coupled(base_model, T_env, s, a, pc, tr_idx, settings, kern_tr, n_outer=5, alpha0=0.1, fit_alpha=True,
-                verbose=False):
+                verbose=False, kin=None):
     """
     Mean-field coordinate ascent on the training sequences tr_idx (contexts from the other TRAINING animals).
     kern_tr = pc.build(tr_idx, tr_idx, ...). Returns the fitted CoupledHIAVI and the final training context.
     """
     s_tr, a_tr = s[tr_idx], a[tr_idx]
+    k_tr = None if kin is None else kin[tr_idx]
+    settings = {k: v for k, v in settings.items() if k != "kinematics"}
     m = CoupledHIAVI(base_model.K, T_env, alpha0=alpha0, fit_alpha=fit_alpha, **settings).init_from(base_model)
-    gamma = base_model.posteriors(s_tr, a_tr)
+    gamma = base_model.posteriors(s_tr, a_tr, k_tr)
     for o in range(int(n_outer)):
         w, c = PartnerContext.context(kern_tr, gamma)
-        m.fit_em(s_tr, a_tr, w, c)
-        gamma = np.exp(m._fb(s_tr, a_tr, w, c, m._logpis_em)[0])
+        m.fit_em(s_tr, a_tr, w, c, kin=k_tr)
+        gamma = np.exp(m._fb(s_tr, a_tr, w, c, m._logpis_em, k_tr)[0])
         if verbose:
             print(f" outer {o}: train LL {m.ll_history[-1]:.5f} alpha {m.alpha:.4f} "
                   f"(context on {100 * np.mean(w > 0):.1f}% of steps)")
     w, c = PartnerContext.context(kern_tr, gamma)
-    m.finalize(s_tr, a_tr, w, c)
+    m.finalize(s_tr, a_tr, w, c, kin=k_tr)
     return m, (w, c)

@@ -1,0 +1,27 @@
+# Per-intention step-length / turning-angle emissions (option 2). Paste this block into any SWIRL / HIAVI /
+# ARHMM / multi-agent YAML (hiavi_kfold.yaml, init_test_swirl.yaml, hiavi_multiagent.yaml, swirl_multiagent.yaml).
+# Absent or enabled: False -> action-only models, unchanged outputs.
+#
+# Emission of step t (the move fix p -> p+1 of the step's state):
+#   p(step, turn | z) = [p0_z 1{step=0} + (1-p0_z) Gamma(step; a_z, b_z) 1{step>0}] * vM(turn; mu_z, kappa_z)
+# fitted in closed form inside every EM (weighted MLE). Reported LL = (LL_joint - LL_pooled_kinematics) / n
+# ("comparable" LL, on the action-only scale; pooled model fitted on the TRAIN animals of each fold);
+# LL_joint, LL_kin_null and LL_action are saved alongside. Use a distinct run_uid for kinematic runs.
+kinematics:
+  enabled: True
+  step_feature: "speed_kmh"     # speed_kmh (irregular Argos dt) | step_km (regular dt only) | diffusive (km / sqrt(h))
+  step_dist: "gamma"            # gamma | lognormal
+  use_step: True
+  use_turn: True
+  fix_mu0: False                # True: turn mean fixed at 0 (pure persistence)
+  zero_km: 0.05                 # moves shorter than this are "stationary" (zero-inflation mass p0)
+  min_dt_h: 0.5                 # steps with dt below this are missing (Argos bursts); turn too
+  max_speed_kmh: 10.0           # implausible speeds -> missing (null: no cap)
+  weight: 1.0                   # tempering of the kinematic factor (1 = full likelihood)
+  kappa_max: 200.0
+  min_weight: 2.0               # min posterior mass to update an intention's kinematic parameters
+  # exploit / explore labels from the fitted parameters (median step, persistence = A1(kappa) cos mu):
+  label_speed_threshold: null   # km/h; with label_persistence_threshold -> absolute rule, else relative z-scores
+  label_persistence_threshold: null
+  label_margin: 0.5
+  # dfs_pkl: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_dfs.pkl"   # default <df_dir>/<df_run_uid>_dfs.pkl

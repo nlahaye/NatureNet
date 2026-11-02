@@ -2,6 +2,7 @@
 Figures and a results table for run_hiavi_multiagent.py.
 
     python -m naturenet.models.irl.plot_hiavi_multiagent -y config/swirl/hiavi_multiagent.yaml [--K 2]
+    python -m naturenet.models.irl.plot_hiavi_multiagent -y config/swirl/swirl_multiagent.yaml   # SWIRL backend
 
 Reads <out_dir>/<ma_subdir>/ma_*.{csv,npz,json}; writes into <ma_subdir>/plots/:
   ma_concurrency.png      track timelines coloured by partner availability w; partner distance / time-lag
@@ -10,6 +11,7 @@ Reads <out_dir>/<ma_subdir>/ma_*.{csv,npz,json}; writes into <ma_subdir>/plots/:
                           null; pooled gain vs null; coupling alpha vs null
   ma_sync_K<K>.png        synchrony index vs null and chance; calendar-aligned dominant intention per animal
                           (independent and coupled fits)
+  ma_exploit_K<K>.png     daily mean P(exploit) per animal (independent and coupled fits; kinematic runs only)
   ma_results_K<K>.csv     manuscript table: one row per variant (pooled gain, per-step gain, p, alpha, n steps)
 """
 import argparse
@@ -146,13 +148,14 @@ def plot_cv(cv, summ, K, path):
     ax.set_xticklabels(variants)
     ax.set_ylabel("coupling alpha (per fold)")
     ax.set_title("Coupling strength: observed (dots) vs null (violin)", fontsize=10)
-    fig.suptitle(f"Coupled-intention HIAVI, K={K}, leave-one-animal-out", fontsize=11)
+    fig.suptitle(f"Coupled-intention {summ.get('model', 'HIAVI')}, K={K}, leave-one-animal-out", fontsize=11)
     fig.tight_layout()
     fig.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_sync(sync, summ, final, K, path, coupled="temporal"):
+    model = summ.get("model", "HIAVI")
     s = sync[sync["K"] == K]
     sk = summ["K"][str(K)]["sync"]
     fig = plt.figure(figsize=(15, 5.5))
@@ -165,7 +168,7 @@ def plot_sync(sync, summ, final, K, path, coupled="temporal"):
     ax.set_title(f"Synchrony index (n={sk['n_steps']} steps)", fontsize=10)
     ax.legend(fontsize=8, frameon=False, loc="upper left")
     cmap = plt.get_cmap("tab10")
-    for p, (gk, ttl) in enumerate([("gamma_indep", "independent HIAVI"), (f"gamma_{coupled}", f"coupled ({coupled})")]):
+    for p, (gk, ttl) in enumerate([("gamma_indep", f"independent {model}"), (f"gamma_{coupled}", f"coupled {model} ({coupled})")]):
         ax = fig.add_subplot(gs[p + 1])
         if gk not in final:
             continue
@@ -192,11 +195,42 @@ def plot_sync(sync, summ, final, K, path, coupled="temporal"):
     plt.close(fig)
 
 
+def plot_exploit(final, summ, K, path, coupled="temporal"):
+    """Daily mean P(exploit) per animal from the kinematic labels (requires a kinematics block)."""
+    keys = [k for k in ("p_exploit_indep", f"p_exploit_{coupled}") if k in final]
+    if not keys:
+        return False
+    model = summ.get("model", "HIAVI")
+    an_all, orig = final["animal"], final["original"]
+    animals = sorted(np.unique(an_all))
+    fig, axes = plt.subplots(1, len(keys), figsize=(7.5 * len(keys), 0.5 * len(animals) + 2.2), squeeze=False)
+    for ax, k in zip(axes[0], keys):
+        for i, an in enumerate(animals):
+            m = (an_all == an) & orig
+            t = np.floor(final["times"][m].ravel())
+            pe = final[k][m].ravel()
+            ok = np.isfinite(t) & np.isfinite(pe)
+            df = pd.DataFrame(dict(day=t[ok], p=pe[ok])).groupby("day").mean()
+            sc = ax.scatter(_dates(df.index.to_numpy()), np.full(len(df), i), c=df["p"], cmap="RdYlBu_r",
+                            vmin=0, vmax=1, s=14)
+        ax.set_yticks(range(len(animals)))
+        ax.set_yticklabels([_short(a) for a in animals])
+        _date_axis(ax)
+        fit = "independent" if k.endswith("_indep") else f"coupled ({coupled})"
+        lab = final.get(k.replace("p_exploit", "kin_labels"))
+        ax.set_title(f"Daily P(exploit), {fit} {model}" + (f"\nstate labels: {list(lab)}" if lab is not None else ""),
+                     fontsize=10)
+    fig.colorbar(sc, ax=axes[0].tolist(), label="P(exploit)", pad=0.01)
+    fig.savefig(path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
 def results_table(summ, K, path):
     rows = []
     sk = summ["K"][str(K)]
     for v, e in sk["variants"].items():
-        rows.append(dict(K=K, variant=v, pooled_gain_nats=e["pooled_d_total"], gain_per_step=e["pooled_d_per_step"],
+        rows.append(dict(model=summ.get("model", "HIAVI"), kinematics=bool(summ.get("kinematics")), K=K, variant=v, pooled_gain_nats=e["pooled_d_total"], gain_per_step=e["pooled_d_per_step"],
                          gain_context_steps_nats=e["pooled_d_conc"], n_context_steps=e["n_conc_steps"],
                          animals_improved=f"{e['animals_improved']}/{e['n_animals']}",
                          alpha_median_cv=e["alpha_median"], alpha_full_data=e["full_data_alpha"],
@@ -210,9 +244,9 @@ def results_table(summ, K, path):
     return df
 
 
-def run_plots(yml_conf, Ks=None):
+def run_plots(yml_conf, Ks=None, subdir=None):
     m = yml_conf.get("multiagent") or {}
-    d = os.path.join(yml_conf["out_dir"], m.get("ma_subdir", "multiagent"))
+    d = os.path.join(yml_conf["out_dir"], subdir or m.get("ma_subdir", "multiagent"))
     pdir = os.path.join(d, "plots")
     os.makedirs(pdir, exist_ok=True)
     with open(os.path.join(d, "ma_summary.json")) as f:
@@ -228,6 +262,7 @@ def run_plots(yml_conf, Ks=None):
         plot_cv(cv, summ, K, os.path.join(pdir, f"ma_cv_K{K}.png"))
         if final is not None:
             plot_sync(sync, summ, final, K, os.path.join(pdir, f"ma_sync_K{K}.png"))
+            plot_exploit(final, summ, K, os.path.join(pdir, f"ma_exploit_K{K}.png"))
         results_table(summ, K, os.path.join(pdir, f"ma_results_K{K}.csv"))
     plot_concurrency(d, m, os.path.join(pdir, "ma_concurrency.png"), final0)
     print("wrote", pdir)
@@ -237,6 +272,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("-y", "--yaml", required=True)
     ap.add_argument("--K", type=int, nargs="*", default=None)
+    ap.add_argument("--subdir", default=None, help="override multiagent.ma_subdir (e.g. multiagent_swirl)")
     args = ap.parse_args()
     with open(args.yaml) as f:
-        run_plots(yaml.safe_load(f), args.K)
+        run_plots(yaml.safe_load(f), args.K, args.subdir)

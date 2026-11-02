@@ -176,11 +176,15 @@ def load_latents(yml_conf, model, order, splits=("train", "test"), tag=""):
         meta = {k: (z[k] if k in z.files else None) for k in ("seq_key", "seq_seg", "seq_start")}
         check_latent_file(zs, meta["seq_key"], name=os.path.basename(f))
         off = int(z["seq_offset"]) if "seq_offset" in z.files else 1  # latent t <-> fix seq_start + off + t
-        rows.append(dict(zs=np.asarray(zs), split=np.full(len(zs), split), seq_offset=np.full(len(zs), off), **meta))
+        # kinematic runs: per-step P(exploit) and the per-intention exploit / explore labels
+        pe = np.asarray(z["p_exploit"], float) if "p_exploit" in z.files else np.full(np.shape(zs), np.nan)
+        kl = ",".join(map(str, z["kin_labels"])) if "kin_labels" in z.files else ""
+        rows.append(dict(zs=np.asarray(zs), split=np.full(len(zs), split), seq_offset=np.full(len(zs), off),
+                         p_exploit=pe, kin_labels=np.full(len(zs), kl, dtype=object), **meta))
     if not rows:
         raise FileNotFoundError("No LL / latent files found for " + _base(yml_conf) + f" ({model}, {order})")
     return {k: np.concatenate([r[k] for r in rows]) for k in ("zs", "split", "seq_key", "seq_seg", "seq_start",
-                                                                "seq_offset")}
+                                                                "seq_offset", "p_exploit", "kin_labels")}
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +306,9 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
     Returns {animal key: DataFrame}, one row per fix (rows without a decoded latent dropped unless
     drop_unlabelled=False). Columns: uid, segment, seg_pos, split, timestamp, Time (h since the animal's
     first fix), dt_h, month, month_sin, month_cos, season, latitude, longitude, env, latent, step_km
-    (alias distance_traveled), speed_kmh, turn_angle, reward_likelihood, static layers, input_keys.
+    (alias distance_traveled), speed_kmh, turn_angle, reward_likelihood, static layers, input_keys; kinematic
+    runs (LL files with kin_labels / p_exploit) add latent_class (exploit / explore / ambiguous) and p_exploit.
+    step_out_km / speed_out_kmh: the move i -> i+1 that the latent at row i explains (speed_kmh is i-1 -> i).
     """
     df_uid = yml_conf["df_run_uid"]
     with open(os.path.join(yml_conf["df_dir"], df_uid + "_dfs.pkl"), "rb") as f:
@@ -322,8 +328,11 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
         if not include_aug and re.search(r"__aug\d+", key):
             continue
         d = lab.setdefault((key, seg), {})
+        pe_i = lat_["p_exploit"][i] if "p_exploit" in lat_ else np.full(len(lat_["zs"][i]), np.nan)
+        kl_i = str(lat_["kin_labels"][i]).split(",") if "kin_labels" in lat_ and lat_["kin_labels"][i] else None
         for t, z in enumerate(lat_["zs"][i]):
-            d[st + off + t] = (int(z), str(lat_["split"][i]))
+            cls_ = kl_i[int(z)] if kl_i is not None and 0 <= int(z) < len(kl_i) else ""
+            d[st + off + t] = (int(z), str(lat_["split"][i]), float(pe_i[t]), cls_)
 
     inputs_cache = {}
     out = {}
@@ -349,9 +358,11 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
 
         latent = np.full(n, np.nan)
         split = np.full(n, "", dtype=object)
-        for pos, (z, sp) in pos2z.items():
+        p_expl = np.full(n, np.nan)
+        lclass = np.full(n, "", dtype=object)
+        for pos, (z, sp, pe_, cl_) in pos2z.items():
             if pos < n:
-                latent[pos], split[pos] = z, sp
+                latent[pos], split[pos], p_expl[pos], lclass[pos] = z, sp, pe_, cl_
         env = np.where(states == INVALID_STATE, np.nan, states.astype(float))
         prev = np.r_[INVALID_STATE, states[:-1]]
         act = np.r_[actions, -1]  # action taken AT fix i (i -> i+1)
@@ -364,6 +375,12 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
                     month_sin=np.sin(2 * np.pi * (month - 1) / 12), month_cos=np.cos(2 * np.pi * (month - 1) / 12),
                     season=season_of(month), latitude=lat, longitude=lon, env=env, latent=latent, step_km=step,
                     distance_traveled=step, speed_kmh=speed, turn_angle=turn, reward_likelihood=rew)
+        # the move OUT of fix i (i -> i+1) is the step the latent at row i emits / explains (speed_kmh is INTO i)
+        cols["step_out_km"] = np.r_[step[1:], np.nan]
+        cols["speed_out_kmh"] = np.r_[speed[1:], np.nan]
+        if any(lclass):  # kinematic runs: exploit / explore label of the decoded intention + P(exploit)
+            cols["latent_class"] = lclass
+            cols["p_exploit"] = p_expl
         for name, layer in layers.items():
             cols[name] = layer.sample(lat, lon)
         if input_keys:
@@ -377,7 +394,8 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
                                  f"{len(input_keys)} input_keys")
             for j, name in enumerate(input_keys):
                 cols[name] = feats[:, j]
-        check_series_columns({c: v for c, v in cols.items() if c not in ("uid", "split", "timestamp")}, name=f"{dkey} segment {seg}")
+        check_series_columns({c: v for c, v in cols.items() if c not in ("uid", "split", "timestamp", "latent_class",
+                                                                         "p_exploit")}, name=f"{dkey} segment {seg}")
         check_turn_angles(turn, name=f"{dkey} segment {seg}")
         sdf = pd.DataFrame(cols)
         if drop_unlabelled:

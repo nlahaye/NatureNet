@@ -34,6 +34,7 @@ hiavi_iavi_max_iters: 10000
 hiavi_align: "swirl"
 
 multiagent:
+  backend: "hiavi"            # hiavi | swirl (swirl: see swirl_multiagent.yaml)
   animals: ["235283", "244607", "244608", "261743"]   # tracked inside the env window
   window: ["2023-11-01", "2024-10-10"]               # calendar for the circular time-shift null
   Ks: [2, 3]                                         # K = 2 primary; 3 as sensitivity (4 animals)
@@ -51,3 +52,14 @@ multiagent:
   min_context_steps: 30       # warn if < 2 animals reach this many steps with partner context
   ma_subdir: "multiagent"
   # dfs_pkl: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_dfs.pkl"
+
+
+# Per-intention step / turn emissions (see kinematics_example.yaml). Uncomment to fit them in the independent
+# and coupled models; outputs then also carry ma_kinematics.csv, P(exploit) and kinematic parameters.
+# kinematics:
+#   enabled: True
+#   step_feature: "speed_kmh"
+#   step_dist: "gamma"
+#   zero_km: 0.05
+#   min_dt_h: 0.5
+#   max_speed_kmh: 10.0

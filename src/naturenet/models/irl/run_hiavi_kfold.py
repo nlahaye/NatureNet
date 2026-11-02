@@ -22,6 +22,13 @@ Config keys (defaults): hiavi_discount 0.9, hiavi_restarts 10, hiavi_mstep soft 
 hiavi_pseudocount 0, hiavi_max_iters 200, hiavi_tol 1e-6, hiavi_sticky 0.95, hiavi_iavi_tol 1e-8,
 hiavi_iavi_max_iters 10000, hiavi_align swirl, plus the usual n_states, n_hidden, seed, out_dir, run_uid,
 n_folds, fold_seed, folds_to_run, per_fold_trans_prob (True), fill_unobserved, holdout_*, overwrite.
+
+Optional `kinematics` block (see kinematics.py / config/swirl/kinematics_example.yaml): per-intention step
+(gamma / log-normal, zero-inflated) and turning-angle (von Mises) emissions fitted inside the EM. The LL files
+then hold LL = LL_joint - LL_kin_null (comparable with action-only runs; kin null = one-intention kinematic
+fit on the TRAIN animals), LL_joint, LL_kin_null, LL_action (kinematics marginalised), p_exploit / p_explore
+(N, T) and kin_labels (K,); the model file holds the kinematic parameters and <model>_kinematics.csv the
+per-intention table with exploit / explore / ambiguous labels.
 """
 import argparse
 import os
@@ -32,6 +39,7 @@ import sparse
 
 from naturenet.environment.pipeline_checks import check_folds, check_swirl_inputs, check_trans_prob
 from naturenet.models.irl.hiavi_model import HIAVI
+from naturenet.models.irl.kinematics import cached_kinematics, comparable_ll, kin_conf, labels_from_conf, p_exploit, pooled
 from naturenet.models.irl.swirl_data import (
     align_for_swirl,
     as_list,
@@ -79,7 +87,30 @@ def hiavi_settings(yml_conf):
                 tol=float(yml_conf.get("hiavi_tol", 1e-6)),
                 sticky=float(yml_conf.get("hiavi_sticky", 0.95)),
                 iavi_tol=float(yml_conf.get("hiavi_iavi_tol", 1e-8)),
-                iavi_max_iters=int(yml_conf.get("hiavi_iavi_max_iters", 10000)))
+                iavi_max_iters=int(yml_conf.get("hiavi_iavi_max_iters", 10000)),
+                kinematics=kin_conf(yml_conf))
+
+
+def hiavi_kinematics(yml_conf, data):
+    """KinFeatures aligned with hiavi_s (None if the kinematics block is absent / disabled)."""
+    cfg = kin_conf(yml_conf)
+    if cfg is None:
+        return None
+    return cached_kinematics(yml_conf, data, cfg, offset=int(data["hiavi_offset"]), shape=data["hiavi_s"].shape)
+
+
+def kin_ll_fields(model, s, a, kin, kin_null, ll_joint):
+    """LL (comparable with action-only models), LL_joint, LL_kin_null, LL_action, P(exploit) per step."""
+    if kin is None:
+        return {}
+    cmp_, joint, null = comparable_ll(ll_joint * s.size, kin_null, kin, s.size)
+    cfg = model.kin_cfg
+    labels = labels_from_conf(model.kin_model, cfg)
+    g = model.posteriors(s, a, kin)
+    pe, px = p_exploit(g, labels)
+    return dict(LL=cmp_, LL_joint=joint, LL_kin_null=null, LL_action=model.loglik(s, a),
+                p_exploit=pe, p_explore=px, kin_labels=np.asarray(labels["label"]), gamma=g,
+                kin_step=kin.step, kin_turn=kin.turn)
 
 
 def fold_trans_prob(yml_conf, data, train_index):
@@ -126,11 +157,14 @@ def fit_hiavi(yml_conf, data, train_index, test_index, tag, kf_ind=None, verbose
     s, a = data["hiavi_s"], data["hiavi_a"]
     tr = np.asarray(train_index)
     n_restarts = int(yml_conf.get("hiavi_restarts", 10))
+    kin = hiavi_kinematics(yml_conf, data)
+    k_tr = None if kin is None else kin[tr]
+    kin_null = None if kin is None else pooled(k_tr, st["kinematics"])   # train-only null for the comparable LL
 
     best, restart_ll = None, []
     for rs in range(n_restarts):
-        m = HIAVI(K, T, seed=_seed(yml_conf["seed"], kf_ind, rs), **st).fit(s[tr], a[tr])
-        ll = m.loglik(s[tr], a[tr])
+        m = HIAVI(K, T, seed=_seed(yml_conf["seed"], kf_ind, rs), **st).fit(s[tr], a[tr], k_tr)
+        ll = m.loglik(s[tr], a[tr], k_tr)
         restart_ll.append(ll)
         if not np.isfinite(ll):
             continue
@@ -139,7 +173,7 @@ def fit_hiavi(yml_conf, data, train_index, test_index, tag, kf_ind=None, verbose
     if best is None:
         raise RuntimeError(f"all {n_restarts} HIAVI restarts gave non-finite LL ({names['model']})")
     if verbose:
-        print(f"HIAVI K={K} {tag or 'final'}: train LL {best_ll:.4f} "
+        print(f"HIAVI K={K} {tag or 'final'}: train LL{' (joint)' if kin is not None else ''} {best_ll:.4f} "
               f"(restarts {np.min(restart_ll):.4f}..{np.max(restart_ll):.4f})")
 
     # stage checks
@@ -150,18 +184,35 @@ def fit_hiavi(yml_conf, data, train_index, test_index, tag, kf_ind=None, verbose
     if not np.allclose(np.exp(p["logp_tr"]).sum(1), 1, atol=1e-6) or not np.isclose(np.exp(p["logp_init"]).sum(), 1):
         raise ValueError("HIAVI latent initial / transition probabilities do not sum to 1")
 
+    if kin is not None:
+        lab = labels_from_conf(best.kin_model, st["kinematics"])
+        p["kin_labels"] = np.asarray(lab["label"])
+        p["kin_step_feature"] = st["kinematics"]["step_feature"]
+        lab.to_csv(names["model"].replace(".npz", "_kinematics.csv"), index=False)
+        if verbose:
+            print(lab[["state", "label", "step_median", "persistence", "p_stationary"]].to_string(index=False))
     np.savez(names["model"], **p, restart_train_ll=np.asarray(restart_ll), best_restart=int(np.argmax(restart_ll)),
              discount=st["discount"], mstep=st["mstep"], align=data["hiavi_align"],
              seq_offset=data["hiavi_offset"])
-    out = {"train_ll": best_ll, "test_ll": np.nan}
-    np.savez(names["ll"], LL=best_ll, learnt_zs=best.decode(s[tr], a[tr]), seq_offset=data["hiavi_offset"],
+    tr_f = dict(LL=best_ll)
+    tr_f.update(kin_ll_fields(best, s[tr], a[tr], k_tr, kin_null, best_ll))
+    out = {"train_ll": float(tr_f["LL"]), "test_ll": np.nan}
+    if verbose and kin is not None:
+        print(f"HIAVI K={K} {tag or 'final'}: train LL (comparable) {out['train_ll']:.4f} (joint {tr_f['LL_joint']:.4f}, "
+              f"kinematic null {tr_f['LL_kin_null']:.4f}, action-only {float(tr_f['LL_action']):.4f})")
+    np.savez(names["ll"], **tr_f, learnt_zs=best.decode(s[tr], a[tr], k_tr), seq_offset=data["hiavi_offset"],
              **seq_meta_arrays(data, tr))
     if test_index is not None and len(test_index):
         te = np.asarray(test_index)
-        out["test_ll"] = best.loglik(s[te], a[te])
+        k_te = None if kin is None else kin[te]
+        te_f = dict(LL=best.loglik(s[te], a[te], k_te))
+        te_f.update(kin_ll_fields(best, s[te], a[te], k_te, kin_null, te_f["LL"]))
+        out["test_ll"] = float(te_f["LL"])
         if verbose:
-            print(f"HIAVI K={K} {tag or 'final'}: test LL {out['test_ll']:.4f}")
-        np.savez(names["ll_test"], LL=out["test_ll"], learnt_zs=best.decode(s[te], a[te]),
+            print(f"HIAVI K={K} {tag or 'final'}: test LL {out['test_ll']:.4f}" +
+                  (f" (comparable; joint {te_f['LL_joint']:.4f}, kinematic null {te_f['LL_kin_null']:.4f}, "
+                   f"action-only {float(te_f['LL_action']):.4f})" if kin is not None else ""))
+        np.savez(names["ll_test"], **te_f, learnt_zs=best.decode(s[te], a[te], k_te),
                  seq_offset=data["hiavi_offset"], **seq_meta_arrays(data, te))
     return best, out
 

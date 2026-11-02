@@ -26,6 +26,16 @@ from naturenet.models.irl.swirl_data import (
     trans_prob_from_segments,
 )
 from naturenet.environment.pipeline_checks import check_swirl_inputs, check_trans_prob
+from naturenet.models.irl.kinematics import (
+    KinematicEmissions,
+    cached_kinematics,
+    comparable_ll,
+    kin_conf,
+    labels_from_conf,
+    p_exploit,
+    pooled,
+)
+from naturenet.models.irl.swirl_ext import em_train_ext, params_to_save, swirl_eval
 
 from sit_fuse.utils import read_yaml
 
@@ -112,7 +122,15 @@ def load_arhmm(out_dir, run_uid, n_hidden, seed, kf_ind=None):
     suffix = '_seed_arhmm_s.npz' if kf_ind is None else '_seed_arhmm_s_KF_' + str(kf_ind) + '.npz'
     p = np.load(os.path.join(out_dir, run_uid + "_" + str(n_hidden) + "_hidden_" + str(seed) + suffix), allow_pickle=True)
     Rs = as_rs((p['W1_start'], p['b1_start'], p['W2_start'], p['b2_start']))
-    return jnp.asarray(p['logpi0_start']), jnp.asarray(p['log_Ps_start']), Rs
+    out = ArhmmInit((jnp.asarray(p['logpi0_start']), jnp.asarray(p['log_Ps_start']), Rs))
+    if KinematicEmissions.has_params(p):
+        out.kin = KinematicEmissions.from_params(p)   # kinematic ARHMM (run_arhmm_kfold with a kinematics block)
+    return out
+
+
+class ArhmmInit(tuple):
+    """(logpi0, log_Ps, Rs) that unpacks as before, plus .kin (KinematicEmissions or None)."""
+    kin = None
 
 
 def _save(path, **kw):
@@ -162,6 +180,102 @@ def fit_swirl_init(yml_conf, data, T, train_index, arhmm, tag):
           new_reward_normalized=normalize_reward(np.asarray(new_reward)), LL_list=LL_list, temps=temps)
 
 
+def _final_names(yml_conf, tag, name_fmt):
+    out_dir, run_uid, seed, K = yml_conf["out_dir"], yml_conf["run_uid"], yml_conf["seed"], int(yml_conf["n_hidden"])
+    if name_fmt == "kfold":
+        n = lambda s: os.path.join(out_dir, run_uid + "_" + str(K) + '_' + str(seed) + s + tag + ".npz")  # noqa: E731
+        return n, ("_naturenet_iter2_S2_init", "_naturenet_iter2_S2", "_naturenet_iter2_S1_temp_init", "_naturenet_iter2_S1_temp_2"), \
+            ("_naturenet_S1_iter2_LL1", "_naturenet_S1_iter2_LL1_test", "_naturenet_S2_iter2_LL2", "_naturenet_S2_iter2_LL2_test")
+    n = lambda s: os.path.join(out_dir, run_uid + "_" + str(K) + '_' + str(seed) + s + ".npz")  # noqa: E731
+    return n, ("_S2_naturenet_iter2_init", "_S2_naturenet_iter2", "_S1_naturenet_iter2_temp_init", "_S1_naturenet_iter2_temp_2"), \
+        ("_S1_naturenet_iter2_LL1", "_S1_naturenet_iter2_test_LL1", "_S2_naturenet_iter2_LL2", "_S2_naturenet_iter2_test_LL2")
+
+
+def swirl_kinematics(yml_conf, data, kcfg=None):
+    """KinFeatures aligned with SWIRL's x = states[:, 1:-1] (step t = fix start + 1 + t -> next fix)."""
+    kcfg = kcfg or kin_conf(yml_conf)
+    return None if kcfg is None else cached_kinematics(yml_conf, data, kcfg, offset=1,
+                                                       shape=tuple(np.asarray(data["xohs"]).shape[:2]))
+
+
+def _init_kin_model(yml_conf, kcfg, K, kin_tr, arhmm_kin, seed):
+    if arhmm_kin is not None:
+        print("Kinematic emissions warm-started from the kinematic ARHMM")
+        return arhmm_kin
+    return KinematicEmissions.from_conf(K, kcfg).init_quantiles(kin_tr, rng=np.random.default_rng(seed))
+
+
+def _kin_ll_file(path, ev_joint, ev_action, kin_null, kin, labels, data, idx, extra=None):
+    cmp_, joint, null = comparable_ll(ev_joint["LL_total"], kin_null, kin, ev_joint["n_steps"])
+    pe, px = p_exploit(ev_joint["gamma"], labels)
+    np.savez(path, LL=cmp_, LL_joint=joint, LL_kin_null=null, LL_action=ev_action["LL"],
+             jax_path_vmap=ev_joint["path"], gamma=ev_joint["gamma"], p_exploit=pe, p_explore=px,
+             kin_labels=np.asarray(labels["label"]), kin_step=kin.step, kin_turn=kin.turn,
+             **(extra or {}), **seq_meta_arrays(data, idx))
+    return cmp_, joint, null
+
+
+def _fit_swirl_final_kin(yml_conf, data, T, train_index, test_index, arhmm, tag, name_fmt, kcfg, R_start2, temps,
+                         tol, epochs, epochs_2):
+    """
+    fit_swirl_final with per-intention kinematic emissions (swirl_ext.em_train_ext), same stages / file names.
+    LL files: LL = LL_joint - LL_kin_null (comparable with action-only runs; kin null = one-intention kinematic
+    fit on the train animals), LL_joint, LL_kin_null, LL_action, gamma, p_exploit / p_explore, kin_labels.
+    """
+    n, (f_s2i, f_s2, f_s1i, f_s1), (f_ll1, f_ll1t, f_ll2, f_ll2t) = _final_names(yml_conf, tag, name_fmt)
+    K, seed = int(yml_conf["n_hidden"]), int(yml_conf["seed"])
+    S = data["n_states"]
+    logpi0, log_Ps, Rs = arhmm[:3]
+    arhmm_kin = getattr(arhmm, "kin", None)
+    if arhmm_kin is not None and arhmm_kin.K != K:
+        raise ValueError(f"ARHMM kinematics have {arhmm_kin.K} intentions, n_hidden = {K}")
+    Td = jnp.asarray(T.todense() if hasattr(T, "todense") else T)
+    xo, ao = data["xohs"], data["aohs"]
+    tr = np.asarray(train_index)
+    te = None if test_index is None or len(test_index) == 0 else np.asarray(test_index)
+    kin = swirl_kinematics(yml_conf, data, kcfg)
+    k_tr = kin[tr]
+    print("Kinematics coverage (train):", k_tr.coverage())
+    kin_null = pooled(k_tr, kcfg)
+    km0 = _init_kin_model(yml_conf, kcfg, K, k_tr, arhmm_kin, seed)
+
+    def _stages(xe_all, Tm, R0, f_init, f_fin, f_ll, f_llt, layout=None):
+        xe_tr = None if xe_all is None else xe_all[tr]
+        r = em_train_ext(logpi0, log_Ps, Rs, R0, Tm, xo[tr], ao[tr], xohs_emit=xe_tr, kin=k_tr, kin_model=km0,
+                         iters=epochs, tol=tol)
+        _save(f_init, **params_to_save(r), temps=temps)
+        r = em_train_ext(jnp.array(r["logpi0"]), jnp.array(r["log_Ps"]), r["Rs"], jnp.array(r["rewards"]), Tm,
+                         xo[tr], ao[tr], xohs_emit=xe_tr, temps=temps, kin=k_tr, kin_model=r["kin_model"],
+                         iters=epochs_2, tol=tol)
+        labels = labels_from_conf(r["kin_model"], kcfg)
+        _save(f_fin, **params_to_save(r), new_reward_normalized=normalize_reward(np.asarray(r["rewards"])),
+              kin_labels=np.asarray(labels["label"]), kin_step_feature=kcfg["step_feature"], **(layout or {}))
+        labels.to_csv(f_fin.replace(".npz", "_kinematics.csv"), index=False)
+        print(labels[["state", "label", "step_median", "persistence", "p_stationary"]].to_string(index=False))
+        for idx, path, name in ((tr, f_ll, "train"), (te, f_llt, "test")):
+            if idx is None:
+                continue
+            xe = None if xe_all is None else xe_all[idx]
+            evj = swirl_eval(r, Tm, xo[idx], ao[idx], xohs_emit=xe, kin=kin[idx])
+            eva = swirl_eval(r, Tm, xo[idx], ao[idx], xohs_emit=xe, kin=None, use_kin=False, paths=False)
+            c, j, nl = _kin_ll_file(path, evj, eva, kin_null, kin[idx], labels, data, idx)
+            print(f"{name} LL (comparable) {c:.4f}  joint {j:.4f}  kinematic null {nl:.4f}  action-only {eva['LL']:.4f}")
+        return r
+
+    if yml_conf.get("run_s2", True):
+        new_T, xohs2, M = s2_inputs(yml_conf, data, T)
+        psm = data["_cache"][("S2psm", id(T))]
+        psm_arr = np.empty(S, dtype=object)
+        for s_ in range(S):
+            psm_arr[s_] = np.asarray(psm.get(s_, []), dtype=np.int64)
+        R2 = jnp.repeat(R_start2[:, :, :, None], M, axis=3).reshape(K, 1, S * M)
+        print("Training S-2 with kinematic emissions (M =", M, "predecessor slots)")
+        _stages(xohs2, new_T, R2, n(f_s2i), n(f_s2), n(f_ll2), n(f_ll2t),
+                layout=dict(n_slots=M, prev_state_map=psm_arr))
+    print("Training S-1 with kinematic emissions")
+    _stages(None, Td, R_start2, n(f_s1i), n(f_s1), n(f_ll1), n(f_ll1t))
+
+
 def fit_swirl_final(yml_conf, data, T, train_index, test_index, arhmm, tag, name_fmt="kfold"):
     """
     S-2 (optional) and S-1 with temps_final, then train / test LLs with the RAW rewards.
@@ -188,14 +302,11 @@ def fit_swirl_final(yml_conf, data, T, train_index, test_index, arhmm, tag, name
     has_test = test_index is not None and len(test_index) > 0
     xo, ao = data["xohs"], data["aohs"]
 
-    if name_fmt == "kfold":
-        n = lambda s: os.path.join(out_dir, run_uid + "_" + str(K) + '_' + str(seed) + s + tag + ".npz")  # noqa: E731
-        f_s2i, f_s2, f_s1i, f_s1 = "_naturenet_iter2_S2_init", "_naturenet_iter2_S2", "_naturenet_iter2_S1_temp_init", "_naturenet_iter2_S1_temp_2"
-        f_ll1, f_ll1t, f_ll2, f_ll2t = "_naturenet_S1_iter2_LL1", "_naturenet_S1_iter2_LL1_test", "_naturenet_S2_iter2_LL2", "_naturenet_S2_iter2_LL2_test"
-    else:
-        n = lambda s: os.path.join(out_dir, run_uid + "_" + str(K) + '_' + str(seed) + s + ".npz")  # noqa: E731
-        f_s2i, f_s2, f_s1i, f_s1 = "_S2_naturenet_iter2_init", "_S2_naturenet_iter2", "_S1_naturenet_iter2_temp_init", "_S1_naturenet_iter2_temp_2"
-        f_ll1, f_ll1t, f_ll2, f_ll2t = "_S1_naturenet_iter2_LL1", "_S1_naturenet_iter2_test_LL1", "_S2_naturenet_iter2_LL2", "_S2_naturenet_iter2_test_LL2"
+    n, (f_s2i, f_s2, f_s1i, f_s1), (f_ll1, f_ll1t, f_ll2, f_ll2t) = _final_names(yml_conf, tag, name_fmt)
+    kcfg = kin_conf(yml_conf)
+    if kcfg is not None:
+        return _fit_swirl_final_kin(yml_conf, data, T, train_index, test_index, arhmm, tag, name_fmt, kcfg,
+                                    R_start2, temps, tol, epochs, epochs_2)
 
     if yml_conf.get("run_s2", True):
         new_T, xohs2, M = s2_inputs(yml_conf, data, T)

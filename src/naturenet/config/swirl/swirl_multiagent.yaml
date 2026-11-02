@@ -1,0 +1,83 @@
+# Coupled-intention (multi-agent) SWIRL with per-intention step / turn emissions, same window and CV as
+# hiavi_multiagent.yaml (outputs in <out_dir>/multiagent_swirl so both backends can share out_dir).
+#   python -m naturenet.models.irl.run_swirl_multiagent   -y swirl_multiagent.yaml [--K 2] [--skip_null]
+#   python -m naturenet.models.irl.plot_hiavi_multiagent  -y swirl_multiagent.yaml
+#   python -m naturenet.models.irl.plot_multiagent_compare --dirs <out_dir>/multiagent <out_dir>/multiagent_swirl --out <out_dir>/ma_compare
+#   python -m naturenet.models.irl.plot_kinematics --params <out_dir>/multiagent_swirl/ma_final_K2.npz --tag temporal --out ...
+# Coupled transition: P_i(z_t | z_{t-1}, x) = (1 - alpha w_t) P_MLP(z_t | z_{t-1}, x) + alpha w_t c_t,
+# c_t = kernel-weighted partner posteriors (mean field), alpha fitted in the transition M-step.
+# Cost: ~(n_null + 1) x n_animals x n_variants coupled SWIRL fits; start with --skip_null.
+
+seed: 12345
+n_hidden: 2
+n_states: 75
+out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/hiavi/"
+run_uid: "SWIRL_MA_KIN"
+
+# All keys (originals + __aug copies) of the animals in the window; positions "auto" pairs each actions file
+# with its _states_abstract_env.pkl. multiagent.animals restricts to those base ids.
+actions: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_*_actions.pkl"
+positions: "auto"
+df_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
+df_run_uid: "hammerhead_v1"           # step times / positions from <df_dir>/<df_run_uid>_dfs.pkl
+
+per_fold_trans_prob: True             # T from the training animals of each fold
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 20
+segment_policy: "chunk"
+
+hiavi_discount: 0.9
+hiavi_restarts: 10
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"
+
+multiagent:
+  backend: "swirl"
+  swirl:
+    init: "arhmm"             # arhmm (kinematic ARHMM warm start, as in run_swirl_kfold) | sticky
+    arhmm_epochs: 50
+    restarts: 2               # independent-model restarts per fold (best train LL kept)
+    epochs: 30                # stage 1 (S-1 EM)
+    epochs_2: 20              # stage 2 (EM with temps_final)
+    coupled_iters: 10         # EM iterations per mean-field outer iteration (n_outer)
+  animals: ["235283", "244607", "244608", "261743"]   # tracked inside the env window
+  window: ["2023-11-01", "2024-10-10"]               # calendar for the circular time-shift null
+  Ks: [2, 3]                                         # K = 2 primary; 3 as sensitivity (4 animals)
+  variants:
+    temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
+    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 50.0, max_km: 150.0}  # co-timing x closeness
+  n_outer: 5                  # mean-field outer iterations (context <-> posteriors)
+  alpha0: 0.1                 # initial coupling
+  n_null: 50                  # time-shift replicates of the full CV (p resolution 1/51)
+  null_variants: ["temporal", "proximity"]
+  null_min_shift_days: 30     # partners shifted by U(30, L - 30) days, independently per animal
+  n_null_sync: 500            # replicates for the synchrony index (no refit; cheap)
+  sync_variant: "temporal"
+  eval_include_aug: False     # score held-out ORIGINAL tracks only (copies are not independent data)
+  min_context_steps: 30       # warn if < 2 animals reach this many steps with partner context
+  ma_subdir: "multiagent_swirl"
+  # dfs_pkl: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_dfs.pkl"
+
+
+# SWIRL keys (as in init_test_swirl.yaml)
+emission_dim: 1
+latent_state_dim: 1
+temps_final: [1.0, 1.0]       # per-intention policy temperatures in stage 2 (the pipeline default
+                              # [0.01, 1, ...] collapsed K=2 to one intention without kinematics in the synthetic test)
+em_tol: null
+
+kinematics:
+  enabled: True
+  step_feature: "speed_kmh"
+  step_dist: "gamma"
+  zero_km: 0.05
+  min_dt_h: 0.5
+  max_speed_kmh: 10.0
+  label_margin: 0.5
