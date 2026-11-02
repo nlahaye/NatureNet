@@ -81,7 +81,8 @@ def read_conf(path):
 def expand_inputs(yml_conf):
     """
     actions may be a glob ("<df_dir>/hammerhead_v1_*_actions.pkl"); positions "auto" pairs each actions file
-    with its <...>_states_abstract_env.pkl. Optional multiagent.animals keeps only those base ids.
+    with its <...>_states_abstract_env.pkl. Optional multiagent.animals keeps only those base ids;
+    multiagent.max_aug keeps only augmented copies __aug1..__aug<max_aug> (0 = original tracks only; null = all).
     """
     acts = yml_conf["actions"]
     if isinstance(acts, str) and any(ch in acts for ch in "*?["):
@@ -98,6 +99,12 @@ def expand_inputs(yml_conf):
         acts = [f for f in acts if any(_animal(f) == k or _animal(f).startswith(k + "_") for k in keep)]
         if not acts:
             raise ValueError(f"multiagent.animals {sorted(keep)} matched no actions files")
+    max_aug = (yml_conf.get("multiagent") or {}).get("max_aug")
+    if max_aug is not None:
+        def _aug(f):
+            m = re.search(r"__aug(\d+)_actions\.pkl$", os.path.basename(f))
+            return int(m.group(1)) if m else 0
+        acts = [f for f in acts if _aug(f) <= int(max_aug)]
     pos = yml_conf.get("positions", "auto")
     if pos == "auto" or pos is None:
         pos = [f.replace("_actions.pkl", "_states_abstract_env.pkl") for f in acts]
@@ -294,7 +301,16 @@ def run_cv(bk, conf, pc, K, variants, times=None, null_id=-1, base_cache=None, v
     """One leave-one-animal-out pass (observed calendar if times is None, else shifted). Returns rows."""
     groups = np.asarray(bk.data["groups"]).astype(str)
     eval_mask = np.ones(len(groups), bool) if conf["eval_include_aug"] else original_mask(pc)
-    animals = conf.get("heldout_animals") or sorted(np.unique(groups))
+    animals = sorted(np.unique(groups))
+    if conf.get("heldout_animals"):  # short ids ("10826") or full group names ("SWIRL_WHALE_v1_10826")
+        want = [str(k) for k in conf["heldout_animals"]]
+        sel = [g for g in animals if any(g == k or g.endswith("_" + k) or ("_" + k + "_") in g for k in want)]
+        miss = [k for k in want if not any(g == k or g.endswith("_" + k) or ("_" + k + "_") in g for g in animals)]
+        if miss:
+            print(f"WARNING: heldout_animals not found in the data: {miss}")
+        if not sel:
+            raise ValueError(f"heldout_animals {want} matched none of {animals}")
+        animals = sel
     rows = []
     for kf, an in enumerate(animals):
         te = np.where(groups == str(an))[0]
