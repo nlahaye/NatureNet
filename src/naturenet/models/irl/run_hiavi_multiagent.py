@@ -6,8 +6,10 @@ Minimum-viable multi-agent IRL test: do concurrently tracked animals share inten
     python -m naturenet.models.irl.run_hiavi_multiagent -y <yaml> --concurrency_only            # data check only
     python -m naturenet.models.irl.plot_hiavi_multiagent -y <yaml> [--subdir multiagent_swirl]
 
-The CV / null / synchrony logic is model-agnostic: a backend (HiaviBackend here, swirl_multiagent.SwirlBackend)
-fits the independent and the partner-coupled model and scores them (multiagent.backend: hiavi | swirl).
+The CV / null / synchrony logic is model-agnostic: a backend (HiaviBackend here, swirl_multiagent.SwirlBackend,
+scales_multiagent.ScalesSwirlBackend / ScalesHiqlBackend for the decision-scale toggles) fits the independent
+and the partner-coupled model and scores them (multiagent.backend: hiavi | swirl | swirl_scales | hiql_scales;
+run_scales_multiagent loops the scale variants).
 With a `kinematics` block both models also emit per-intention step / turn densities (kinematics.py); the
 coupled-vs-independent comparison then isolates the coupling with kinematics held in both models, and
 ma_final_K<K>.npz / ma_kinematics.csv carry the kinematic parameters, exploit / explore labels and P(exploit).
@@ -282,13 +284,15 @@ def heldout_scores(bk, T_env, model0, models, tr, te, kerns_te, eval_mask):
     out = {}
     l0 = bk.step_ll_indep(model0, T_env, te)
     for vname, (m, (w_tr, c_tr)) in models.items():
-        g_tr = bk.posteriors(m, T_env, tr, w_tr, c_tr)
+        post = getattr(bk, "context_posteriors", bk.posteriors)            # scales backends: ctx_source
+        g_tr = post(m, T_env, tr, w_tr, c_tr)
         w_te, c_te = PartnerContext.context(kerns_te[vname], g_tr)
         l1 = bk.step_ll(m, T_env, te, w_te, c_te)
         msk = eval_mask[te][:, None] & np.ones_like(w_te, dtype=bool)
         conc = msk & (w_te > 0)
         d = l1 - l0
-        out[vname] = dict(alpha=bk.alpha(m), test_ll_indep=float(l0[msk].mean()),
+        ex = bk.extra(m) if hasattr(bk, "extra") else {}
+        out[vname] = dict(alpha=bk.alpha(m), **ex, test_ll_indep=float(l0[msk].mean()),
                           test_ll_coupled=float(l1[msk].mean()),
                           d_total=float(d[msk].sum()), d_per_step=float(d[msk].mean()),
                           d_conc=float(d[conc].sum()) if conc.any() else 0.0,
@@ -376,7 +380,10 @@ def make_backend(yml_conf, conf):
     if b == "swirl":
         from naturenet.models.irl.swirl_multiagent import SwirlBackend
         return SwirlBackend(yml_conf, conf)
-    raise ValueError(f"multiagent.backend must be hiavi | swirl, got {b}")
+    if b in ("swirl_scales", "hiql_scales"):          # decision-scale toggles + coupling (scales_multiagent)
+        from naturenet.models.irl.scales_multiagent import ScalesHiqlBackend, ScalesSwirlBackend
+        return (ScalesSwirlBackend if b == "swirl_scales" else ScalesHiqlBackend)(yml_conf, conf)
+    raise ValueError(f"multiagent.backend must be hiavi | swirl | swirl_scales | hiql_scales, got {b}")
 
 
 def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=None, concurrency_only=False):
@@ -451,6 +458,8 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
             kern = pc.build(all_idx, all_idx, **v)
             m, (w, c) = bk.fit_coupled(m0, T_all, all_idx, kern)
             g = bk.posteriors(m, T_all, all_idx, w, c)
+            if hasattr(bk, "extra"):
+                final.update({f"{k}_{vname}": v for k, v in bk.extra(m).items()})
             final.update({f"gamma_{vname}": g, f"w_{vname}": w, f"alpha_{vname}": bk.alpha(m),
                           f"train_ll_{vname}": bk.loglik(m, T_all, all_idx, w, c), **bk.arrays(m, vname)})
             kf, lab = _kin_final(bk, m, g, vname)
@@ -474,6 +483,7 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
             ent = dict(pooled_d_total=pooled_, pooled_d_per_step=pooled_ / max(n_steps, 1),
                        pooled_d_conc=float(ob["d_conc"].sum()), n_conc_steps=int(ob["n_conc_steps"].sum()),
                        alpha_median=float(ob["alpha"].median()),
+                       **({"beta_median": float(ob["beta"].median())} if "beta" in ob else {}),
                        animals_improved=int((ob["d_total"] > 0).sum()), n_animals=int(len(ob)),
                        full_data_alpha=float(final[f"alpha_{vname}"]),
                        # alpha * mean w on steps with context: the mixing weight actually applied (alpha can sit
@@ -486,6 +496,12 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
                            p_gain=float((1 + np.sum(null_pooled >= pooled_)) / (1 + len(null_pooled))),
                            p_alpha=float((1 + np.sum(null_alpha >= ent["alpha_median"])) / (1 + len(null_alpha))),
                            n_null=int(len(null_pooled)))
+                if "beta" in nu and "beta_median" in ent:     # partner hazard term (decision-scale backends)
+                    null_beta = nu.groupby("null_id")["beta"].median().to_numpy()
+                    ent.update(null_beta_mean=float(null_beta.mean()),
+                               p_beta=float((1 + np.sum(null_beta >= ent["beta_median"])) / (1 + len(null_beta))))
+            if "beta" in ob:
+                ent["full_data_beta"] = float(final.get(f"beta_{vname}", np.nan))
             sk["variants"][vname] = ent
         if lab0 is not None:
             sk["kinematic_labels_indep"] = list(map(str, lab0["label"]))
@@ -509,7 +525,8 @@ def cli(default_backend="hiavi"):
     ap.add_argument("--skip_null", action="store_true")
     ap.add_argument("--concurrency_only", action="store_true",
                     help="only write ma_concurrency.csv / ma_pairs.npz (data-sufficiency check, e.g. new species)")
-    ap.add_argument("--backend", default=None, help="hiavi | swirl (default: multiagent.backend or " +
+    ap.add_argument("--backend", default=None, help="hiavi | swirl | swirl_scales | hiql_scales (default: "
+                    "multiagent.backend or " +
                     default_backend + ")")
     args = ap.parse_args()
     conf = read_conf(args.yaml)

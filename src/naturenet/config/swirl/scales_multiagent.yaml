@@ -1,0 +1,113 @@
+# Multi-agent decision-scale experiments (order N, switching history, durations, per-animal regimes) with the
+# SWIRL emission (swirl_scales) and HIQL (order-N HIAVI), coupled as hiavi_multiagent / swirl_ext; partner
+# context from the partners' own-evidence posteriors (ctx_source: independent; mean_field is optional).
+#   python -m naturenet.models.irl.run_scales_multiagent  -y scales_multiagent.yaml --skip_null           # first pass
+#   python -m naturenet.models.irl.run_scales_multiagent  -y scales_multiagent.yaml --backend hiql_scales  # with null
+#   python -m naturenet.models.irl.plot_scales_multiagent -y scales_multiagent.yaml
+#   python -m naturenet.models.irl.synth_scales_multiagent --out <dir>                                 # recovery
+# Coupling:  destination Q~ = (1 - alpha w_t) Q + alpha w_t c_t;  timing logit h += beta w_t (1 - c_t[z]).
+# Regimes are per animal (joint / group regimes are a next step). With durations and K = 2 the destination is
+# forced, so coupling acts only through beta.
+# Cost: (n_null + 1) x n_animals x n_variants coupled fits per (backend, scale variant); HIQL is ~10-50x cheaper
+# than SWIRL-scales. Run --skip_null first, then the null on the variants worth testing.
+# Outputs: <out_dir>/multiagent_<backend>_<variant>/ (as hiavi_multiagent) and <out_dir>/ma_scales_summary.csv.
+#
+# Whales (whale_multiagent.yaml data block): seq_len 40-60 with segment_policy chunk gives room for
+# durations (max_duration <= seq_len / 3) and regimes; use the proximity variant with lambda_km ~ 100 and
+# h_days ~ 0.5 (Argos fixes are dense), and keep order <= 2 unless --check-style coverage (steps per deep
+# context) is >= ~20.
+
+seed: 12345
+n_hidden: 2
+n_states: 75
+out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/hiavi/"
+run_uid: "SCALES_MA"
+
+# All keys (originals + __aug copies) of the animals in the window; positions "auto" pairs each actions file
+# with its _states_abstract_env.pkl. multiagent.animals restricts to those base ids.
+actions: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_*_actions.pkl"
+positions: "auto"
+df_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
+df_run_uid: "hammerhead_v1"           # step times / positions from <df_dir>/<df_run_uid>_dfs.pkl
+
+per_fold_trans_prob: True             # T from the training animals of each fold
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 20
+segment_policy: "chunk"
+
+hiavi_discount: 0.9
+hiavi_restarts: 10
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"
+
+multiagent:
+  scales_backends: ["hiql_scales", "swirl_scales"]
+  swirl:                      # SWIRL-scales init / schedule (as swirl_multiagent)
+    init: "arhmm"
+    arhmm_epochs: 50
+    restarts: 2
+    epochs: 30
+    epochs_2: 20
+    coupled_iters: 10
+    ctx_source: independent   # partner context from own-evidence posteriors (mean_field: coupled, echo-prone)
+  scales_defaults:            # shared by every variant; "on" toggles take these blocks
+    reward_l2: 1.0
+    reward_tol: null          # 1e-4 at order 1, 1e-8 above
+    context_min_count: 3      # deep contexts seen >= 3 times in the training animals
+    switch_history: {kind: ["lags"], lags: 2}
+    durations: {max_duration: 6, hazard: "logistic", l2: 0.01}
+    hierarchy: {n_regimes: 2, sticky: 0.95, init_noise: 0.5}
+    hiql: {backoff: 5.0}      # HIQL: Dirichlet back-off of deep contexts to their parent (inf = order 1)
+    coupling: {fit_alpha: True, fit_beta: True, beta0: 0.0, tol: 1.0e-8}
+    coupled_iters: 10
+    ctx_source: independent   # partner context from own-evidence posteriors (mean_field: coupled, echo-prone)
+  scales_variants:
+    # step 1: order N + switching history, destination coupling (alpha)
+    - {name: S1_N1, step: 1, order: 1}
+    - {name: S1_N2_hist, step: 1, order: 2, switch_history: on}
+    - {name: S1_N3_hist, step: 1, order: 3, switch_history: on}
+    # step 2: per-animal regimes, shared alpha
+    - {name: S2_N1_R2, step: 2, order: 1, hierarchy: on}
+    - {name: S2_N2_R2, step: 2, order: 2, switch_history: on, hierarchy: on}
+    # step 3: durations with partner-driven hazards (beta; alpha too when K > 2)
+    - {name: S3_N1_dur, step: 3, order: 1, durations: on}
+    - {name: S3_N2_dur_R2, step: 3, order: 2, durations: on, hierarchy: on}
+  animals: ["235283", "244607", "244608", "261743"]
+  window: ["2023-11-01", "2024-10-10"]
+  Ks: [2, 3]
+  variants:
+    temporal:  {h_days: 1.0, max_dt_days: 3.0}
+    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 50.0, max_km: 150.0}
+  n_outer: 5
+  alpha0: 0.1
+  n_null: 50
+  null_variants: ["temporal"]
+  null_min_shift_days: 30
+  n_null_sync: 500
+  sync_variant: "temporal"
+  eval_include_aug: False
+  min_context_steps: 30
+
+
+# SWIRL keys (as in init_test_swirl.yaml)
+emission_dim: 1
+latent_state_dim: 1
+temps_final: [1.0, 1.0]       # per-intention policy temperatures in stage 2 (the pipeline default
+                              # [0.01, 1, ...] collapsed K=2 to one intention without kinematics in the synthetic test)
+em_tol: null
+
+kinematics:
+  enabled: True
+  step_feature: "speed_kmh"
+  step_dist: "gamma"
+  zero_km: 0.05
+  min_dt_h: 0.5
+  max_speed_kmh: 10.0
+  label_margin: 0.5

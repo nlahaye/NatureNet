@@ -10,6 +10,7 @@ Input format (written by movement_preprocess_pipeline.reprocess_env_stats_abstra
 """
 
 import copy
+import glob
 import json
 import os
 import pickle
@@ -91,10 +92,31 @@ def _chunk(states, actions, L):
     return out
 
 
+def input_files(yml_conf):
+    """
+    (actions files, positions files). actions may be a list or a glob ("<dir>/hammerhead_v1_*_actions.pkl");
+    positions may be a list or "auto" (each <...>_actions.pkl paired with <...>_states_abstract_env.pkl).
+    """
+    acts = yml_conf["actions"]
+    if isinstance(acts, str) and any(ch in acts for ch in "*?["):
+        acts = sorted(glob.glob(acts))
+        if not acts:
+            raise FileNotFoundError(f"no files match {yml_conf['actions']}")
+    act_files = as_list(acts)
+    pos = yml_conf.get("positions", "auto")
+    if isinstance(pos, str) and pos == "auto":
+        bad = [f for f in act_files if not f.endswith("_actions.pkl")]
+        if bad:
+            raise ValueError(f"positions: auto needs <...>_actions.pkl files, got {bad[:3]}")
+        pos_files = [f[:-len("_actions.pkl")] + "_states_abstract_env.pkl" for f in act_files]
+    else:
+        pos_files = as_list(pos)
+    return act_files, pos_files
+
+
 def load_segments(yml_conf):
     """All segments as a list of dicts {group, states, actions} (no length filtering)."""
-    act_files = as_list(yml_conf["actions"])
-    pos_files = as_list(yml_conf["positions"])
+    act_files, pos_files = input_files(yml_conf)
     grp_override = as_list(yml_conf.get("groups"))
     if len(act_files) != len(pos_files):
         raise ValueError(f"{len(act_files)} actions files vs {len(pos_files)} positions files")

@@ -35,8 +35,28 @@ Latent chain (r, z, tau), step t-1 -> t:
     switch (prob h(r_{t-1}, z, tau, t-1)):       z_t ~ Q_t(. | z_{t-1}, r_t, x_{t-1}, phi_{t-1}),  tau_t = 1
 Durations off: D = 1, h = 1 and Q keeps its diagonal, i.e. the SWIRL recurrent transition.
 
-Emissions: log pi_z(a_t | h_t) (+ per-intention kinematics, kinematics.KinematicEmissions). Multi-agent
-partner coupling (swirl_ext ctx) is NOT combined with these toggles.
+Emissions: log pi_z(a_t | h_t) (+ per-intention kinematics, kinematics.KinematicEmissions).
+    emission "swirl" (default): pi_z = soft-optimal policy of the reward theta on the context tree (above).
+    emission "hiql": HIQL / HIAVI policies, pi_z(a | h) = posterior-weighted (h, a) counts (closed-form M-step,
+        hiavi_model.HIAVI at order 1 with every toggle off); deeper contexts back off to their parent context,
+        pi(.|h) = (n(h, .) + kappa pi(.|parent(h))) / (n(h) + kappa), kappa = hiql.backoff. The policy is tabular
+        in the full context, so at order N the ACTION depends on all N states (order 2 already has one step of
+        action memory, unlike the state-reward SWIRL). Rewards / Q are recovered after fitting by IAVI on the
+        context MDP (iavi_tree), as HIAVI does once per intention.
+    transition_input "state" (SWIRL MLP on onehot(x_{t-1}) [+ phi]) | "none" (HIAVI Lambda; with switching
+        history the features enter linearly, logits += phi_{t-1} @ W1f). Default: "state" for swirl, "none" for
+        hiql. With no inputs and no coupling the Q M-step is closed form (normalised expected counts).
+
+5. Multi-agent coupling (mean-field, as hiavi_multiagent / swirl_ext). Partner context (w_t, c_t) of the
+   destination step (PartnerContext.context of the other animals' posteriors), d["w"] (N, T), d["c"] (N, T, K):
+   destination   Q~_t(k | j) = (1 - alpha w_t) Q_t(k | j) + alpha w_t c~_t[k]   (c~ = c; with durations c~ drops
+                 the current intention and renormalises, so with K = 2 and durations on alpha has no effect
+                 and is fixed at 0)
+   timing        logit h_{r,z}(tau, t) += beta * w_t * (1 - c_t[z])   (durations on; beta > 0: a bout ends
+                 sooner when the partners are in another intention, beta < 0: partners hold the bout)
+   alpha = ALPHA_MAX sigmoid(cpl_alpha) is fitted jointly with Q (L-BFGS), beta jointly with the hazard. alpha =
+   beta = 0, or w = 0 (no partner tracked), is exactly the uncoupled model. Regimes stay per animal (each sequence
+   has its own regime chain; alpha / beta are shared across regimes).
 
     tree = ContextTree.build(states, S, T, order=2)
     cfg = ScalesConfig.from_dict(dict(order=2, durations=dict(enabled=True, max_duration=20)))
@@ -61,6 +81,8 @@ from naturenet.models.irl.swirl_training_top_level import _converged
 jax.config.update("jax_enable_x64", True)
 
 NEG = -1e30          # masked logits (finite, so 0 * NEG = 0 in the expected log-likelihoods)
+ALPHA_MAX = 1.0 - 1e-6   # as swirl_ext
+TINY = 1e-300
 DISCOUNT = 0.95
 VI_ITERS = 100
 
@@ -101,8 +123,34 @@ class HierarchyConfig:
 
 
 @dataclass
+class CouplingConfig:
+    enabled: bool = False
+    alpha0: float = 0.1           # initial destination coupling (ignored, and fixed at 0, with durations and K = 2)
+    fit_alpha: bool = True
+    hazard: object = None         # partner term in the hazard (None: = durations on)
+    beta0: float = 0.0
+    fit_beta: bool = True
+    # scipy tol of the coupled Q / hazard M-steps. The losses are per step and the alpha / beta gradients are
+    # O(steps with partners x switch rate), so swirl_ext's 1e-4 barely moves them (with durations not at all).
+    # Default 1e-8; 1e-4 reproduces swirl_ext.em_train_ext exactly (test E11).
+    tol: float = 1e-8
+
+
+@dataclass
+class HiqlConfig:
+    pseudocount: float = 0.0      # as hiavi_pseudocount (depth-1 counts)
+    eps: float = 1e-6             # hiql smoothing of unvisited (s, a)
+    backoff: float = 5.0          # Dirichlet strength towards the parent-context policy (order > 1; inf = order 1)
+    discount: float = 0.9         # IAVI (post-fit rewards only)
+    iavi_tol: float = 1e-8
+    iavi_max_iters: int = 10000
+
+
+@dataclass
 class ScalesConfig:
     order: int = 1
+    emission: str = "swirl"          # swirl | hiql
+    transition_input: str = None     # state | none (None: state for swirl, none for hiql)
     reward_param: str = "additive"   # additive | free
     reward_l2: float = 1.0           # prior precision / 2 per depth level (per-step units)
     context_min_count: int = 1
@@ -116,6 +164,8 @@ class ScalesConfig:
     history: HistoryConfig = field(default_factory=HistoryConfig)
     durations: DurationConfig = field(default_factory=DurationConfig)
     hierarchy: HierarchyConfig = field(default_factory=HierarchyConfig)
+    coupling: CouplingConfig = field(default_factory=CouplingConfig)
+    hiql: HiqlConfig = field(default_factory=HiqlConfig)
     seed: int = 0
 
     @classmethod
@@ -124,10 +174,24 @@ class ScalesConfig:
         h = d.pop("switch_history", d.pop("history", None))
         du = d.pop("durations", None)
         hi = d.pop("hierarchy", None)
+        cp = d.pop("coupling", None)
+        hq = d.pop("hiql", None)
         cfg = cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
         cfg.history = _history_conf(h)
         cfg.durations = _sub_conf(DurationConfig, du)
         cfg.hierarchy = _sub_conf(HierarchyConfig, hi)
+        cfg.coupling = _sub_conf(CouplingConfig, cp)
+        cfg.hiql = HiqlConfig(**{k: v for k, v in dict(hq or {}).items() if k in HiqlConfig.__dataclass_fields__})
+        cfg.hiql.backoff = float(cfg.hiql.backoff)
+        if cfg.emission not in ("swirl", "hiql"):
+            raise ValueError(f"emission must be swirl | hiql, got {cfg.emission!r}")
+        if cfg.transition_input is None:
+            cfg.transition_input = "state" if cfg.emission == "swirl" else "none"
+        if cfg.transition_input not in ("state", "none"):
+            raise ValueError(f"transition_input must be state | none, got {cfg.transition_input!r}")
+        if cfg.coupling.hazard is None:
+            cfg.coupling.hazard = cfg.durations.enabled
+        cfg.coupling.hazard = bool(cfg.coupling.hazard) and cfg.durations.enabled
         if cfg.durations.hazard_features is None:
             cfg.durations.hazard_features = cfg.history.enabled
         cfg.durations.hazard_features = bool(cfg.durations.hazard_features)
@@ -148,11 +212,30 @@ class ScalesConfig:
     def D(self):
         return int(self.durations.max_duration) if self.durations.enabled else 1
 
+    @property
+    def use_state(self):
+        return self.transition_input == "state"
+
     def to_json(self):
         return json.dumps(asdict(self), default=list)
 
+    def with_coupling(self, enabled=True, **kw):
+        """Copy with coupling switched on / off (kw: CouplingConfig fields)."""
+        c = cfg_from_json(self.to_json())
+        c.coupling.enabled = bool(enabled)
+        for k, v in kw.items():
+            if k not in CouplingConfig.__dataclass_fields__:
+                raise ValueError(f"unknown coupling option {k!r}")
+            setattr(c.coupling, k, v)
+        if c.coupling.hazard is None:
+            c.coupling.hazard = c.durations.enabled
+        c.coupling.hazard = bool(c.coupling.hazard) and c.durations.enabled
+        return c
+
     def tag(self):
         parts = [f"N{self.order}"]
+        if self.emission != "swirl":
+            parts.insert(0, self.emission.upper())
         if self.reward_param != "additive":
             parts.append(self.reward_param)
         if self.history.enabled:
@@ -415,34 +498,121 @@ def emission_ll(logpi, ctx, a):
 # Transitions and hazards
 # ---------------------------------------------------------------------------
 
-def log_Q(log_Ps, Rs, W1f, x, phi, mask_diag):
-    """(N, T-1, R, K, K) log Q_t(z' | z, r): log_Ps (R, K, K) + MLP([onehot(x_{t-1}), phi_{t-1}])."""
-    W1, b1, W2, b2 = Rs
-    Z1 = W1[x[:, :-1]] + b1
-    if W1f.shape[0] > 0:
-        Z1 = Z1 + phi[:, :-1] @ W1f
-    Z2 = sigmoid_jax(Z1) @ W2 + b2                                    # (N, T-1, K)
+def log_Q(log_Ps, Rs, W1f, x, phi, mask_diag, use_state=True):
+    """
+    (N, T-1, R, K, K) log Q_t(z' | z, r): log_Ps (R, K, K) + MLP([onehot(x_{t-1}), phi_{t-1}]) (use_state), or
+    log_Ps + phi_{t-1} @ W1f (W1f (F, K); HIAVI Lambda when F = 0).
+    """
+    N, T1 = x.shape[0], x.shape[1] - 1
+    if use_state:
+        W1, b1, W2, b2 = Rs
+        Z1 = W1[x[:, :-1]] + b1
+        if W1f.shape[0] > 0:
+            Z1 = Z1 + phi[:, :-1] @ W1f
+        Z2 = sigmoid_jax(Z1) @ W2 + b2                                # (N, T-1, K)
+    elif W1f.shape[0] > 0:
+        Z2 = phi[:, :-1] @ W1f
+    else:
+        Z2 = jnp.zeros((N, T1, log_Ps.shape[-1]))
     logits = log_Ps[None, None] + Z2[:, :, None, None, :]
     if mask_diag:
         logits = logits + NEG * jnp.eye(log_Ps.shape[-1])
     return logits - lse(logits, axis=-1, keepdims=True)
 
 
-def hazard_logits(hz, D, phi, kind, use_feat):
-    """Hazard logits: (R, K, D), or (N, T-1, R, K, D) with features."""
+def hazard_logits(hz, D, phi, kind, use_feat, cpl=None):
+    """
+    Hazard logits: (R, K, D), or (N, T-1, R, K, D) with features / partner coupling. cpl (N, T-1, K) =
+    w_t (1 - c_t[z]) adds beta * cpl (hz["beta"]).
+    """
     tau = jnp.log(jnp.arange(1, D + 1, dtype=jnp.float64))
     base = hz["a"][..., None] + hz["b"][None, :, None] * tau if kind == "logistic" else hz["a"]
-    if not use_feat:
-        return base
-    return base[None, None] + jnp.einsum("ntf,kf->ntk", phi[:, :-1], hz["u"])[:, :, None, :, None]
+    if use_feat:
+        base = base[None, None] + jnp.einsum("ntf,kf->ntk", phi[:, :-1], hz["u"])[:, :, None, :, None]
+    if cpl is not None and "beta" in hz:
+        term = jnp.reshape(hz["beta"], ()) * cpl[:, :, None, :, None]
+        base = (base if base.ndim == 5 else base[None, None]) + term
+    return base
 
 
-def log_hazards(cfg, hz, phi):
+def log_hazards(cfg, hz, phi, cpl=None):
     """(log h, log (1 - h)) with shape (R, K, D) or (N, T-1, R, K, D)."""
     if not cfg.durations.enabled:
         return None, None
-    lg = hazard_logits(hz, cfg.D, phi, cfg.durations.hazard, cfg.durations.hazard_features)
+    lg = hazard_logits(hz, cfg.D, phi, cfg.durations.hazard, cfg.durations.hazard_features, cpl)
     return log_sigmoid(lg), log_sigmoid(-lg)
+
+
+def coupled_logQ(lq, alpha, w, c, mask_diag):
+    """
+    Partner-mixed transitions: lq (N, T-1, R, K, K) normalised, w (N, T), c (N, T, K) (destination step t).
+    (1 - alpha w_t) Q + alpha w_t c~_t; with mask_diag (durations) c~ drops the current intention.
+    """
+    K = lq.shape[-1]
+    aw = (alpha * w[:, 1:])[:, :, None, None, None]
+    ct = c[:, 1:, None, None, :]
+    if mask_diag:
+        off = 1.0 - jnp.eye(K)
+        ct = ct * off
+        tot = ct.sum(-1, keepdims=True)
+        ct = jnp.where(tot > 1e-12, ct / jnp.maximum(tot, 1e-12), off / max(K - 1, 1))
+    P = (1 - aw) * jnp.exp(lq) + aw * ct
+    out = jnp.log(jnp.clip(P, TINY))
+    if mask_diag:
+        out = jnp.where(jnp.eye(K, dtype=bool), NEG, out)
+    return out
+
+
+def alpha_active(cfg, K):
+    """Destination coupling is identifiable (not with durations and K = 2, where Q is fixed)."""
+    return cfg.coupling.enabled and not (cfg.durations.enabled and K <= 2)
+
+
+def coupling_alpha(p, cfg):
+    K = np.shape(p["log_Ps"])[-1]
+    if not alpha_active(cfg, K) or "cpl_alpha" not in p:
+        return 0.0
+    return float(ALPHA_MAX / (1 + np.exp(-float(np.asarray(p["cpl_alpha"])))))
+
+
+def coupling_beta(p, cfg):
+    if not (cfg.coupling.enabled and cfg.coupling.hazard) or "beta" not in p.get("hz", {}):
+        return 0.0
+    return float(np.asarray(p["hz"]["beta"]).reshape(()))
+
+
+def _ctx(d, K):
+    """(w, c) from the data bundle (zeros = no partner, i.e. the uncoupled model)."""
+    N, T = d["a"].shape
+    w = d.get("w")
+    if w is None:
+        return jnp.zeros((N, T)), jnp.full((N, T, K), 1.0 / K)
+    return jnp.asarray(w, dtype=jnp.float64), jnp.asarray(d["c"], dtype=jnp.float64)
+
+
+def _cpl_h(cfg, d, K):
+    if not (cfg.coupling.enabled and cfg.coupling.hazard):
+        return None
+    w, c = _ctx(d, K)
+    return w[:, 1:, None] * (1.0 - c[:, 1:])                          # (N, T-1, K)
+
+
+def with_context(d, w, c):
+    """Data bundle with the partner context (w (N, T), c (N, T, K))."""
+    out = dict(d)
+    out["w"], out["c"] = jnp.asarray(w, dtype=jnp.float64), jnp.asarray(c, dtype=jnp.float64)
+    return out
+
+
+def trans_logQ(p, cfg, d):
+    """Intention transitions of the bundle d, partner-mixed when coupling is on."""
+    lq = log_Q(p["log_Ps"], p["Rs"], p["W1f"], d["x"], d["phi"], cfg.durations.enabled, cfg.use_state)
+    K = lq.shape[-1]
+    if alpha_active(cfg, K) and "cpl_alpha" in p:
+        w, c = _ctx(d, K)
+        alpha = ALPHA_MAX * jax.nn.sigmoid(jnp.asarray(p["cpl_alpha"]))
+        lq = coupled_logQ(lq, alpha, w, c, cfg.durations.enabled)
+    return lq
 
 
 # ---------------------------------------------------------------------------
@@ -531,25 +701,41 @@ def init_params(cfg, tree, base, R_start, n_feat, seed=None):
     """
     base = (logpi0 (K,), log_Ps (K, K), Rs = (W1, b1, W2, b2)) from the ARHMM (or sticky_init); R_start
     (K, S) or (K, 1, S) state rewards. With every toggle off and order 1 the model equals this SWIRL init.
+    HIQL (cfg.emission = "hiql"): base = (logpi0, log_Ps = HIAVI Lambda, Rs or None); R_start = (K, S, A) log
+    policies (HIAVI), copied to every context by its last state.
     """
     rng = np.random.default_rng(cfg.seed if seed is None else seed)
-    logpi0, log_Ps, Rs = (np.asarray(base[0], float), np.asarray(base[1], float),
-                          tuple(np.asarray(w, float) for w in base[2]))
+    logpi0, log_Ps = np.asarray(base[0], float), np.asarray(base[1], float)
     K, S = log_Ps.shape[0], tree.S
-    R1 = np.asarray(R_start, float).reshape(K, -1)
-    if R1.shape[1] != S:
-        raise ValueError(f"R_start has {R1.shape[1]} states, the tree {S}")
-    theta = np.zeros((K, tree.H))
-    theta[:, :S] = R1
-    if cfg.reward_param == "free":
-        theta = R1[:, tree.last]
+    if base[2] is None:
+        Rs = (np.zeros((S, 1)), np.zeros(1), np.zeros((1, K)), np.zeros(K))
+    else:
+        Rs = tuple(np.asarray(w, float) for w in base[2])
+    hidden = Rs[0].shape[1] if cfg.use_state else K
+    if cfg.emission == "hiql":
+        lp = np.asarray(R_start, float)
+        if lp.shape != (K, S, tree.A):
+            raise ValueError(f"HIQL R_start must be (K, S, A) = {(K, S, tree.A)} log policies, got {lp.shape}")
+        lp = lp - np.logaddexp.reduce(lp, axis=-1, keepdims=True)
+        theta = None
+    else:
+        R1 = np.asarray(R_start, float).reshape(K, -1)
+        if R1.shape[1] != S:
+            raise ValueError(f"R_start has {R1.shape[1]} states, the tree {S}")
+        theta = np.zeros((K, tree.H))
+        theta[:, :S] = R1
+        if cfg.reward_param == "free":
+            theta = R1[:, tree.last]
     R, D = cfg.R, cfg.D
     lP = np.repeat(log_Ps[None], R, axis=0)
     for r in range(1, R):
         lP[r] += rng.normal(scale=cfg.hierarchy.init_noise, size=(K, K))
     lp0 = logpi0 - np.logaddexp.reduce(logpi0)
-    p = dict(theta=theta, logpi0=np.repeat(lp0[None], R, 0) - np.log(R), log_Ps=lP, Rs=Rs,
-             W1f=np.zeros((n_feat, Rs[0].shape[1])))
+    p = dict(logpi0=np.repeat(lp0[None], R, 0) - np.log(R), log_Ps=lP, Rs=Rs, W1f=np.zeros((n_feat, hidden)))
+    if theta is None:
+        p["logpi"] = lp[:, tree.last]
+    else:
+        p["theta"] = theta
     if R > 1:
         s = cfg.hierarchy.sticky
         P = np.full((R, R), (1 - s) / (R - 1))
@@ -570,6 +756,13 @@ def init_params(cfg, tree, base, R_start, n_feat, seed=None):
             p["hz"] = dict(a=a, b=np.zeros(K), u=np.zeros((K, nf)))
         else:
             p["hz"] = dict(a=np.repeat(a[..., None], D, -1), u=np.zeros((K, nf)))
+    cc = cfg.coupling
+    if cc.enabled:
+        p["cpl_alpha"] = np.asarray(_logit(cc.alpha0 / ALPHA_MAX))
+        if cc.hazard:
+            if not cfg.durations.enabled:
+                raise ValueError("coupling.hazard needs durations.enabled")
+            p["hz"]["beta"] = np.asarray(float(cc.beta0))
     return p
 
 
@@ -578,12 +771,19 @@ def _jnp_tree(p):
 
 
 def n_params(p, cfg, tree):
-    n = p["theta"].size + p["logpi0"].size - 1 + p["log_Ps"].size + sum(np.size(w) for w in p["Rs"]) + \
-        np.size(p["W1f"])
+    K = int(np.shape(p["log_Ps"])[-1])
+    emit = K * tree.H * (tree.A - 1) if cfg.emission == "hiql" else np.size(p["theta"])
+    n = emit + np.size(p["logpi0"]) - 1 + np.size(p["log_Ps"]) + np.size(p["W1f"])
+    if cfg.use_state:
+        n += sum(np.size(w) for w in p["Rs"])
     if cfg.R > 1:
         n += cfg.R * (cfg.R - 1)
     if "hz" in p:
-        n += sum(np.size(v) for v in p["hz"].values())
+        n += sum(np.size(v) for k, v in p["hz"].items() if k != "beta")
+    if alpha_active(cfg, K) and cfg.coupling.fit_alpha:
+        n += 1
+    if cfg.coupling.enabled and cfg.coupling.hazard and cfg.coupling.fit_beta:
+        n += 1
     return int(n)
 
 
@@ -615,17 +815,25 @@ def _temps_arr(temps, K):
     return (jnp.ones(K), False) if temps is None else (jnp.asarray(temps, dtype=jnp.float64), True)
 
 
-def e_step(p, cfg, tree_arr, d, temps, kin_model=None, want_kd=False, use_kin=True):
+def model_log_policy(p, cfg, tree_arr, temps):
+    """(K, H, A) log pi for either emission."""
+    if cfg.emission == "hiql":
+        return jnp.asarray(p["logpi"])
     K = p["theta"].shape[0]
     tmp, use_temp = _temps_arr(temps, K)
-    logpi = log_policy(p["theta"], tree_arr["nxt"], tree_arr["prob"], tree_arr["anc"], tmp, cfg.reward_param,
-                       use_temp)
+    return log_policy(p["theta"], tree_arr["nxt"], tree_arr["prob"], tree_arr["anc"], tmp, cfg.reward_param,
+                      use_temp)
+
+
+def e_step(p, cfg, tree_arr, d, temps, kin_model=None, want_kd=False, use_kin=True):
+    K = int(np.shape(p["log_Ps"])[-1])
+    logpi = model_log_policy(p, cfg, tree_arr, temps)
     ll = emission_ll(logpi, d["ctx"], d["a"])
     if use_kin and kin_model is not None and d["kin"] is not None:
         ll = ll + jnp.asarray(kin_model.loglik(d["kin"]))
-    lq = log_Q(p["log_Ps"], p["Rs"], p["W1f"], d["x"], d["phi"], cfg.durations.enabled)
+    lq = trans_logQ(p, cfg, d)
     if cfg.durations.enabled:
-        lh, l1h = log_hazards(cfg, p["hz"], d["phi"])
+        lh, l1h = log_hazards(cfg, p["hz"], d["phi"], _cpl_h(cfg, d, K))
     else:
         R = p["logPR"].shape[0]
         lh, l1h = jnp.zeros((R, K, 1)), jnp.full((R, K, 1), -jnp.inf)
@@ -652,27 +860,68 @@ def _unflat(flat, shapes):
     return out
 
 
-def _q_loss(flat, shapes, EQ, x, phi, n_total, mask):
-    lP, W1, b1, W2, b2, W1f = _unflat(flat, shapes)
-    lq = log_Q(lP, (W1, b1, W2, b2), W1f, x, phi, mask)
+def _q_loss(flat, shapes, EQ, x, phi, n_total, mask, use_state, w, c, coupled, alpha_fixed, fit_alpha):
+    lP, W1, b1, W2, b2, W1f = _unflat(flat[:-1] if coupled and fit_alpha else flat, shapes)
+    lq = log_Q(lP, (W1, b1, W2, b2), W1f, x, phi, mask, use_state)
+    if coupled:
+        alpha = ALPHA_MAX * jax.nn.sigmoid(flat[-1]) if fit_alpha else alpha_fixed
+        lq = coupled_logQ(lq, alpha, w, c, mask)
     return -jnp.sum(EQ * lq) / n_total
 
 
-_q_vg = jax.jit(jax.value_and_grad(_q_loss), static_argnames=("shapes", "mask"))
+_q_vg = jax.jit(jax.value_and_grad(_q_loss), static_argnames=("shapes", "mask", "use_state", "coupled", "fit_alpha"))
+
+
+def _logit(q):
+    q = float(np.clip(q, 1e-4, 1 - 1e-4))
+    return float(np.log(q / (1 - q)))
+
+
+def q_closed_form(cfg, st):
+    """Normalised expected transition counts (no inputs, no coupling): HIAVI's Lambda M-step per regime."""
+    EQ = np.asarray(st["EQ"]).sum((0, 1))                             # (R, K, K)
+    lP = np.log(np.maximum(EQ, TINY))
+    if cfg.durations.enabled:
+        K = EQ.shape[-1]
+        lP = np.where(np.eye(K, dtype=bool)[None], NEG, lP)
+    lP = lP - np.logaddexp.reduce(lP, axis=-1, keepdims=True)
+    if cfg.durations.enabled:
+        lP = np.where(np.eye(lP.shape[-1], dtype=bool)[None], 0.0, lP)
+    return lP
+
+
+def coupling_tol(cfg):
+    return float(cfg.coupling.tol)
 
 
 def q_m_step(p, cfg, st, d, n_total, num_iters=1000):
+    """-> log_Ps, Rs, W1f, cpl_alpha (raw logit or None)."""
+    K = int(np.shape(p["log_Ps"])[-1])
+    coupled = alpha_active(cfg, K) and "cpl_alpha" in p
+    fit_alpha = coupled and bool(cfg.coupling.fit_alpha)
+    if not cfg.use_state and np.size(p["W1f"]) == 0 and not coupled:
+        return q_closed_form(cfg, st), p["Rs"], np.asarray(p["W1f"]), p.get("cpl_alpha")
     parts = [p["log_Ps"], *p["Rs"], p["W1f"]]
     shapes = tuple(tuple(int(s) for s in np.shape(v)) for v in parts)
-    res = _minimize(_q_vg, _flat([jnp.asarray(v) for v in parts]), "L-BFGS-B", num_iters, shapes=shapes,
-                    EQ=st["EQ"], x=d["x"], phi=d["phi"], n_total=n_total, mask=cfg.durations.enabled)
-    lP, W1, b1, W2, b2, W1f = [np.asarray(v) for v in _unflat(jnp.asarray(res.x), shapes)]
-    return lP, (W1, b1, W2, b2), W1f
+    flat0 = _flat([jnp.asarray(v) for v in parts])
+    if fit_alpha:
+        flat0 = jnp.concatenate([flat0, jnp.reshape(jnp.asarray(p["cpl_alpha"], dtype=jnp.float64), (1,))])
+    w, c = _ctx(d, K)
+    a_fix = ALPHA_MAX * jax.nn.sigmoid(jnp.asarray(p["cpl_alpha"])) if coupled else jnp.asarray(0.0)
+    res = _minimize_tol(_q_vg, flat0, "L-BFGS-B", num_iters, coupling_tol(cfg) if coupled else 1e-4,
+                    shapes=shapes, EQ=st["EQ"], x=d["x"], phi=d["phi"],
+                    n_total=n_total, mask=cfg.durations.enabled, use_state=cfg.use_state, w=w, c=c,
+                    coupled=coupled, alpha_fixed=a_fix, fit_alpha=fit_alpha)
+    x = jnp.asarray(res.x)
+    lP, W1, b1, W2, b2, W1f = [np.asarray(v) for v in _unflat(x[:-1] if fit_alpha else x, shapes)]
+    alpha_raw = np.asarray(x[-1]) if fit_alpha else p.get("cpl_alpha")
+    return lP, (W1, b1, W2, b2), W1f, alpha_raw
 
 
-def _hz_loss(flat, shapes, keys, S0, S1, phi, n_total, D, kind, use_feat, smooth, l2):
+def _hz_loss(flat, shapes, keys, S0, S1, phi, n_total, D, kind, use_feat, smooth, l2, cpl, fixed):
     hz = dict(zip(keys, _unflat(flat, shapes)))
-    lg = hazard_logits(hz, D, phi, kind, use_feat)
+    hz.update(fixed)
+    lg = hazard_logits(hz, D, phi, kind, use_feat, cpl)
     nll = -jnp.sum(S1 * log_sigmoid(lg) + S0 * log_sigmoid(-lg)) / n_total
     pen = l2 * jnp.sum(hz["u"] ** 2)
     if kind == "logistic":
@@ -686,14 +935,122 @@ _hz_vg = jax.jit(jax.value_and_grad(_hz_loss), static_argnames=("shapes", "keys"
 
 
 def hazard_m_step(p, cfg, st, d, n_total, num_iters=1000):
-    keys = tuple(sorted(p["hz"]))
+    K = int(np.shape(p["log_Ps"])[-1])
+    fixed = {}
+    if "beta" in p["hz"] and not (cfg.coupling.enabled and cfg.coupling.hazard and cfg.coupling.fit_beta):
+        fixed["beta"] = jnp.asarray(p["hz"]["beta"])
+    keys = tuple(sorted(k for k in p["hz"] if k not in fixed))
     parts = [jnp.asarray(p["hz"][k]) for k in keys]
     shapes = tuple(tuple(int(s) for s in v.shape) for v in parts)
     dc = cfg.durations
-    res = _minimize(_hz_vg, _flat(parts), "L-BFGS-B", num_iters, shapes=shapes, keys=keys, S0=st["S0"],
+    cpl = _cpl_h(cfg, d, K)
+    tol = coupling_tol(cfg) if cpl is not None else 1e-4
+    res = _minimize_tol(_hz_vg, _flat(parts), "L-BFGS-B", num_iters, tol, shapes=shapes, keys=keys, S0=st["S0"],
                     S1=st["S1"], phi=d["phi"], n_total=n_total, D=cfg.D, kind=dc.hazard,
-                    use_feat=dc.hazard_features, smooth=float(dc.smooth), l2=float(dc.l2))
-    return {k: np.asarray(v) for k, v in zip(keys, _unflat(jnp.asarray(res.x), shapes))}
+                    use_feat=dc.hazard_features, smooth=float(dc.smooth), l2=float(dc.l2),
+                    cpl=cpl, fixed=fixed)
+    out = {k: np.asarray(v) for k, v in zip(keys, _unflat(jnp.asarray(res.x), shapes))}
+    out.update({k: np.asarray(v) for k, v in fixed.items()})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# HIQL emission (closed form) and IAVI on the context MDP
+# ---------------------------------------------------------------------------
+
+def hiql_counts(g, ctx, a, H, A):
+    """(K, H, A) posterior-weighted (context, action) counts."""
+    g = np.asarray(g)
+    idx = (np.asarray(ctx) * A + np.asarray(a)).ravel()
+    K = g.shape[-1]
+    return np.stack([np.bincount(idx, weights=g[..., k].ravel(), minlength=H * A) for k in range(K)]).reshape(K, H, A)
+
+
+def hiql_policies(cnt, tree, hc):
+    """
+    (K, H, A) policies from own-context counts cnt (each step counts at its data context only).
+    pooled_s: counts of every context ending in s (+ pseudocount, empty rows eps) = HIAVI's order-1 M-step.
+    Order 1: pi = pooled. Order >= 2, back-off kappa = hc.backoff:
+        depth 1:  (n(s) + kappa pooled_s) / (n(s) + kappa)
+        depth k:  (n(h) + kappa pi(parent)) / (n(h) + kappa), parent = h without its oldest state
+    kappa = inf -> every context uses pooled_s (== order 1); kappa = 0 -> per-context ML (exact M-step; empty
+    contexts back off to the parent).
+    """
+    K, H, A = cnt.shape
+    S = tree.S
+    pooled = np.zeros((K, S, A))
+    for s_ in range(S):
+        pooled[:, s_] = cnt[:, tree.last == s_].sum(1)
+    pooled = pooled + hc.pseudocount
+    empty = pooled.sum(-1) == 0
+    pooled[empty] = hc.eps
+    pooled = pooled / pooled.sum(-1, keepdims=True)
+    pis = np.zeros((K, H, A))
+    if tree.order == 1:
+        pis[:, :S] = pooled
+        return pis
+    kap = float(hc.backoff)
+
+    def shrink(n, target):
+        if np.isinf(kap):
+            return target
+        num = n + kap * target
+        den = num.sum(-1, keepdims=True)
+        return np.where(den > 0, num / np.maximum(den, TINY), target)
+
+    pis[:, :S] = shrink(cnt[:, :S], pooled)
+    for k in range(2, tree.order + 1):
+        m = np.flatnonzero(tree.depth == k)
+        if len(m):
+            par = np.array([tree.index[tree.nodes[h][1:]] for h in m])
+            pis[:, m] = shrink(cnt[:, m], pis[:, par])
+    return pis
+
+
+def hiql_logpi(pis, eps):
+    """HIAVI._logpis: softmax(q_IAVI) == (pi + eps) / sum(pi + eps)."""
+    p = pis + eps
+    return np.log(p / p.sum(-1, keepdims=True))
+
+
+def hiql_m_step(cfg, tree, st, d):
+    H, A = tree.H, tree.A
+    cnt = hiql_counts(st["g_z"], d["ctx"], d["a"], H, A)
+    return hiql_logpi(hiql_policies(cnt, tree, cfg.hiql), cfg.hiql.eps)
+
+
+def iavi_tree(tree, expert_pi, discount, tol=1e-8, max_iters=10000, eps=1e-6):
+    """
+    IAVI (hiavi_model.iavi) on the context MDP: taking a in context h lands in next(h, s') with T(s' | x_t, a).
+    expert_pi (H, A). Returns r (H, A), q (H, A); order 1 equals hiavi_model.iavi on T.
+    """
+    logpi = np.log(expert_pi + eps)
+    H, A = logpi.shape
+    q = np.zeros((H, A))
+    r = np.zeros((H, A))
+    for _ in range(int(max_iters)):
+        cont = discount * (tree.prob * q.max(axis=1)[tree.nxt]).sum(-1)
+        eta = logpi - cont
+        r_new = eta - eta.mean(axis=1, keepdims=True)
+        q = r_new + cont
+        delta = np.max(np.abs(r_new - r))
+        r = r_new
+        if delta < tol:
+            break
+    return r, q
+
+
+def hiql_finalize(r, tree, d):
+    """IAVI once per intention from the final responsibilities (as HIAVI.fit): adds r['iavi'] = (r, q) (K, H, A)."""
+    cfg = r["cfg"]
+    st = e_step(_jnp_tree(r["params"]), cfg, tree.arrays(), d, None, r.get("kin_model"))
+    cnt = hiql_counts(st["g_z"], d["ctx"], d["a"], tree.H, tree.A)
+    expert = hiql_policies(cnt, tree, cfg.hiql)
+    out = [iavi_tree(tree, expert[k], cfg.hiql.discount, cfg.hiql.iavi_tol, cfg.hiql.iavi_max_iters, cfg.hiql.eps)
+           for k in range(expert.shape[0])]
+    r = dict(r)
+    r["iavi"] = dict(r=np.stack([o[0] for o in out]), q=np.stack([o[1] for o in out]))
+    return r
 
 
 def _r_loss(flat, shape, nxt, prob, anc, temps, g, ctx, a, n_total, reward_param, use_temp, pen_w, l2):
@@ -762,6 +1119,8 @@ def em_train_scales(p, cfg, tree, d, temps=None, kin_model=None, iters=50, tol=N
     kin_model = None if kin_model is None else kin_model.copy()
     N, T = d["a"].shape
     n_total = float(N * T)
+    if cfg.emission == "hiql" and temps is not None:
+        raise ValueError("temps apply to the SWIRL emission only")
     LL_list = []
     for i in range(int(iters)):
         st = e_step(p, cfg, tree_arr, d, temps, kin_model)
@@ -778,12 +1137,17 @@ def em_train_scales(p, cfg, tree, d, temps=None, kin_model=None, iters=50, tol=N
         if cfg.R > 1 and trans:
             new["logPR"] = jnp.asarray(regime_m_step(cfg, st))
         if trans:
-            lP, Rs, W1f = q_m_step(p, cfg, st, d, n_total, num_iters)
+            lP, Rs, W1f, a_raw = q_m_step(p, cfg, st, d, n_total, num_iters)
             new["log_Ps"], new["Rs"], new["W1f"] = jnp.asarray(lP), tuple(jnp.asarray(w) for w in Rs), jnp.asarray(W1f)
+            if a_raw is not None:
+                new["cpl_alpha"] = jnp.asarray(a_raw)
             if cfg.durations.enabled:
                 new["hz"] = _jnp_tree(hazard_m_step(p, cfg, st, d, n_total, num_iters))
         if emit:
-            new["theta"] = jnp.asarray(reward_m_step(p, cfg, tree_arr, pen_w, st, d, temps, n_total, num_iters))
+            if cfg.emission == "hiql":
+                new["logpi"] = jnp.asarray(hiql_m_step(cfg, tree, st, d))
+            else:
+                new["theta"] = jnp.asarray(reward_m_step(p, cfg, tree_arr, pen_w, st, d, temps, n_total, num_iters))
         if kin_model is not None and d["kin"] is not None and kin_mstep:
             kin_model.m_step(np.asarray(st["g_z"]), d["kin"])
         p = new
@@ -813,6 +1177,8 @@ def scales_eval(r, tree, d, use_kin=True, want_kd=False):
 
 def policy(r, tree):
     cfg, p = r["cfg"], r["params"]
+    if cfg.emission == "hiql":
+        return np.exp(np.asarray(p["logpi"]))
     K = p["theta"].shape[0]
     tmp, use_temp = _temps_arr(r.get("temps"), K)
     ta = tree.arrays()
@@ -836,13 +1202,14 @@ def history_kl(r, tree, ctx_counts=None):
 
 def reward_depth_share(r, tree, ctx_counts=None):
     """(K, order) share of the (count-weighted) reward variance carried by the depth-k increments (additive)."""
+    if r["cfg"].emission == "hiql" or r["cfg"].reward_param != "additive":
+        K = int(np.shape(r["params"]["log_Ps"])[-1])
+        return np.full((K, tree.order), np.nan)
     th = np.asarray(r["params"]["theta"])
     w = np.ones(tree.H) if ctx_counts is None else np.asarray(ctx_counts, float)
     K = th.shape[0]
     out = np.zeros((K, tree.order))
     used = w > 0
-    if r["cfg"].reward_param != "additive":
-        return out * np.nan
     for k in range(1, tree.order + 1):
         a = tree.anc[used, k - 1]
         val = np.concatenate([th, np.zeros((K, 1))], 1)[:, a]
@@ -883,9 +1250,14 @@ def dwell_times(path):
 
 def params_to_save(r, tree, prefix="sc_"):
     p = r["params"]
-    out = {prefix + "theta": p["theta"], prefix + "logpi0": p["logpi0"], prefix + "logPR": p["logPR"],
+    out = {prefix + "logpi0": p["logpi0"], prefix + "logPR": p["logPR"],
            prefix + "log_Ps": p["log_Ps"], prefix + "W1f": p["W1f"], prefix + "cfg": r["cfg"].to_json(),
            "LL_list": np.asarray(r["LL_list"])}
+    for k in ("theta", "logpi", "cpl_alpha"):
+        if k in p:
+            out[prefix + k] = np.asarray(p[k])
+    if "iavi" in r:
+        out[prefix + "iavi_r"], out[prefix + "iavi_q"] = r["iavi"]["r"], r["iavi"]["q"]
     for i, w in enumerate(p["Rs"]):
         out[prefix + f"Rs{i}"] = np.asarray(w)
     for k, v in p.get("hz", {}).items():
@@ -895,25 +1267,34 @@ def params_to_save(r, tree, prefix="sc_"):
     if r.get("kin_model") is not None:
         out.update(r["kin_model"].params())
     out.update(tree.to_save())
-    # reward on the depth-1 nodes in the SWIRL (K, 1, S) layout, for the existing plots
-    R = np.asarray(node_rewards(jnp.asarray(p["theta"]), jnp.asarray(tree.anc), r["cfg"].reward_param))
-    out["new_reward"] = R[:, None, :tree.S]
+    if "theta" in p:
+        # reward on the depth-1 nodes in the SWIRL (K, 1, S) layout, for the existing plots
+        R = np.asarray(node_rewards(jnp.asarray(p["theta"]), jnp.asarray(tree.anc), r["cfg"].reward_param))
+        out["new_reward"] = R[:, None, :tree.S]
     return out
 
 
 def cfg_from_json(s):
     c = json.loads(str(s))
-    cfg = ScalesConfig.from_dict({k: v for k, v in c.items() if k not in ("history", "durations", "hierarchy")})
+    sub = ("history", "durations", "hierarchy", "coupling", "hiql")
+    cfg = ScalesConfig.from_dict({k: v for k, v in c.items() if k not in sub})
     cfg.history = HistoryConfig(**{k: tuple(v) if isinstance(v, list) else v for k, v in c["history"].items()})
     cfg.durations = DurationConfig(**c["durations"])
     cfg.hierarchy = HierarchyConfig(**c["hierarchy"])
+    if "coupling" in c:
+        cfg.coupling = CouplingConfig(**c["coupling"])
+    if "hiql" in c:
+        cfg.hiql = HiqlConfig(**c["hiql"])
     return cfg
 
 
 def params_from_npz(z, prefix="sc_"):
-    p = dict(theta=z[prefix + "theta"], logpi0=z[prefix + "logpi0"], logPR=z[prefix + "logPR"],
+    p = dict(logpi0=z[prefix + "logpi0"], logPR=z[prefix + "logPR"],
              log_Ps=z[prefix + "log_Ps"], W1f=z[prefix + "W1f"],
              Rs=tuple(z[prefix + f"Rs{i}"] for i in range(4)))
+    for k in ("theta", "logpi", "cpl_alpha"):
+        if prefix + k in z.files:
+            p[k] = z[prefix + k]
     hz = {k[len(prefix) + 3:]: z[k] for k in z.files if k.startswith(prefix + "hz_")}
     if hz:
         p["hz"] = hz
@@ -937,18 +1318,32 @@ def warm_start(p_new, tree_new, r_old, tree_old):
     """Copy a fitted model into a new init: theta by context (shared nodes), and every compatible block."""
     po = r_old["params"]
     out = dict(p_new)
-    th = np.array(p_new["theta"], float)
-    if r_old["cfg"].reward_param == "additive":
+    if "theta" in p_new and "theta" in po:
+        th = np.array(p_new["theta"], float)
+        if r_old["cfg"].reward_param == "additive":
+            for h, c in enumerate(tree_old.nodes):
+                j = tree_new.index.get(c)
+                if j is not None:
+                    th[:, j] = po["theta"][:, h]
+        out["theta"] = th
+    if "logpi" in p_new and "logpi" in po:
+        lp = np.array(p_new["logpi"], float)
+        old = np.asarray(po["logpi"])
+        lp[:] = old[:, [tree_old.index[(int(s),)] for s in tree_new.last]]   # back off to the last state
         for h, c in enumerate(tree_old.nodes):
             j = tree_new.index.get(c)
             if j is not None:
-                th[:, j] = po["theta"][:, h]
-    out["theta"] = th
-    for k in ("logpi0", "log_Ps", "logPR", "W1f"):
-        if np.shape(po[k]) == np.shape(p_new[k]):
+                lp[:, j] = old[:, h]
+        out["logpi"] = lp
+    for k in ("logpi0", "log_Ps", "logPR", "W1f", "cpl_alpha"):
+        if k in p_new and k in po and np.shape(po[k]) == np.shape(p_new[k]):
             out[k] = np.asarray(po[k])
     if all(np.shape(a) == np.shape(b) for a, b in zip(po["Rs"], p_new["Rs"])):
         out["Rs"] = tuple(np.asarray(w) for w in po["Rs"])
-    if "hz" in p_new and "hz" in po and all(np.shape(po["hz"].get(k)) == np.shape(v) for k, v in p_new["hz"].items()):
-        out["hz"] = {k: np.asarray(v) for k, v in po["hz"].items()}
+    if "hz" in p_new and "hz" in po:
+        hz = dict(p_new["hz"])
+        for k, v in p_new["hz"].items():
+            if k in po["hz"] and np.shape(po["hz"][k]) == np.shape(v):
+                hz[k] = np.asarray(po["hz"][k])
+        out["hz"] = hz
     return out

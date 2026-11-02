@@ -15,6 +15,15 @@ E7  every toggle on (no penalties): EM trace non-decreasing
 E8  context tree: data contexts are consistent with the VI next-context map
 E9  memory: at order N the policy depends on the last N-1 states only (order 2 / S-2: pi(a | x_prev, x) =
     pi(a | x) for any reward; order 3: depends on x_prev)
+E10 K = 2 with durations: regimes / history still act through the hazards
+
+Multi-agent coupling (CouplingConfig) and the HIQL emission:
+E11 coupled, order 1, toggles off (coupling.tol 1e-4) == swirl_ext.em_train_ext(ctx, fit_alpha) (EM trace, alpha)
+E12 alpha = beta = 0, or w = 0, == the uncoupled model, every toggle on (SWIRL and HIQL)
+E13 coupled EM monotone with every toggle on (K = 3: alpha and beta; K = 2 durations: beta only)
+E14 HIQL order 1, toggles off == HIAVI.fit (EM trace, per step)
+E15 HIQL backoff = inf at order 3 == order 1; finite backoff at order 2 makes pi depend on x_prev
+E16 iavi_tree at order 1 == hiavi_model.iavi
 """
 from functools import partial
 
@@ -222,6 +231,145 @@ def test_e10_k2_durations_regimes_identifiable():
         assert np.all(np.diff(LL) >= -1e-6 * np.abs(LL[:-1])), LL
         out.append(LL[-1])
     assert abs(out[1] - out[0]) > 1e-6, out
+
+
+# ---------------------------------------------------------------------------
+# Multi-agent coupling and HIQL
+# ---------------------------------------------------------------------------
+
+def _context(N, L, K, seed=5, frac=0.6):
+    """Random partner context on the x grid (T = L - 2): w in [0, 1] (zero on a random subset), c on the simplex."""
+    rng = np.random.default_rng(seed)
+    T = L - 2
+    w = rng.uniform(size=(N, T)) * (rng.uniform(size=(N, T)) < frac)
+    c = rng.dirichlet(np.ones(K), size=(N, T))
+    return w, c
+
+
+def _all_on(K=3):
+    return dict(order=2, reward_l2=0.0, switch_history=dict(kind="lags", lags=1),
+                durations=dict(max_duration=6, l2=0.0), hierarchy=dict(n_regimes=2, init_noise=0.3))
+
+
+def _hiql_base(K, S, A, seed=0):
+    from naturenet.models.irl.hiavi_model import HIAVI
+    hm = HIAVI(K, np.ones((S, A, S)) / S, seed=seed)
+    return hm._init()
+
+
+def test_e11_coupled_order1_equals_swirl_ext():
+    T, rows, a, base, R2 = _setup()
+    S, A = T.shape[:2]
+    N, L = rows.shape
+    K = R2.shape[0]
+    xo, ao = _onehots(rows, a, S, A)
+    w, c = _context(N, L, K)
+    r0 = em_train_ext(jnp.asarray(base[0]), jnp.asarray(base[1]), tuple(jnp.asarray(v) for v in base[2]),
+                      jnp.asarray(R2)[:, None], jnp.asarray(T), xo, ao, ctx=(w, c), alpha=0.1, fit_alpha=True,
+                      iters=4)
+    cfg, tree, d, p = _model(dict(coupling=dict(enabled=True, alpha0=0.1, tol=1e-4)), T, rows, a, base, R2, S)
+    r1 = sc.em_train_scales(p, cfg, tree, sc.with_context(d, w, c), iters=4)
+    assert np.allclose(r0["LL_list"], r1["LL_list"], rtol=0, atol=1e-6), (r0["LL_list"], r1["LL_list"])
+    assert abs(r0["alpha"] - sc.coupling_alpha(r1["params"], cfg)) < 1e-5
+    e0 = swirl_eval(r0, jnp.asarray(T), xo, ao, ctx=(w, c), paths=False)
+    e1 = sc.scales_eval(r1, tree, sc.with_context(d, w, c))
+    assert abs(e0["LL"] - e1["LL"]) < 1e-7
+
+
+def test_e12_zero_coupling_equals_uncoupled():
+    for emission in ("swirl", "hiql"):
+        T, rows, a, base, R2 = _setup()
+        S, A = T.shape[:2]
+        N, L = rows.shape
+        K = R2.shape[0]
+        conf = dict(_all_on(), emission=emission)
+        if emission == "hiql":
+            lp0, lP, lpis = _hiql_base(K, S, A)
+            base, R2 = (lp0, lP, None), lpis
+        w, c = _context(N, L, K)
+        cfg0, tree, d, p0 = _model(conf, T, rows, a, base, R2, S)
+        ref = _ll0(cfg0, tree, d, p0)["LL"]
+        cc = dict(conf, coupling=dict(enabled=True, alpha0=1e-12, beta0=0.0))
+        cfg1, tree1, d1, p1 = _model(cc, T, rows, a, base, R2, S)
+        p1["cpl_alpha"] = np.asarray(-1e3)                               # alpha = 0 exactly
+        e_a0 = _ll0(cfg1, tree1, sc.with_context(d1, w, c), p1)["LL"]
+        p2 = dict(p1, cpl_alpha=np.asarray(0.7), hz=dict(p1["hz"], beta=np.asarray(1.3)))
+        e_w0 = _ll0(cfg1, tree1, sc.with_context(d1, np.zeros_like(w), c), p2)["LL"]
+        e_nc = _ll0(cfg1, tree1, d1, p2)["LL"]                           # no context in the bundle -> w = 0
+        e_on = _ll0(cfg1, tree1, sc.with_context(d1, w, c), p2)["LL"]
+        for e in (e_a0, e_w0, e_nc):
+            assert abs(e - ref) < TOL, (emission, e, ref)
+        assert abs(e_on - ref) > 1e-6, (emission, e_on, ref)
+
+
+def test_e13_coupled_em_monotone():
+    for emission, K, conf in (("swirl", 3, _all_on()), ("hiql", 3, dict(_all_on(), order=3)),
+                              ("hiql", 2, dict(durations=dict(max_duration=6, l2=0.0)))):
+        T, rows, a, base, R2 = _setup(K=K, N=20, L=40)
+        S, A = T.shape[:2]
+        N, L = rows.shape
+        conf = dict(conf, emission=emission, coupling=dict(enabled=True, alpha0=0.2, beta0=0.5))
+        if emission == "hiql":
+            lp0, lP, lpis = _hiql_base(K, S, A)
+            base, R2 = (lp0, lP, None), lpis
+            conf["hiql"] = dict(backoff=0.0)
+        w, c = _context(N, L, K)
+        cfg, tree, d, p = _model(conf, T, rows, a, base, R2, S)
+        r = sc.em_train_scales(p, cfg, tree, sc.with_context(d, w, c), iters=6)
+        LL = np.asarray(r["LL_list"])
+        assert np.all(np.diff(LL) >= -1e-6 * np.abs(LL[:-1])), (emission, K, LL)
+        assert LL[-1] > LL[0]
+        assert abs(sc.coupling_beta(r["params"], cfg) - 0.5) > 1e-6          # beta moved
+        if K > 2:
+            assert sc.alpha_active(cfg, K)
+        else:
+            assert not sc.alpha_active(cfg, K) and sc.coupling_alpha(r["params"], cfg) == 0.0
+
+
+def test_e14_hiql_order1_equals_hiavi():
+    from naturenet.models.irl.hiavi_model import HIAVI
+    T, rows, a, base, R2 = _setup(K=3, N=16, L=35)
+    S, A = T.shape[:2]
+    K = 3
+    x = rows[:, 1:-1]
+    hm = HIAVI(K, T, seed=4, tol=0.0, max_iters=6).fit(x, a)
+    ref = HIAVI(K, T, seed=4)
+    lp0, lP, lpis = ref._init()
+    cfg, tree, d, p = _model(dict(emission="hiql"), T, rows, a, (lp0, lP, None), lpis, S)
+    r = sc.em_train_scales(p, cfg, tree, d, iters=6)
+    LL = np.asarray(r["LL_list"]) / x.size
+    assert np.allclose(hm.ll_history, LL, rtol=0, atol=1e-7), (hm.ll_history, LL)
+    rr = sc.hiql_finalize(r, tree, d)
+    assert rr["iavi"]["r"].shape == (K, S, A)
+
+
+def test_e15_hiql_backoff():
+    T, rows, a, base, R2 = _setup(K=2, N=16, L=40)
+    S, A = T.shape[:2]
+    K = 2
+    lp0, lP, lpis = _hiql_base(K, S, A)
+    out = {}
+    for order, kap in ((1, 5.0), (3, np.inf)):
+        cfg, tree, d, p = _model(dict(emission="hiql", order=order, hiql=dict(backoff=kap)), T, rows, a,
+                                 (lp0, lP, None), lpis, S)
+        out[order] = sc.em_train_scales(p, cfg, tree, d, iters=5)["LL_list"]
+    assert np.allclose(out[1], out[3], rtol=0, atol=1e-8), out
+    cfg, tree, d, p = _model(dict(emission="hiql", order=2, hiql=dict(backoff=1.0)), T, rows, a,
+                             (lp0, lP, None), lpis, S)
+    r = sc.em_train_scales(p, cfg, tree, d, iters=3)
+    kl = sc.history_kl(r, tree)
+    assert np.all(kl[:, 1] > 1e-4), kl
+
+
+def test_e16_iavi_tree_equals_iavi():
+    from naturenet.models.irl.hiavi_model import iavi
+    T = rand_mdp(7, 5, seed=2)
+    rows, _ = rollout(T, 4, 10)
+    tree = sc.ContextTree.build(rows, 7, T, order=1)
+    pi = np.random.default_rng(1).dirichlet(np.ones(5), size=7)
+    r0, q0 = iavi(T, pi, 0.9, tol=1e-10)
+    r1, q1 = sc.iavi_tree(tree, pi, 0.9, tol=1e-10)
+    assert np.abs(r0 - r1).max() < 1e-8 and np.abs(q0 - q1).max() < 1e-8
 
 
 if __name__ == "__main__":

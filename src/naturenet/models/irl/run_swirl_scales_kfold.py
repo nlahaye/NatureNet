@@ -19,7 +19,7 @@ Outputs in out_dir (run_uid_v = <run_uid>_SC_<variant tag>):
                                                                    jax_path_vmap (posterior-argmax z), seq meta
   <run_uid>_scales_cv.csv                                          one row per (variant, fold)
 --check prints the segment-length / context-coverage report and exits (use it to choose order, D and R).
-Multi-agent coupling is not combined with these toggles.
+Multi-agent (partner-coupled) fits of the same variants: run_scales_multiagent / scales_multiagent.
 """
 import argparse
 import copy
@@ -264,7 +264,8 @@ def run_scales(yml_conf, folds_to_run=None, only=None, check=False):
     data = prepare_data(yml_conf, load_swirl_dataset(yml_conf))
     s = yml_conf.get("scales") or {}
     if (yml_conf.get("multiagent") or {}).get("enabled", False):
-        raise NotImplementedError("multi-agent coupling is not combined with the decision-scale toggles")
+        raise NotImplementedError("this runner is single-agent (k-fold over sequences); multi-agent decision-scale "
+                                  "runs use run_scales_multiagent (leave-one-animal-out with partner context)")
     K, S, A, seed = int(yml_conf["n_hidden"]), data["n_states"], data["n_actions"], int(yml_conf["seed"])
     variants = scales_variants(yml_conf)
     if only:
