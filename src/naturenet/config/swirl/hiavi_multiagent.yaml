@@ -1,0 +1,53 @@
+# Coupled-intention (multi-agent) HIAVI mini-test on the current env window (2023-11-01 + 345 d).
+#   python -m naturenet.models.irl.run_hiavi_multiagent  -y hiavi_multiagent.yaml [--K 2] [--skip_null]
+#   python -m naturenet.models.irl.plot_hiavi_multiagent -y hiavi_multiagent.yaml
+# Same data / HIAVI keys as hiavi_kfold.yaml; the multiagent block configures the coupling, CV and nulls.
+
+seed: 12345
+n_hidden: 2
+n_states: 75
+out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/hiavi/"
+run_uid: "HIAVI_MA"
+
+# All keys (originals + __aug copies) of the animals in the window; positions "auto" pairs each actions file
+# with its _states_abstract_env.pkl. multiagent.animals restricts to those base ids.
+actions: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_*_actions.pkl"
+positions: "auto"
+df_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
+df_run_uid: "hammerhead_v1"           # step times / positions from <df_dir>/<df_run_uid>_dfs.pkl
+
+per_fold_trans_prob: True             # T from the training animals of each fold
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 20
+segment_policy: "chunk"
+
+hiavi_discount: 0.9
+hiavi_restarts: 10
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"
+
+multiagent:
+  animals: ["235283", "244607", "244608", "261743"]   # tracked inside the env window
+  window: ["2023-11-01", "2024-10-10"]               # calendar for the circular time-shift null
+  Ks: [2, 3]                                         # K = 2 primary; 3 as sensitivity (4 animals)
+  variants:
+    temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
+    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 50.0, max_km: 150.0}  # co-timing x closeness
+  n_outer: 5                  # mean-field outer iterations (context <-> posteriors)
+  alpha0: 0.1                 # initial coupling
+  n_null: 50                  # time-shift replicates of the full CV (p resolution 1/51)
+  null_variants: ["temporal", "proximity"]
+  null_min_shift_days: 30     # partners shifted by U(30, L - 30) days, independently per animal
+  n_null_sync: 500            # replicates for the synchrony index (no refit; cheap)
+  sync_variant: "temporal"
+  eval_include_aug: False     # score held-out ORIGINAL tracks only (copies are not independent data)
+  min_context_steps: 30       # warn if < 2 animals reach this many steps with partner context
+  ma_subdir: "multiagent"
+  # dfs_pkl: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_dfs.pkl"
