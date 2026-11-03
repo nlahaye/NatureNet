@@ -1,4 +1,5 @@
 
+import json
 import os
 import pickle
 import math
@@ -422,40 +423,90 @@ def compute_transition_probabilities(movement_df, grid, total_count=None, points
 #For now, split - later, can investigate use of loss functions that account for missing data:
 #https://arxiv.org/pdf/1911.06930
 
-def _segment_track(track_df, time_col="timestamp", max_gap_days=2.0, max_len=49, min_len=2, overlap=True):
+def _parse_times(ts):
+    """Timestamps -> tz-aware UTC Series (NaT where unparseable). Parsed once per call (format "mixed")."""
+    return pd.to_datetime(ts, utc=True, errors="coerce", format="mixed")
+
+
+def _check_segment_args(max_len, min_len):
+    if max_len is not None and int(max_len) < 2:
+        raise ValueError(f"max_segment_len={max_len}: need >= 2 fixes (or null for no cap)")
+    if int(min_len) < 2:
+        raise ValueError(f"min_segment_len={min_len}: need >= 2 fixes (one transition)")
+    if max_len is not None and int(min_len) > int(max_len):
+        raise ValueError(f"min_segment_len={min_len} > max_segment_len={max_len}")
+
+
+def _segment_bounds(t, max_gap_days=2.0, max_len=49, min_len=2, overlap=True):
     """
-    Split one animal's time-sorted track into segments:
-      - break where the gap between fixes is > ``max_gap_days`` (strict, not rounded)
-      - cap segment length at ``max_len`` fixes; with ``overlap`` the next chunk starts
-        at the last fix of the previous one, so no transition is lost at the cap
-      - keep segments with >= ``min_len`` fixes; the final fix of the track is kept
+    (start, stop) positions of the segments of ONE time-sorted, NaT-free track (t: tz-aware Series).
+    Break where the gap is > max_gap_days; cap at max_len fixes (None = no cap); keep >= min_len fixes.
     """
-    t = pd.to_datetime(track_df[time_col], utc=True, errors="coerce", format="mixed")
-    keep = t.notna().to_numpy()
-    track_df = track_df.loc[keep]
-    t = t[keep]
-    order = np.argsort(t.to_numpy(), kind="stable")
-    track_df = track_df.iloc[order]
-    t = t.iloc[order]
-    if len(track_df) == 0:
+    n = len(t)
+    if n == 0:
         return []
     gaps = t.diff().dt.total_seconds().to_numpy() / 86400.0
-    breaks = np.where(gaps > max_gap_days)[0]  # index i: gap between i-1 and i
+    breaks = np.flatnonzero(gaps > max_gap_days)            # index i: gap between i-1 and i
     starts = np.concatenate([[0], breaks])
-    ends = np.concatenate([breaks, [len(track_df)]])
-
-    segs = []
+    ends = np.concatenate([breaks, [n]])
+    out = []
+    if max_len is None:
+        for s, e in zip(starts, ends):
+            if e - s >= min_len:
+                out.append((int(s), int(e)))
+        return out
+    max_len = int(max_len)
     step = max_len - 1 if overlap else max_len
     for s, e in zip(starts, ends):
         i = s
         while i < e:
             j = min(i + max_len, e)
             if j - i >= min_len:
-                segs.append(track_df.iloc[i:j])
+                out.append((int(i), int(j)))
             if j >= e:
                 break
             i = i + step
-    return segs
+    return out
+
+
+def _segment_track(track_df, time_col="timestamp", max_gap_days=2.0, max_len=49, min_len=2, overlap=True, t=None):
+    """
+    Split one animal's time-sorted track into segments:
+      - break where the gap between fixes is > ``max_gap_days`` (strict, not rounded)
+      - cap segment length at ``max_len`` fixes (None = no cap: one segment per gap-free run); with
+        ``overlap`` the next chunk starts at the last fix of the previous one, so no transition is lost
+      - keep segments with >= ``min_len`` fixes; the final fix of the track is kept
+    t: the parsed timestamps of track_df (optional; parsed here otherwise). Segments are row slices of the
+    input (same columns, dtypes and index labels), in time order.
+    """
+    _check_segment_args(max_len, min_len)
+    if t is None:
+        t = _parse_times(track_df[time_col])
+    keep = t.notna().to_numpy()
+    track_df = track_df.loc[keep]
+    t = t[keep]
+    order = np.argsort(t.to_numpy(), kind="stable")
+    track_df = track_df.iloc[order]
+    t = t.iloc[order]
+    return [track_df.iloc[i:j] for i, j in _segment_bounds(t, max_gap_days, max_len, min_len, overlap)]
+
+
+def _save_segment_params(out_dir, run_uid, params, dfs):
+    """Sidecar <run_uid>_dfs_params.json: the segmentation settings and a length summary (dfs.pkl unchanged)."""
+    L = np.array([len(sg) for segs in dfs.values() for sg in segs], dtype=np.int64)
+    info = dict(params, n_tracks=len(dfs), n_segments=int(L.size),
+                fixes_per_segment=dict(min=int(L.min()), median=float(np.median(L)), max=int(L.max())) if L.size
+                else None)
+    info["bounds"] = None if params.get("bounds") is None else [list(map(float, b)) for b in params["bounds"]]
+    with open(os.path.join(out_dir, run_uid + "_dfs_params.json"), "w") as f:
+        json.dump(info, f, indent=1)
+    if L.size:
+        cap = params.get("max_len")
+        at_cap = int((L == cap).sum()) if cap is not None else 0
+        print(f"Segments: {L.size}; fixes per segment min/median/max = {L.min()}/{np.median(L):.0f}/{L.max()}"
+              + (f"; {at_cap} at the max_segment_len={cap} cap (longer runs are split there; SWIRL seq_len "
+                 f"cannot exceed {cap})" if cap is not None else "; no length cap"))
+    return info
 
 
 def _filter_to_bounds(movement_df, bounds):
@@ -475,6 +526,7 @@ def _filter_to_bounds(movement_df, bounds):
 def split_pre_split_streams(dfs_by_id, ids, out_dir, run_uid, max_gap_days=2.0, max_len=29, min_len=2,
                             overlap=True, bounds=None):
 
+    _check_segment_args(max_len, min_len)
     final_dfs = {}
     for i in range(len(dfs_by_id)):
         df = _filter_to_bounds(dfs_by_id[i], bounds)
@@ -484,6 +536,8 @@ def split_pre_split_streams(dfs_by_id, ids, out_dir, run_uid, max_gap_days=2.0, 
 
     with open(os.path.join(out_dir, run_uid + '_dfs.pkl'), 'wb') as f:
          pickle.dump(final_dfs, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _save_segment_params(out_dir, run_uid, dict(max_gap_days=max_gap_days, max_len=max_len, min_len=min_len,
+                                                overlap=overlap, bounds=bounds, pre_split=True), final_dfs)
 
     return final_dfs
 
@@ -491,27 +545,48 @@ def split_pre_split_streams(dfs_by_id, ids, out_dir, run_uid, max_gap_days=2.0, 
 def split_movement_streams(movement_df, out_dir, run_uid, max_gap_days=2.0, max_len=49, min_len=2,
                            overlap=True, bounds=None):
     """
-    Split every animal's track into segments (see ``_segment_track``).
+    Split every animal's track into segments (see ``_segment_track``; max_len None = no cap).
     Keys are str(uid), so augmented ids ("123__aug1") and numeric ids are handled the same way.
+    Timestamps are parsed once for the whole table and all tracks are sorted in one pass; each segment is a
+    row slice of the (uid-stripped, bounds-filtered) input, exactly as before. Also writes
+    <run_uid>_dfs_params.json (settings + length summary) next to the pickle.
     """
-     
+    _check_segment_args(max_len, min_len)
     print("SPLITTING Movement streams")
     movement_df = movement_df.copy()
     movement_df["uid"] = movement_df["uid"].astype(str).str.strip()
     movement_df = _filter_to_bounds(movement_df, bounds)
 
+    t_all = _parse_times(movement_df["timestamp"])
+    uids, code = np.unique(movement_df["uid"].to_numpy(dtype=str), return_inverse=True)  # sorted, as groupby
+    n_in = np.bincount(code, minlength=len(uids))
+    ok = np.flatnonzero(t_all.notna().to_numpy())
+    # one stable sort by (uid, time); ties keep the input order (as the per-track stable argsort did)
+    ti = t_all.iloc[ok].dt.tz_convert(None).to_numpy().view("i8")
+    order = ok[np.lexsort((np.arange(len(ok)), ti, code[ok]))]
+    sorted_df = movement_df.iloc[order]
+    t_sorted = t_all.iloc[order]
+    c_sorted = code[order]
+    cuts = np.searchsorted(c_sorted, np.arange(len(uids) + 1))
+
     final_dfs = {}
-    n_fix_in, n_fix_kept = 0, 0
-    for uid, track in movement_df.groupby("uid", sort=True):
-        segs = _segment_track(track, max_gap_days=max_gap_days, max_len=max_len, min_len=min_len, overlap=overlap)
-        final_dfs[uid] = segs
-        n_fix_in += len(track)
-        n_fix_kept += len(pd.concat(segs).index.unique()) if segs else 0
-    print(f"Segmented {len(final_dfs)} tracks; {n_fix_kept}/{n_fix_in} fixes are in a segment")
+    n_fix_kept = 0
+    for u, uid in enumerate(uids):
+        lo, hi = int(cuts[u]), int(cuts[u + 1])
+        bnds = _segment_bounds(t_sorted.iloc[lo:hi], max_gap_days, max_len, min_len, overlap)
+        final_dfs[uid] = [sorted_df.iloc[lo + i:lo + j] for i, j in bnds]
+        if bnds:                                             # union of the (possibly overlapping) ranges
+            cover = np.zeros(hi - lo, dtype=bool)
+            for i, j in bnds:
+                cover[i:j] = True
+            n_fix_kept += int(cover.sum())
+    print(f"Segmented {len(final_dfs)} tracks; {n_fix_kept}/{int(n_in.sum())} fixes are in a segment")
 
     print("SAVING", os.path.join(out_dir, run_uid + '_dfs.pkl'))
     with open(os.path.join(out_dir, run_uid + '_dfs.pkl'), 'wb') as f:
         pickle.dump(final_dfs, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _save_segment_params(out_dir, run_uid, dict(max_gap_days=max_gap_days, max_len=max_len, min_len=min_len,
+                                                overlap=overlap, bounds=bounds, pre_split=False), final_dfs)
 
     return final_dfs
 

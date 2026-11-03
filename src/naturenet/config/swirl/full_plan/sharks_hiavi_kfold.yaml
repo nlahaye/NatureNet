@@ -9,8 +9,11 @@ df_run_uid: "hammerhead_v1"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
-seq_len: 60                 # chunk windows: long enough for durations (D <= 20) and regimes
-segment_policy: "chunk"
+seq_len: 49                 # chunk windows: long enough for durations (D <= 20) and regimes. Must be <= the
+                            # preprocessing cap max_segment_len (49 for the existing pkls; 60 gave 0 sequences)
+segment_policy: "chunk"     # or "variable": one sequence per valid run, seq_len = MAX length (runs split into
+                            # near-equal pieces; null = no cap), padded + masked (exact LLs). Not for NN-SWIRL.
+# min_seq_len: 10           # variable only: drop runs shorter than this (default 3); set >= 3 * max_duration
 n_folds: 5
 fold_seed: 0
 folds_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/folds/"     # one fold file for ARHMM, SWIRL, NN-SWIRL, HIAVI and decision scales

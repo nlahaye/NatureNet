@@ -13,6 +13,14 @@ df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
 run_uid: "hammerhead_v1"
 
 init_preprocess: True
+# Segmentation (defaults shown). max_segment_len caps fixes per segment and so bounds every later seq_len;
+# null = no cap (one segment per gap-free run), the natural choice for segment_policy: variable. Changing it
+# needs a fresh <df_run_uid>_dfs.pkl and the downstream actions / states pkls (a cached pkl with other
+# settings raises; see <run_uid>_dfs_params.json).
+# max_gap_days: 2.0
+# max_segment_len: 49
+# min_segment_len: 2
+# segment_overlap: True
 
 
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"

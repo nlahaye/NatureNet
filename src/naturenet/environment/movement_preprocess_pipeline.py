@@ -26,6 +26,12 @@ def _merge_counts(dst, src):
 
 
 def _segment_kwargs(yml_conf, default_max_len):
+    """
+    Segmentation settings. max_segment_len: null = no cap (one segment per gap-free run; recommended with
+    segment_policy: variable, which splits long runs at seq_len inside the loader instead). The cap is an
+    upper bound on every later SWIRL / HIAVI seq_len, and order-N contexts, durations and regimes reset at
+    each cap split.
+    """
     return dict(
         max_gap_days=yml_conf.get("max_gap_days", 2.0),
         max_len=yml_conf.get("max_segment_len", default_max_len),
@@ -33,6 +39,42 @@ def _segment_kwargs(yml_conf, default_max_len):
         overlap=yml_conf.get("segment_overlap", True),
         bounds=_bounds_from_conf(yml_conf),
     )
+
+
+def _segments_signature(segs):
+    """Short fingerprint of one key's segments (lengths + first / last index labels) for resume checks."""
+    import hashlib
+    h = hashlib.sha1()
+    for sg in segs:
+        h.update(f"{len(sg)}:{sg.index[0] if len(sg) else ''}:{sg.index[-1] if len(sg) else ''};".encode())
+    return h.hexdigest()[:16]
+
+
+def _check_cached_segments(df_fname, movement_dfs, seg_kwargs):
+    """
+    A cached <df_run_uid>_dfs.pkl is reused as-is: fail if it was made with different segment settings (its
+    _dfs_params.json sidecar), and report its lengths when there is no sidecar (pickles from older code).
+    """
+    import json
+    side = os.path.splitext(df_fname)[0] + "_params.json"
+    L = np.array([len(sg) for segs in movement_dfs.values() for sg in segs], dtype=np.int64)
+    want = {k: seg_kwargs[k] for k in ("max_gap_days", "max_len", "min_len", "overlap")}
+    if os.path.exists(side):
+        with open(side) as f:
+            have = json.load(f)
+        diff = {k: (have.get(k), v) for k, v in want.items() if have.get(k) != v}
+        if diff:
+            raise ValueError(f"{df_fname} was segmented with different settings {{key: (cached, config)}} = {diff}. "
+                             "Delete it (and this run's per-key *_key_counts.pkl / actions / states files) to "
+                             "re-segment, or set the config back to the cached values.")
+    elif L.size:
+        cap = want["max_len"]
+        print(f"NOTE: {df_fname} has no _dfs_params.json (older code); fixes per segment max {L.max()}, "
+              f"{int((L == L.max()).sum())} segments at that length. It is reused as-is"
+              + (f" although max_segment_len={cap} is configured" if cap is not None and cap != L.max() else "") + ".")
+    if L.size:
+        print(f"Loaded {L.size} segments from {df_fname}; fixes per segment min/median/max = "
+              f"{L.min()}/{np.median(L):.0f}/{L.max()}")
 
 
 def run_movement_track_preprocess(yml_conf):
@@ -55,17 +97,20 @@ def run_movement_track_preprocess(yml_conf):
             ids.append((os.path.splitext(os.path.basename(yml_conf["pre_split_movement_csvs"][i]))[0]).replace(" ", "_"))
 
         movement_dfs = split_pre_split_streams(dfs_by_id, ids, yml_conf["out_dir"], yml_conf["run_uid"],
-                                               **_segment_kwargs(yml_conf, yml_conf["split_len"]))
+                                               **_segment_kwargs(yml_conf, 29))
+        seg_kwargs = _segment_kwargs(yml_conf, 29)
 
     elif os.path.exists(df_fname):
 
         movement_dfs = None
         with open(df_fname, "rb") as f:
             movement_dfs = pd.read_pickle(f)
+        seg_kwargs = _segment_kwargs(yml_conf, 49)
+        _check_cached_segments(df_fname, movement_dfs, seg_kwargs)
     else:
         movement_df = pd.read_csv(yml_conf["movement_csv"])
-        movement_dfs = split_movement_streams(movement_df, yml_conf["out_dir"], yml_conf["run_uid"],
-                                              **_segment_kwargs(yml_conf, yml_conf["split_len"]))
+        seg_kwargs = _segment_kwargs(yml_conf, 49)
+        movement_dfs = split_movement_streams(movement_df, yml_conf["out_dir"], yml_conf["run_uid"], **seg_kwargs)
 
     # One grid shared by every key. Without lon/lat_bounds, use the extent of ALL keys
     # (per-key grids gave inconsistent flat indices in the pooled transition model).
@@ -90,16 +135,18 @@ def run_movement_track_preprocess(yml_conf):
         run_uid = yml_conf["run_uid"] + "_" + key
         tp_fname = os.path.join(yml_conf["out_dir"], run_uid + "_trans_prob.npz")
         key_counts_fname = os.path.join(yml_conf["out_dir"], run_uid + "_key_counts.pkl")
-        print("HERE", tp_fname, os.path.exists(tp_fname))
+        movement_sub_df = movement_dfs[key]
+        sig = _segments_signature(movement_sub_df)
         if os.path.exists(tp_fname) and os.path.exists(key_counts_fname):
-            # Resume: still pool this key's counts so the global model is complete.
+            # Resume: still pool this key's counts so the global model is complete. Recompute the key if its
+            # segments changed since (re-segmented dfs.pkl); older files without a signature are reused.
             with open(key_counts_fname, "rb") as f:
                 kc = pickle.load(f)
-            _merge_counts(points, kc["points"])
-            _merge_counts(total_count, kc["total_count"])
-            continue
-
-        movement_sub_df = movement_dfs[key]
+            if kc.get("segments_sig", sig) == sig:
+                _merge_counts(points, kc["points"])
+                _merge_counts(total_count, kc["total_count"])
+                continue
+            print(f"{key}: segments changed since {key_counts_fname}; recomputing this key")
 
         single_unit_coords_full = []
         actions_full = []
@@ -137,7 +184,8 @@ def run_movement_track_preprocess(yml_conf):
 
         # Written last: its presence marks the key as complete for resume.
         with open(key_counts_fname, "wb") as f:
-             pickle.dump({"points": key_points, "total_count": key_total}, f, protocol=pickle.HIGHEST_PROTOCOL)
+             pickle.dump({"points": key_points, "total_count": key_total, "segments_sig": sig}, f,
+                         protocol=pickle.HIGHEST_PROTOCOL)
 
     trans_prob = counts_to_trans_prob(points, total_count, n_states, N_ACTIONS)
     sparse.save_npz(os.path.join(yml_conf["out_dir"], yml_conf["run_uid"] +  "_trans_prob"), trans_prob)

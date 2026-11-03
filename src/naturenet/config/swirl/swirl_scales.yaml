@@ -25,7 +25,7 @@ require_full_trans_prob: True
 
 # Durations and regimes need long sequences: max_duration <= T / 2 and several regime switches per sequence.
 # All variants in one sweep share seq_len, so their LLs are comparable. Run --check before choosing.
-seq_len: 60
+seq_len: 49                 # <= movement preprocessing max_segment_len (default 49)
 segment_policy: "chunk"
 
 n_folds: 5

@@ -290,7 +290,11 @@ def build_dataset(segs, seq_len=None, segment_policy="exact", min_len=3, verbose
             groups.append(g)
             meta.append(dict(m, start=m["start"] + int(off), length=int(len(ps))))
     if not states:
-        raise ValueError(f"No sequences of length {seq_len} with segment_policy={segment_policy}")
+        longest = max(len(r[1]) for r in runs)
+        raise ValueError(f"No sequences of length {seq_len} with segment_policy={segment_policy}: the longest valid "
+                         f"run has {longest} states. Movement segments are capped at max_segment_len fixes in "
+                         "movement preprocessing (default 49); lower seq_len, use segment_policy: variable, or "
+                         "re-segment with a larger max_segment_len (null = no cap).")
 
     if variable:
         states, actions, lens = _pad_rows(states, actions)
