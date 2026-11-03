@@ -30,9 +30,11 @@ def report(conf):
     pc = step_metadata(conf, data)
     orig = original_mask(pc)
     N, T = s.shape
-    dt_h = np.diff(pc.times, axis=1) * 24.0                                    # (N, T-1) hours between steps
+    valid = pc.valid                                                           # real steps (variable lengths)
+    n_real = valid.sum(1)
+    dt_h = np.diff(pc.times, axis=1) * 24.0                                    # (N, T-1) hours; NaN at padding
     med = float(np.nanmedian(dt_h[orig])) if orig.any() else float(np.nanmedian(dt_h))
-    counts = np.bincount(s[orig].ravel(), minlength=S)
+    counts = np.bincount(s[orig[:, None] & valid], minlength=S)
     top5 = float(np.sort(counts)[::-1][:5].sum() / max(counts.sum(), 1))
     w = (conf.get("multiagent") or {}).get("window")
     lo, hi = (float(_to_days([w[0]])[0]), float(_to_days([w[1]])[0]) + 1.0) if w else (-np.inf, np.inf)
@@ -40,18 +42,24 @@ def report(conf):
     for an in sorted(set(pc.animal[orig])):
         m = orig & (pc.animal == an)
         d = dt_h[m].ravel()
+        d = d[np.isfinite(d)]
         t = pc.times[m]
-        rows.append(dict(animal=an, n_seq=int(m.sum()), n_steps=int(m.sum() * T),
+        t = t[np.isfinite(t)]
+        rows.append(dict(animal=an, n_seq=int(m.sum()), n_steps=int(n_real[m].sum()),
                          start=str(pd.Timestamp("1970-01-01") + pd.Timedelta(days=float(t.min())))[:10],
                          end=str(pd.Timestamp("1970-01-01") + pd.Timedelta(days=float(t.max())))[:10],
                          dt_med_h=float(np.median(d)), dt_p10_h=float(np.percentile(d, 10)),
                          dt_p90_h=float(np.percentile(d, 90)), frac_dt_gt_2med=float(np.mean(d > 2 * med)),
                          steps_in_window=int(((t >= lo) & (t < hi)).sum())))
     per = pd.DataFrame(rows)
-    summ = dict(n_sequences=N, seq_len_steps=T, n_original_sequences=int(orig.sum()),
+    dto = dt_h[orig]
+    dto = dto[np.isfinite(dto)]
+    summ = dict(n_sequences=N, seq_len_steps=T if (n_real == T).all() else
+                f"{int(n_real.min())}-{T} (median {np.median(n_real):.0f}, variable)",
+                n_original_sequences=int(orig.sum()),
                 n_animals=len(per), n_states=S, states_unvisited=int((counts == 0).sum()),
                 top5_state_share=top5, dt_median_h=med,
-                frac_dt_gt_2med=float(np.nanmean(dt_h[orig] > 2 * med)),
+                frac_dt_gt_2med=float(np.mean(dto > 2 * med)) if dto.size else 0.0,
                 animals_in_window=int((per["steps_in_window"] > 0).sum()) if w else None)
     flags = []
     if summ["frac_dt_gt_2med"] > 0.2:
@@ -65,7 +73,7 @@ def report(conf):
         flags.append("fewer than 2 animals inside multiagent.window: no partner context.")
     thin = per[per["n_seq"] < 2]["animal"].tolist()
     if thin:
-        flags.append(f"animals with < 2 sequences at seq_len {T}: {thin} (weak held-out folds)")
+        flags.append(f"animals with < 2 sequences at seq_len {summ['seq_len_steps']}: {thin} (weak held-out folds)")
     return summ, per, flags
 
 

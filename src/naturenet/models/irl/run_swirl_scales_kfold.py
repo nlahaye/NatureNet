@@ -34,7 +34,7 @@ import jax.numpy as jnp
 from naturenet.models.irl import swirl_scales as sc
 from naturenet.models.irl.run_swirl_kfold import (
     _fold_iter, _init_kin_model, _temps, fold_trans_prob, load_arhmm, prepare_data, swirl_kinematics)
-from naturenet.models.irl.swirl_data import init_rewards, load_swirl_dataset, seq_meta_arrays
+from naturenet.models.irl.swirl_data import init_rewards, load_swirl_dataset, seq_lengths, seq_meta_arrays, step_mask
 from naturenet.models.irl.kinematics import comparable_ll, kin_conf, pooled
 from naturenet.models.irl.swirl_multiagent import sticky_init
 
@@ -119,25 +119,35 @@ def segment_report(data, variants, S):
     rows = np.asarray(data["states"])
     N, L = rows.shape
     T = L - 2
-    print(f"{N} sequences x {T} steps = {N * T} steps; {len(set(np.asarray(data['groups'])))} animals; S = {S}")
-    stay = float(np.mean(rows[:, 1:] == rows[:, :-1]))
+    lens = seq_lengths(data)
+    msk = step_mask(data, 1)
+    n_steps = int(msk.sum())
+    print(f"{N} sequences x {T} steps = {N * T} steps; {len(set(np.asarray(data['groups'])))} animals; S = {S}"
+          if n_steps == N * T else
+          f"{N} sequences, {n_steps} real steps (variable lengths: {int(msk.sum(1).min())}-{T} steps, "
+          f"median {np.median(msk.sum(1)):.0f}; {1 - n_steps / (N * T):.1%} padding); "
+          f"{len(set(np.asarray(data['groups'])))} animals; S = {S}")
+    real = np.arange(L - 1)[None] < (lens - 1)[:, None]
+    stay = float(np.mean((rows[:, 1:] == rows[:, :-1])[real]))
     print(f"state self-transition fraction {stay:.3f}")
     for tag, c in variants:
         cfg = sc.ScalesConfig.from_dict(c)
         msg = [tag]
         if cfg.order > 1:
             tree = sc.ContextTree.build(rows, S, np.ones((S, 1, S)) / S, order=cfg.order,
-                                        min_count=cfg.context_min_count)
+                                        min_count=cfg.context_min_count, lengths=lens)
             ctx = tree.contexts(rows)
             dep = tree.depth[ctx]
             full = np.minimum(cfg.order, np.arange(T)[None] + 2)
-            msg.append(f"contexts H = {tree.H} (deep {tree.H - S}); steps at full depth {np.mean(dep == full):.2f}")
-            msg.append(f"steps / deep context {N * T / max(tree.H - S, 1):.1f}")
+            msg.append(f"contexts H = {tree.H} (deep {tree.H - S}); steps at full depth "
+                       f"{np.mean((dep == full)[msk]):.2f}")
+            msg.append(f"steps / deep context {n_steps / max(tree.H - S, 1):.1f}")
+        Tm = int(np.median(msk.sum(1)))                               # typical sequence length (= T if fixed)
         if cfg.durations.enabled:
             D = cfg.D
-            msg.append(f"D = {D}: {'OK' if D <= T // 2 else 'WARNING D > T/2'}")
+            msg.append(f"D = {D}: {'OK' if D <= Tm // 2 else 'WARNING D > T/2'}")
         if cfg.hierarchy.enabled:
-            msg.append(f"R = {cfg.R}: steps per sequence {T} ({'short for regimes' if T < 50 else 'OK'})")
+            msg.append(f"R = {cfg.R}: steps per sequence {Tm} ({'short for regimes' if Tm < 50 else 'OK'})")
         if cfg.history.enabled:
             msg.append(f"history {'+'.join(cfg.history.kind)}")
         print("  " + "; ".join(msg))
@@ -170,13 +180,15 @@ def _names(yml_conf, tag, kf_ind):
 
 def _tree(cfg, data, T, tr, S):
     rows = np.asarray(data["states"])
-    src = rows if cfg.context_source == "all" else rows[tr]
+    lens = seq_lengths(data)
+    src, src_len = (rows, lens) if cfg.context_source == "all" else (rows[tr], lens[tr])
     extra = None
     if cfg.context_t_support and cfg.order >= 2:
         from naturenet.models.irl.swirl_utils import compute_prev_state_map
         psm = compute_prev_state_map(T, S, data["n_actions"], observed_pairs=[(data["x"], data["x_prev"])])
         extra = [(int(p), s) for s in range(S) for p in psm.get(s, [])]
-    return sc.ContextTree.build(src, S, T, order=cfg.order, min_count=cfg.context_min_count, extra_pairs=extra)
+    return sc.ContextTree.build(src, S, T, order=cfg.order, min_count=cfg.context_min_count, extra_pairs=extra,
+                                lengths=src_len)
 
 
 def fit_variant_fold(yml_conf, data, T, tr, te, tag, conf, base, R_start, temps, kin, kin_null, km0, parent,
@@ -206,10 +218,11 @@ def fit_variant_fold(yml_conf, data, T, tr, te, tag, conf, base, R_start, temps,
                                tol=tol)
     sec = time.time() - t0
     uid, f_par, f_ll, f_llt = _names(yml_conf, tag, kf_ind)
-    counts = np.bincount(np.asarray(dtr["ctx"]).ravel(), minlength=tree.H)
+    m_tr = np.asarray(sc.data_mask(dtr))                              # real (unpadded) steps
+    counts = np.bincount(np.asarray(dtr["ctx"])[m_tr], minlength=tree.H)
     diag = dict(history_kl=sc.history_kl(r, tree, counts), reward_depth_share=sc.reward_depth_share(r, tree, counts),
                 ctx_counts=counts, phi_names=np.asarray(dtr["phi_names"], dtype=object),
-                phi_mean=np.asarray(dtr["phi"]).reshape(-1, max(dtr["phi"].shape[-1], 1)).mean(0)
+                phi_mean=np.asarray(dtr["phi"])[m_tr].mean(0)
                 if dtr["phi"].shape[-1] else np.zeros(0), variant=tag, fit_sec=sec)
     np.savez(f_par, **sc.params_to_save(r, tree), **diag)
     row = dict(variant=tag, fold=kf_ind, order=cfg.order, latent=_latent_key(cfg) or "none",
@@ -228,13 +241,13 @@ def fit_variant_fold(yml_conf, data, T, tr, te, tag, conf, base, R_start, temps,
             ll, joint, null = comparable_ll(ev["LL_total"], kin_null, kin[idx], ev["n_steps"])
             extra = dict(LL_joint=joint, LL_kin_null=null, LL_action=eva["LL"])
             row[f"LL_{split}_action"] = eva["LL"]
-        dep = tree.depth[np.asarray(d["ctx"])]
+        dep = np.where(ev["mask"], tree.depth[np.asarray(d["ctx"])], 0)  # 0 on padded steps
         np.savez(path, LL=ll, step_ll=ev["step_ll"], gamma=ev["gamma"], gamma_r=ev["gamma_r"],
                  jax_path_vmap=ev["path"], path_kind="posterior_argmax", ctx_depth=dep, **extra,
                  **seq_meta_arrays(data, idx))
         row[f"LL_{split}"] = ll
         row[f"n_{split}_steps"] = ev["n_steps"]
-        row[f"ctx_depth_{split}"] = float(dep.mean())
+        row[f"ctx_depth_{split}"] = float(dep[ev["mask"]].mean())
     print(f"  {tag} fold {kf_ind}: train {row['LL_train']:.4f}" +
           (f"  test {row['LL_test']:.4f}" if "LL_test" in row else "") + f"  ({sec:.0f} s, {row['n_params']} params)")
     return r, tree, row
@@ -261,7 +274,7 @@ def _write_rows(yml_conf, rows):
 
 
 def run_scales(yml_conf, folds_to_run=None, only=None, check=False):
-    data = prepare_data(yml_conf, load_swirl_dataset(yml_conf))
+    data = prepare_data(yml_conf, load_swirl_dataset(yml_conf, allow_variable=True))
     s = yml_conf.get("scales") or {}
     if (yml_conf.get("multiagent") or {}).get("enabled", False):
         raise NotImplementedError("this runner is single-agent (k-fold over sequences); multi-agent decision-scale "

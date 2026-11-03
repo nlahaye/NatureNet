@@ -16,7 +16,9 @@ from naturenet.models.irl.swirl_training import *  # noqa: F401,F403
 from naturenet.models.irl.swirl_training_top_level import *  # noqa: F401,F403
 from naturenet.models.irl.swirl_utils import *  # noqa: F401,F403
 from naturenet.models.irl.swirl_data import (
+    align_data,
     align_for_swirl,
+    step_mask,
     as_list,
     seq_meta_arrays,
     as_rs,
@@ -56,18 +58,26 @@ if _platform:
 # ---------------------------------------------------------------------------
 
 def prepare_data(yml_conf, data=None):
-    data = data if data is not None else load_swirl_dataset(yml_conf)
+    """
+    Aligned x / x_prev / a and one-hots. segment_policy: variable: padded steps get all-zero one-hots
+    (emission LL 0, excluded from every M-step) and identity transitions (swirl_training.pad_eye), so the
+    LLs, posteriors and Viterbi paths on the real steps equal those of the unpadded sequences.
+    """
+    data = data if data is not None else load_swirl_dataset(yml_conf, allow_variable=True)
     if "xohs" in data:  # already prepared
         return data
     n_states = int(yml_conf["n_states"])
     n_actions = 9
-    x, x_prev, a = align_for_swirl(data["states"], data["actions"])
+    x, x_prev, a = align_data(data)
     check_swirl_inputs(data["states"], data["actions"], n_states, n_actions)
-
+    m = step_mask(data, offset=1)
+    assert m.shape == x.shape and np.all((a >= 0) == m), "padding mask / PAD_ACTION mismatch"
+    assert m[:, 0].all(), "every sequence needs at least one real SWIRL step (>= 3 states)"
+    mj = jnp.asarray(m, dtype=jnp.float64)[:, :, None, None]
     one_hotx = vmap(partial(one_hotx_partial, n_states=n_states))
     one_hota = vmap(partial(one_hota_partial, n_actions=n_actions))
-    data.update(x=x, x_prev=x_prev, a=a, n_states=n_states, n_actions=n_actions,
-                xohs=one_hotx(jnp.asarray(x)), aohs=one_hota(jnp.asarray(a)))
+    data.update(x=x, x_prev=x_prev, a=a, n_states=n_states, n_actions=n_actions, step_mask=m,
+                xohs=one_hotx(jnp.asarray(x)) * mj, aohs=one_hota(jnp.asarray(np.maximum(a, 0))) * mj)
     return data
 
 
@@ -111,6 +121,8 @@ def s2_inputs(yml_conf, data, T):
     xs_prev = preprocess_xs_prev_np(data["x"], data["x_prev"], prev_state_map, n_actions, n_states)
     one_hotx2 = vmap(partial(one_hotx2_partial, n_states=n_states, n_actions=M))
     xohs2 = one_hotx2(jnp.asarray(data["x"]), jnp.asarray(xs_prev))
+    if "step_mask" in data:   # padded steps: zero one-hots (segment_policy: variable)
+        xohs2 = xohs2 * jnp.asarray(data["step_mask"], dtype=xohs2.dtype)[:, :, None, None]
     out = (jnp.asarray(new_T), xohs2, M)
     cache[("S2psm", id(T))] = prev_state_map  # small; kept for plots (reward2 layout = x * M + slot)
     if yml_conf.get("cache_fold_inputs", True):  # set False if 5 folds of S-2 tensors do not fit in memory
@@ -404,7 +416,7 @@ def run_all(yml_conf, folds_to_run=None):
     """ARHMM + SWIRL init + final with the data loaded once."""
     data = None
     if yml_conf.get("run_arhmm", False) or yml_conf.get("run_swirl_init", False) or yml_conf.get("run_swirl_final", False):
-        data = load_swirl_dataset(yml_conf)
+        data = load_swirl_dataset(yml_conf, allow_variable=True)
     if yml_conf.get("run_arhmm", False):
         run_arhmm(yml_conf, data=data, folds_to_run=folds_to_run)
     if yml_conf.get("run_swirl_init", False) or yml_conf.get("run_swirl_final", False):

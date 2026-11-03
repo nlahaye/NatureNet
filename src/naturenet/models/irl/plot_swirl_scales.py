@@ -178,8 +178,9 @@ def plot_regimes(conf, tags, k, n_seq, path):
         gr, path_z = llt["gamma_r"], llt["jax_path_vmap"]
         for i in range(min(n_seq, gr.shape[0])):
             ax = axes[i, j]
-            ax.stackplot(np.arange(gr.shape[1]), gr[i].T, alpha=0.6)
-            ax.scatter(np.arange(gr.shape[1]), np.full(gr.shape[1], -0.08), c=path_z[i], cmap="tab10", s=4,
+            n_i = int((path_z[i] >= 0).sum())             # real steps (padded rows end with path -1)
+            ax.stackplot(np.arange(n_i), gr[i, :n_i].T, alpha=0.6)
+            ax.scatter(np.arange(n_i), np.full(n_i, -0.08), c=path_z[i, :n_i], cmap="tab10", s=4,
                        marker="s", vmin=0, vmax=9)
             ax.set_ylim(-0.15, 1)
             ax.set_yticks([])

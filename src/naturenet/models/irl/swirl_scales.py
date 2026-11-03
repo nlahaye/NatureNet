@@ -335,8 +335,11 @@ class ContextTree:
         self.anc = anc
 
     @classmethod
-    def build(cls, state_rows, S, T, order=1, min_count=1, extra_pairs=None):
-        """state_rows: (N, L) int states (the full rows; x = rows[:, 1:-1]). extra_pairs: (prev, x) to add."""
+    def build(cls, state_rows, S, T, order=1, min_count=1, extra_pairs=None, lengths=None):
+        """
+        state_rows: (N, L) int states (the full rows; x = rows[:, 1:-1]). extra_pairs: (prev, x) to add.
+        lengths (N,): real states per row (segment_policy: variable); windows reaching into padding are skipped.
+        """
         order = int(order)
         nodes = [(s,) for s in range(int(S))]
         if order > 1:
@@ -346,7 +349,11 @@ class ContextTree:
             for k in range(2, order + 1):
                 if L < k:
                     break
-                win = np.lib.stride_tricks.sliding_window_view(rows, k, axis=1).reshape(-1, k)
+                win = np.lib.stride_tricks.sliding_window_view(rows, k, axis=1)       # (N, L-k+1, k)
+                if lengths is not None:
+                    ok = np.arange(L - k + 1)[None, :] <= (np.asarray(lengths)[:, None] - k)
+                    win = win[ok]
+                win = win.reshape(-1, k)
                 u, n = np.unique(win, axis=0, return_counts=True)
                 for w, c in zip(map(tuple, u.tolist()), n):
                     # factor-closed: both (k-1)-factors must already be nodes (always true for min_count = 1)
@@ -490,8 +497,10 @@ def log_policy(theta, nxt, prob, anc, temps, reward_param, use_temp):
 
 
 def emission_ll(logpi, ctx, a):
-    """(N, T, K) from logpi (K, H, A), ctx (N, T), a (N, T)."""
-    return jnp.moveaxis(logpi[:, ctx, a], 0, -1)
+    """(N, T, K) from logpi (K, H, A), ctx (N, T), a (N, T); 0 on padded steps (a = -1, segment_policy: variable)."""
+    a = jnp.asarray(a)
+    ll = jnp.moveaxis(logpi[:, ctx, jnp.maximum(a, 0)], 0, -1)
+    return jnp.where((a >= 0)[..., None], ll, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -624,8 +633,11 @@ def _shift(B):
     return jnp.concatenate([B[..., 1:], B[..., -1:]], axis=-1)
 
 
-def _seq_fb(logpi0, logPR, ll, logQ, lh, l1h, want_kd, ht):
+def _seq_fb(logpi0, logPR, ll, logQ, lh, l1h, want_kd, ht, m=None):
     """
+    m (T,) bool: real steps (padding at the end, segment_policy: variable). A padded step carries alpha / beta
+    unchanged (identity transition), so logZ and the real-step posteriors are exact; its pairwise statistics
+    and posteriors are zeroed, and cum stays flat (step LL 0).
     One sequence. logpi0 (R, K), logPR (R, R), ll (T, K), logQ (T-1, R, K, K), lh / l1h (R, K, D) or
     (T-1, R, K, D) (hazard of the PREVIOUS regime). Returns logZ, cum (T,), g_z (T, K), g_r (T, R), g0 (R, K),
     EQ (T-1, R, K, K), S0 / S1 (stay / switch mass, (T-1, R, K, D) if ht else (R, K, D)), ER (R, R),
@@ -636,7 +648,7 @@ def _seq_fb(logpi0, logPR, ll, logQ, lh, l1h, want_kd, ht):
     la0 = jnp.full((R, K, D), -jnp.inf).at[:, :, 0].set(logpi0 + ll[0][None])
 
     def fwd(la, inp):
-        lq, l_t, h, h1 = inp
+        lq, l_t, h, h1, m_t = inp
         u = la + h1
         st = jnp.concatenate([jnp.full((R, K, 1), -jnp.inf), u[..., :-1]], axis=-1)
         st = st.at[..., -1].set(jnp.logaddexp(st[..., -1], u[..., -1])) if D > 1 else u
@@ -646,17 +658,19 @@ def _seq_fb(logpi0, logPR, ll, logQ, lh, l1h, want_kd, ht):
         sw = lse(w[:, :, None] + lq, axis=1)                          # (R', K')
         new = stay.at[..., 0].set(jnp.logaddexp(stay[..., 0], sw))
         new = new + l_t[None, :, None]
+        new = jnp.where(m_t, new, la)
         return new, new
 
     T = ll.shape[0]
+    m = jnp.ones(T, dtype=bool) if m is None else jnp.asarray(m, dtype=bool)
     hs = (lh, l1h) if ht else (jnp.broadcast_to(lh, (T - 1,) + lh.shape), jnp.broadcast_to(l1h, (T - 1,) + l1h.shape))
-    _, las = lax.scan(fwd, la0, (logQ, ll[1:], hs[0], hs[1]))
+    _, las = lax.scan(fwd, la0, (logQ, ll[1:], hs[0], hs[1], m[1:]))
     la = jnp.concatenate([la0[None], las], axis=0)                    # (T, R, K, D)
     logZ = lse(la[-1])
     cum = lse(la.reshape(T, -1), axis=-1)
 
     def bwd(lb, inp):
-        la_p, lq, l_t, h, h1 = inp
+        la_p, lq, l_t, h, h1, m_t = inp
         Bt = l_t[None, :, None] + lb                                  # (R', K, D)
         Bn = _shift(Bt)
         ms = lse(logPR[:, :, None, None] + Bn[None], axis=1)          # (R, K, D)
@@ -674,12 +688,14 @@ def _seq_fb(logpi0, logPR, ll, logQ, lh, l1h, want_kd, ht):
         ERs = lse((la_p + h1)[:, None] + Bn[None], axis=(2, 3))       # (R, R')
         ERw = lse(Fz[:, None, :] + G[None], axis=-1)                  # (R, R')
         ER = jnp.exp(logPR + jnp.logaddexp(ERs, ERw) - logZ)
+        lb_p = jnp.where(m_t, lb_p, lb)                               # padded step t: identity
         g = la_p + lb_p - logZ
-        return lb_p, (g, EQ, S0, S1, ER)
+        return lb_p, (g, m_t * EQ, m_t * S0, m_t * S1, m_t * ER)
 
     lbT = jnp.zeros((R, K, D))
-    _, (gs, EQ, S0, S1, ER) = lax.scan(bwd, lbT, (la[:-1], logQ, ll[1:], hs[0], hs[1]), reverse=True)
+    _, (gs, EQ, S0, S1, ER) = lax.scan(bwd, lbT, (la[:-1], logQ, ll[1:], hs[0], hs[1], m[1:]), reverse=True)
     g = jnp.exp(jnp.concatenate([gs, (la[-1] - logZ)[None]], axis=0))  # (T, R, K, D)
+    g = g * m[:, None, None, None]
     out = dict(logZ=logZ, cum=cum, g_z=g.sum((1, 3)), g_r=g.sum((2, 3)), g0=g[0, :, :, 0], EQ=EQ,
                S0=S0 if ht else S0.sum(0), S1=S1 if ht else S1.sum(0), ER=ER.sum(0))
     out["g_kd"] = g.sum(1) if want_kd else None
@@ -687,10 +703,13 @@ def _seq_fb(logpi0, logPR, ll, logQ, lh, l1h, want_kd, ht):
 
 
 @partial(jax.jit, static_argnames=("want_kd", "ht"))
-def _fb_batch(logpi0, logPR, ll, logQ, lh, l1h, want_kd, ht):
+def _fb_batch(logpi0, logPR, ll, logQ, lh, l1h, want_kd, ht, m=None):
     hax = 0 if ht else None
-    f = vmap(lambda l, q, h, h1: _seq_fb(logpi0, logPR, l, q, h, h1, want_kd, ht), in_axes=(0, 0, hax, hax))
-    return f(ll, logQ, lh, l1h)
+    if m is None:
+        m = jnp.ones(ll.shape[:2], dtype=bool)
+    f = vmap(lambda l, q, h, h1, mm: _seq_fb(logpi0, logPR, l, q, h, h1, want_kd, ht, mm),
+             in_axes=(0, 0, hax, hax, 0))
+    return f(ll, logQ, lh, l1h, m)
 
 
 # ---------------------------------------------------------------------------
@@ -791,8 +810,20 @@ def n_params(p, cfg, tree):
 # Data bundle
 # ---------------------------------------------------------------------------
 
+def data_mask(d):
+    """(N, T) bool real steps of a bundle (a = -1 on padded steps of segment_policy: variable)."""
+    return jnp.asarray(d["a"]) >= 0
+
+
+def n_real_steps(d):
+    return float(np.asarray(d["a"] >= 0).sum())
+
+
 def scales_data(state_rows, a, tree, hcfg, S, kin=None, idx=None):
-    """dict(x, ctx, a, phi, kin) for the rows idx (x = rows[:, 1:-1], a aligned with x)."""
+    """
+    dict(x, ctx, a, phi, kin) for the rows idx (x = rows[:, 1:-1], a aligned with x). Padded steps
+    (segment_policy: variable) are marked by a = -1; their x / ctx / phi are ignored (masked) downstream.
+    """
     rows = np.asarray(state_rows)
     a = np.asarray(a)
     if idx is not None:
@@ -830,7 +861,7 @@ def e_step(p, cfg, tree_arr, d, temps, kin_model=None, want_kd=False, use_kin=Tr
     logpi = model_log_policy(p, cfg, tree_arr, temps)
     ll = emission_ll(logpi, d["ctx"], d["a"])
     if use_kin and kin_model is not None and d["kin"] is not None:
-        ll = ll + jnp.asarray(kin_model.loglik(d["kin"]))
+        ll = ll + jnp.where(data_mask(d)[..., None], jnp.asarray(kin_model.loglik(d["kin"])), 0.0)
     lq = trans_logQ(p, cfg, d)
     if cfg.durations.enabled:
         lh, l1h = log_hazards(cfg, p["hz"], d["phi"], _cpl_h(cfg, d, K))
@@ -840,7 +871,7 @@ def e_step(p, cfg, tree_arr, d, temps, kin_model=None, want_kd=False, use_kin=Tr
     ht = lh.ndim == 5
     lpi0 = p["logpi0"] - lse(p["logpi0"])
     lPR = p["logPR"] - lse(p["logPR"], axis=1, keepdims=True)
-    return _fb_batch(lpi0, lPR, ll, lq, lh, l1h, want_kd, ht)
+    return _fb_batch(lpi0, lPR, ll, lq, lh, l1h, want_kd, ht, data_mask(d))
 
 
 # ---------------------------------------------------------------------------
@@ -961,7 +992,7 @@ def hazard_m_step(p, cfg, st, d, n_total, num_iters=1000):
 def hiql_counts(g, ctx, a, H, A):
     """(K, H, A) posterior-weighted (context, action) counts."""
     g = np.asarray(g)
-    idx = (np.asarray(ctx) * A + np.asarray(a)).ravel()
+    idx = (np.asarray(ctx) * A + np.maximum(np.asarray(a), 0)).ravel()   # padded steps have g = 0
     K = g.shape[-1]
     return np.stack([np.bincount(idx, weights=g[..., k].ravel(), minlength=H * A) for k in range(K)]).reshape(K, H, A)
 
@@ -1117,8 +1148,7 @@ def em_train_scales(p, cfg, tree, d, temps=None, kin_model=None, iters=50, tol=N
     tree_arr = tree.arrays()
     pen_w = tree.depth_weights()
     kin_model = None if kin_model is None else kin_model.copy()
-    N, T = d["a"].shape
-    n_total = float(N * T)
+    n_total = n_real_steps(d)
     if cfg.emission == "hiql" and temps is not None:
         raise ValueError("temps apply to the SWIRL emission only")
     LL_list = []
@@ -1161,11 +1191,12 @@ def scales_eval(r, tree, d, use_kin=True, want_kd=False):
     p = _jnp_tree(r["params"])
     st = e_step(p, cfg, tree.arrays(), d, r.get("temps"), r.get("kin_model"), want_kd=want_kd, use_kin=use_kin)
     cum = np.asarray(st["cum"])
-    N, T = cum.shape
+    m = np.asarray(data_mask(d))
+    n = int(m.sum())
     g = np.asarray(st["g_z"])
-    out = dict(LL_total=float(cum[:, -1].sum()), LL=float(cum[:, -1].sum() / (N * T)),
-               step_ll=np.diff(cum, axis=1, prepend=0.0), gamma=g, gamma_r=np.asarray(st["g_r"]),
-               path=g.argmax(-1), n_steps=int(N * T))
+    out = dict(LL_total=float(cum[:, -1].sum()), LL=float(cum[:, -1].sum() / n),
+               step_ll=np.where(m, np.diff(cum, axis=1, prepend=0.0), 0.0), gamma=g, gamma_r=np.asarray(st["g_r"]),
+               path=np.where(m, g.argmax(-1), -1), n_steps=n, mask=m)
     if want_kd:
         out["gamma_zt"] = np.asarray(st["g_kd"])                      # (N, T, K, D)
     return out
@@ -1237,6 +1268,7 @@ def dwell_times(path):
     """Completed run lengths per intention (runs touching either end of a sequence are dropped)."""
     out = {}
     for row in np.asarray(path):
+        row = row[row >= 0]                                           # drop padded steps (path -1)
         ch = np.flatnonzero(np.diff(row)) + 1
         b = np.concatenate([[0], ch, [len(row)]])
         for i in range(1, len(b) - 2):

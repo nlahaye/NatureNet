@@ -177,6 +177,8 @@ def step_kinematics(yml_conf, data, cfg, dfs=None, offset=None, shape=None):
         raise ValueError(f"{len(data['meta'])} sequence ids for {N} sequences")
     step = np.full((N, T), np.nan)
     turn = np.full((N, T), np.nan)
+    lens = data.get("lengths") if data.get("variable", False) else None
+    n_real = np.full(N, T) if lens is None else np.minimum(np.asarray(lens) - 1 - int(offset), T)  # padded: NaN
     cache = {}
     for i, m in enumerate(data["meta"]):
         dkey = _df_key(m["key"], yml_conf["df_run_uid"])
@@ -189,13 +191,15 @@ def step_kinematics(yml_conf, data, cfg, dfs=None, offset=None, shape=None):
             th = (ts.dt.tz_convert(None) - pd.Timestamp("1970-01-01")).dt.total_seconds().to_numpy() / 3600.0
             cache[ck] = track_kinematics(df["latitude"].to_numpy(float), df["longitude"].to_numpy(float), th, cfg)
         kin = cache[ck]
-        pos = int(m["start"]) + int(offset) + np.arange(T)
-        if pos.max() >= len(kin["feature"]):
+        nt = int(n_real[i])
+        pos = int(m["start"]) + int(offset) + np.arange(nt)
+        if nt and pos.max() >= len(kin["feature"]):
             raise ValueError(f"{dkey} segment {m['seg']}: step position {pos.max()} >= {len(kin['feature'])} fixes")
-        step[i] = kin["feature"][pos]
-        turn[i] = kin["turn"][pos]
+        step[i, :nt] = kin["feature"][pos]
+        turn[i, :nt] = kin["turn"][pos]
     out = KinFeatures(step, turn, info=dict(step_feature=cfg["step_feature"], offset=int(offset)))
-    cov = out.coverage()
+    real = np.arange(T)[None, :] < n_real[:, None]
+    cov = dict(step_finite=float(np.isfinite(step[real]).mean()))
     if cov["step_finite"] < 0.5:
         print(f"WARNING: only {100 * cov['step_finite']:.0f}% of steps have a usable step feature "
               f"(min_dt_h={cfg['min_dt_h']}); check timestamps / min_dt_h")

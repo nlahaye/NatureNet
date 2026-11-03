@@ -331,6 +331,8 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
         pe_i = lat_["p_exploit"][i] if "p_exploit" in lat_ else np.full(len(lat_["zs"][i]), np.nan)
         kl_i = str(lat_["kin_labels"][i]).split(",") if "kin_labels" in lat_ and lat_["kin_labels"][i] else None
         for t, z in enumerate(lat_["zs"][i]):
+            if int(z) < 0:                      # padded step (segment_policy: variable): no fix
+                continue
             cls_ = kl_i[int(z)] if kl_i is not None and 0 <= int(z) < len(kl_i) else ""
             d[st + off + t] = (int(z), str(lat_["split"][i]), float(pe_i[t]), cls_)
 

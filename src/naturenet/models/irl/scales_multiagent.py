@@ -44,7 +44,7 @@ from naturenet.models.irl.hiavi_multiagent import PartnerContext
 from naturenet.models.irl.kinematics import KinematicEmissions, kin_conf
 from naturenet.models.irl.run_hiavi_kfold import _seed, hiavi_settings, prepare_hiavi_data
 from naturenet.models.irl.run_hiavi_multiagent import HiaviBackend
-from naturenet.models.irl.swirl_data import init_rewards
+from naturenet.models.irl.swirl_data import init_rewards, seq_lengths
 from naturenet.models.irl.swirl_multiagent import SwirlBackend
 
 
@@ -85,10 +85,12 @@ class _ScalesMixin:
         self._bundles = {}
 
     def _check_rows(self, s):
-        if not np.array_equal(np.asarray(self.rows)[:, 1:-1], np.asarray(s)):
-            raise ValueError("decision-scale rows[:, 1:-1] do not match the step metadata states (hiavi_align: swirl)")
         if self.acts.shape != np.asarray(s).shape:
             raise ValueError(f"actions {self.acts.shape} do not match x {np.asarray(s).shape}")
+        real = self.acts >= 0                         # padded steps (segment_policy: variable) are not compared
+        if not np.array_equal(np.asarray(self.rows)[:, 1:-1][real], np.asarray(s)[real]):
+            raise ValueError("decision-scale rows[:, 1:-1] do not match the step metadata states (hiavi_align: swirl)")
+        self.lengths = seq_lengths(self.data)
 
     # -- data bundles (cached per tree and index set) --
     def _bundle(self, tree, idx):
@@ -101,8 +103,9 @@ class _ScalesMixin:
 
     def _tree(self, T_np, idx):
         cfg = self.cfg_i
-        src = self.rows if cfg.context_source == "all" else self.rows[np.asarray(idx)]
-        return sc.ContextTree.build(src, self.S, T_np, order=cfg.order, min_count=cfg.context_min_count)
+        sel = slice(None) if cfg.context_source == "all" else np.asarray(idx)
+        return sc.ContextTree.build(self.rows[sel], self.S, T_np, order=cfg.order, min_count=cfg.context_min_count,
+                                    lengths=self.lengths[sel])
 
     def _ev(self, m, idx, ctx=None, want_kd=False):
         d = self._bundle(m["tree"], idx)

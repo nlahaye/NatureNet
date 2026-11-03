@@ -34,7 +34,7 @@ from scipy import sparse
 from scipy.optimize import minimize_scalar
 from scipy.special import logsumexp
 
-from naturenet.models.irl.hiavi_model import HIAVI, emission_loglik, iavi, softmax_policy
+from naturenet.models.irl.hiavi_model import HIAVI, emission_loglik, iavi, softmax_policy, step_mask
 
 TINY = 1e-300
 
@@ -51,20 +51,27 @@ def coupled_log_transitions(logp_tr, alpha, w, c):
     return np.log(np.maximum(P, TINY))
 
 
-def forward_backward_tv(logp_init, logp_tr_t, lls):
+def forward_backward_tv(logp_init, logp_tr_t, lls, mask=None):
     """
     lls (N, T, K); logp_tr_t (N, T-1, K, K). Returns log gamma (N, T, K), xi (N, T-1, K, K) (per step,
     not summed), marginal log-likelihood per sequence (N,) and one-step predictive log-likelihoods (N, T)
     (log p(a_t | a_<t); they sum to the sequence log-likelihood).
+    mask (N, T) bool (None = all real; padded steps of segment_policy: variable): padded steps carry alpha
+    unchanged (identity transition, zero emission), so ll / real-step posteriors are exact; padded steps get
+    log gamma -inf, xi 0 and step LL 0.
     """
     N, T, K = lls.shape
     la = np.empty((N, T, K))
     la[:, 0] = logp_init + lls[:, 0]
     for t in range(1, T):
         la[:, t] = logsumexp(la[:, t - 1][:, :, None] + logp_tr_t[:, t - 1], axis=1) + lls[:, t]
+        if mask is not None:
+            la[:, t] = np.where(mask[:, t, None], la[:, t], la[:, t - 1])
     lb = np.zeros((N, T, K))
     for t in range(T - 2, -1, -1):
         lb[:, t] = logsumexp(logp_tr_t[:, t] + (lls[:, t + 1] + lb[:, t + 1])[:, None, :], axis=2)
+        if mask is not None:
+            lb[:, t] = np.where(mask[:, t + 1, None], lb[:, t], 0.0)
     lZ = logsumexp(la, axis=2)                               # (N, T)
     ll = lZ[:, -1]
     step = np.diff(np.concatenate([np.zeros((N, 1)), lZ], axis=1), axis=1)
@@ -72,24 +79,34 @@ def forward_backward_tv(logp_init, logp_tr_t, lls):
     if T > 1:
         lx = la[:, :-1, :, None] + logp_tr_t + (lls[:, 1:] + lb[:, 1:])[:, :, None, :] - ll[:, None, None, None]
         xi = np.exp(lx)
+        if mask is not None:
+            xi = np.where(mask[:, 1:, None, None], xi, 0.0)
     else:
         xi = np.zeros((N, 0, K, K))
+    if mask is not None:
+        lg = np.where(mask[..., None], lg, -np.inf)
+        step = np.where(mask, step, 0.0)
     return lg, xi, ll, step
 
 
-def viterbi_tv(logp_init, logp_tr_t, lls):
+def viterbi_tv(logp_init, logp_tr_t, lls, mask=None):
+    """MAP intentions (N, T) with time-varying transitions; -1 on padded steps."""
     N, T, K = lls.shape
     d = logp_init + lls[:, 0]
     bp = np.zeros((N, T, K), dtype=np.int64)
     for t in range(1, T):
         sc = d[:, :, None] + logp_tr_t[:, t - 1]
         bp[:, t] = sc.argmax(axis=1)
-        d = sc.max(axis=1) + lls[:, t]
+        dn = sc.max(axis=1) + lls[:, t]
+        if mask is not None:
+            bp[:, t] = np.where(mask[:, t, None], bp[:, t], np.arange(K)[None])
+            dn = np.where(mask[:, t, None], dn, d)
+        d = dn
     z = np.zeros((N, T), dtype=np.int64)
     z[:, -1] = d.argmax(axis=1)
     for t in range(T - 1, 0, -1):
         z[:, t - 1] = bp[np.arange(N), t, z[:, t]]
-    return z
+    return z if mask is None else np.where(mask, z, -1)
 
 
 # ---------------------------------------------------------------------------
@@ -107,23 +124,28 @@ class PartnerContext:
     Step metadata for every sequence: times (N, T) in days, lat / lon (N, T), animal (N,) base id, key (N,).
     build(tgt, src, ...) precomputes a sparse (n_tgt_steps, n_src_steps) kernel matrix; context(gamma_src)
     then gives (w, c) for the target steps in one sparse product (cheap to redo every outer iteration).
+    valid (N, T) bool: real steps (default all). Padded steps (segment_policy: variable) have NaN times, are
+    never a source and get no context (w = 0).
     """
 
-    def __init__(self, times, lat, lon, animal, key):
+    def __init__(self, times, lat, lon, animal, key, valid=None):
         self.times = np.asarray(times, dtype=float)
         self.lat = np.asarray(lat, dtype=float)
         self.lon = np.asarray(lon, dtype=float)
         self.animal = np.asarray(animal).astype(str)
         self.key = np.asarray(key).astype(str)
         self.N, self.T = self.times.shape
-        if not np.all(np.isfinite(self.times)):
+        self.valid = np.ones((self.N, self.T), bool) if valid is None else np.asarray(valid, bool)
+        if self.valid.shape != self.times.shape:
+            raise ValueError(f"PartnerContext: valid {self.valid.shape} != times {self.times.shape}")
+        if not np.all(np.isfinite(self.times[self.valid])):
             raise ValueError("PartnerContext: non-finite step times")
 
     def shifted_times(self, shifts=None, window=None):
         """Circularly shift each animal's calendar by shifts[animal] days inside window (t0, t1) (null model)."""
         if not shifts:
             return self.times
-        t0, t1 = window if window is not None else (self.times.min(), self.times.max() + 1e-6)
+        t0, t1 = window if window is not None else (np.nanmin(self.times), np.nanmax(self.times) + 1e-6)
         L = t1 - t0
         out = self.times.copy()
         for an, dlt in shifts.items():
@@ -145,16 +167,19 @@ class PartnerContext:
         s_lat, s_lon = self.lat[src].ravel(), self.lon[src].ravel()
         n_keys = {a: len(set(self.key[src][self.animal[src] == a])) for a in np.unique(self.animal[src])}
         s_norm = np.array([1.0 / n_keys[a] for a in s_an])
-        order = np.argsort(st, kind="stable")
+        s_ok = np.flatnonzero(self.valid[src].ravel())                # padded source steps are never used
+        order = s_ok[np.argsort(st[s_ok], kind="stable")]
         st_sorted = st[order]
 
         tt = times[tgt].ravel()
+        t_ok = self.valid[tgt].ravel()
         t_an = np.repeat(self.animal[tgt], self.T)
         t_lat, t_lon = self.lat[tgt].ravel(), self.lon[tgt].ravel()
-        lo = np.searchsorted(st_sorted, tt - max_dt, side="left")
-        hi = np.searchsorted(st_sorted, tt + max_dt, side="right")
+        tq = np.where(t_ok, tt, 0.0)
+        lo = np.searchsorted(st_sorted, tq - max_dt, side="left")
+        hi = np.searchsorted(st_sorted, tq + max_dt, side="right")
         rows, cols, vals, dists, dts = [], [], [], [], []
-        for r in np.nonzero(hi > lo)[0]:
+        for r in np.nonzero((hi > lo) & t_ok)[0]:
             j = order[lo[r]:hi[r]]
             j = j[s_an[j] != t_an[r]]
             if not len(j):
@@ -253,11 +278,13 @@ class CoupledHIAVI(HIAVI):
         logp_init, logp_tr, logpis, alpha = self.logp_init, self.logp_tr, self._logpis_em, self.alpha
         if not self.fit_alpha:
             alpha = self.alpha
+        mask = step_mask(a)                                   # padded steps (a = -1)
+        n_real = s.size if mask is None else int(mask.sum())
         hist, prev = [], -np.inf
         for it in range(max_iters):
             lP = coupled_log_transitions(logp_tr, alpha, w, c)
-            lg, xi, ll, _ = forward_backward_tv(logp_init, lP, emission_loglik(logpis, s, a) + self._kll(kin, s.shape))
-            tot = float(ll.sum() / s.size)
+            lg, xi, ll, _ = forward_backward_tv(logp_init, lP, self._emit(logpis, s, a, kin), mask)
+            tot = float(ll.sum() / n_real)
             if not np.isfinite(tot):
                 raise FloatingPointError(f"CoupledHIAVI LL is {tot} at iteration {it}")
             hist.append(tot)
@@ -297,16 +324,22 @@ class CoupledHIAVI(HIAVI):
         self._logpis_em = np.log(self.pis)
         return self
 
+    def _emit(self, logpis, s, a, kin=None):
+        """(N, T, K) emission LL (actions + kinematics); 0 on padded steps."""
+        s, a = np.asarray(s, dtype=np.int64), np.asarray(a, dtype=np.int64)
+        kll = self._kll(kin, s.shape)
+        if kin is not None and (a < 0).any():
+            kll = np.where((a >= 0)[..., None], kll, 0.0)
+        return emission_loglik(logpis, s, a) + kll
+
     def _fb(self, s, a, w, c, logpis=None, kin=None):
         logpis = np.log(self.pis) if logpis is None else logpis
-        s = np.asarray(s, dtype=np.int64)
         lP = coupled_log_transitions(self.logp_tr, self.alpha, np.asarray(w, float), np.asarray(c, float))
-        return forward_backward_tv(self.logp_init, lP, emission_loglik(logpis, s, np.asarray(a, dtype=np.int64))
-                                   + self._kll(kin, s.shape))
+        return forward_backward_tv(self.logp_init, lP, self._emit(logpis, s, a, kin), step_mask(a))
 
     def loglik(self, s, a, w, c, kin=None):
         _, _, ll, _ = self._fb(s, a, w, c, kin=kin)
-        return float(ll.sum() / np.asarray(s).size)
+        return float(ll.sum() / int((np.asarray(a) >= 0).sum()))
 
     def step_loglik(self, s, a, w, c, kin=None):
         return self._fb(s, a, w, c, kin=kin)[3]
@@ -317,8 +350,7 @@ class CoupledHIAVI(HIAVI):
     def decode(self, s, a, w, c, kin=None):
         s = np.asarray(s, dtype=np.int64)
         lP = coupled_log_transitions(self.logp_tr, self.alpha, np.asarray(w, float), np.asarray(c, float))
-        return viterbi_tv(self.logp_init, lP, emission_loglik(np.log(self.pis), s, np.asarray(a, dtype=np.int64))
-                          + self._kll(kin, s.shape))
+        return viterbi_tv(self.logp_init, lP, self._emit(np.log(self.pis), s, a, kin), step_mask(a))
 
     def params(self):
         p = super().params()
@@ -330,7 +362,7 @@ def hiavi_step_loglik(m, s, a, kin=None):
     """One-step predictive LLs (N, T) of a plain HIAVI model (zero context)."""
     N, T = np.asarray(s).shape
     lP = np.broadcast_to(m.logp_tr, (N, max(T - 1, 0), m.K, m.K))
-    return forward_backward_tv(m.logp_init, lP, m._lls(s, a, kin))[3]
+    return forward_backward_tv(m.logp_init, lP, m._lls(s, a, kin), step_mask(a))[3]
 
 
 def fit_coupled(base_model, T_env, s, a, pc, tr_idx, settings, kern_tr, n_outer=5, alpha0=0.1, fit_alpha=True,

@@ -146,6 +146,7 @@ def step_metadata(yml_conf, data, dfs=None):
     s = data["hiavi_s"]
     N, T = s.shape
     off = int(data["hiavi_offset"])
+    valid = np.asarray(data.get("hiavi_mask", np.ones((N, T), bool)), bool)   # padded steps: NaN metadata
     times, lat, lon = np.full((N, T), np.nan), np.full((N, T), np.nan), np.full((N, T), np.nan)
     keys = []
     for i, m in enumerate(data["meta"]):
@@ -153,18 +154,20 @@ def step_metadata(yml_conf, data, dfs=None):
         if dkey not in dfs:
             raise KeyError(f"sequence {i}: no movement DataFrame for {dkey} in dfs.pkl")
         df = dfs[dkey][m["seg"]]
-        pos = m["start"] + off + np.arange(T)
+        nt = int(valid[i].sum())
+        assert valid[i, :nt].all(), "padding must be at the end of a sequence"
+        pos = m["start"] + off + np.arange(nt)
         if pos.max() >= len(df):
             raise ValueError(f"{dkey} segment {m['seg']}: step position {pos.max()} >= {len(df)} fixes "
                              "(dfs.pkl and actions / positions out of sync?)")
         sub = df.iloc[pos]
-        times[i] = _to_days(sub["timestamp"].to_numpy())
-        lat[i] = sub["latitude"].to_numpy(dtype=float)
-        lon[i] = sub["longitude"].to_numpy(dtype=float)
+        times[i, :nt] = _to_days(sub["timestamp"].to_numpy())
+        lat[i, :nt] = sub["latitude"].to_numpy(dtype=float)
+        lon[i, :nt] = sub["longitude"].to_numpy(dtype=float)
         keys.append(str(m["key"]))
-    if not np.all(np.isfinite(times)):
-        raise ValueError(f"{int((~np.isfinite(times)).sum())} steps have no valid timestamp")
-    return PartnerContext(times, lat, lon, np.asarray(data["groups"]).astype(str), np.asarray(keys))
+    if not np.all(np.isfinite(times[valid])):
+        raise ValueError(f"{int((~np.isfinite(times[valid])).sum())} steps have no valid timestamp")
+    return PartnerContext(times, lat, lon, np.asarray(data["groups"]).astype(str), np.asarray(keys), valid=valid)
 
 
 def original_mask(pc):
@@ -175,7 +178,7 @@ def window_days(conf, pc):
     w = conf.get("window")
     if w:
         return float(_to_days([w[0]])[0]), float(_to_days([w[1]])[0]) + 1.0
-    return float(pc.times.min()), float(pc.times.max()) + 1.0
+    return float(np.nanmin(pc.times)), float(np.nanmax(pc.times)) + 1.0
 
 
 def draw_shifts(animals, rng, window, min_shift):
@@ -200,10 +203,12 @@ def concurrency_report(pc, variants, out_dir):
         pairs[vname + "_dt_days"] = pc._last_pairs["dt_days"]
         for an in np.unique(pc.animal):
             m = (pc.animal == an) & orig
-            rows.append(dict(variant=vname, animal=an, seqs=int(m.sum()), steps=int(m.sum() * pc.T),
-                             steps_with_context=int((mass[m] > 0).sum()),
-                             frac_with_context=float((mass[m] > 0).mean()) if m.any() else 0.0,
-                             mean_w=float((1 - np.exp(-mass[m])).mean()) if m.any() else 0.0))
+            v_ = pc.valid[m]                                  # real (unpadded) steps
+            mm = mass[m][v_]
+            rows.append(dict(variant=vname, animal=an, seqs=int(m.sum()), steps=int(v_.sum()),
+                             steps_with_context=int((mm > 0).sum()),
+                             frac_with_context=float((mm > 0).mean()) if mm.size else 0.0,
+                             mean_w=float((1 - np.exp(-mm)).mean()) if mm.size else 0.0))
     df = pd.DataFrame(rows)
     df.to_csv(os.path.join(out_dir, "ma_concurrency.csv"), index=False)
     np.savez(os.path.join(out_dir, "ma_pairs.npz"), **pairs)
@@ -279,8 +284,11 @@ class HiaviBackend:
         return {f"logp_tr_{tag}": m.logp_tr, f"pis_{tag}": m.pis, f"r_{tag}": m.r}
 
 
-def heldout_scores(bk, T_env, model0, models, tr, te, kerns_te, eval_mask):
-    """Per-step predictive LLs on te for the independent and each coupled model; context from train."""
+def heldout_scores(bk, T_env, model0, models, tr, te, kerns_te, eval_mask, valid=None):
+    """
+    Per-step predictive LLs on te for the independent and each coupled model; context from train.
+    valid (N, T): real steps (padded steps of segment_policy: variable are excluded from every score).
+    """
     out = {}
     l0 = bk.step_ll_indep(model0, T_env, te)
     for vname, (m, (w_tr, c_tr)) in models.items():
@@ -288,7 +296,7 @@ def heldout_scores(bk, T_env, model0, models, tr, te, kerns_te, eval_mask):
         g_tr = post(m, T_env, tr, w_tr, c_tr)
         w_te, c_te = PartnerContext.context(kerns_te[vname], g_tr)
         l1 = bk.step_ll(m, T_env, te, w_te, c_te)
-        msk = eval_mask[te][:, None] & np.ones_like(w_te, dtype=bool)
+        msk = eval_mask[te][:, None] & (np.ones_like(w_te, dtype=bool) if valid is None else valid[te])
         conc = msk & (w_te > 0)
         d = l1 - l0
         ex = bk.extra(m) if hasattr(bk, "extra") else {}
@@ -332,7 +340,7 @@ def run_cv(bk, conf, pc, K, variants, times=None, null_id=-1, base_cache=None, v
             kern_tr = pc.build(tr, tr, times=times, **v)
             kerns_te[vname] = pc.build(te, tr, times=times, **v)
             models[vname] = bk.fit_coupled(m0, T_env, tr, kern_tr)
-        sc = heldout_scores(bk, T_env, m0, models, tr, te, kerns_te, eval_mask)
+        sc = heldout_scores(bk, T_env, m0, models, tr, te, kerns_te, eval_mask, valid=pc.valid)
         for vname, r in sc.items():
             m, (w_tr, c_tr) = models[vname]
             rows.append(dict(model=bk.name, K=K, fold=kf, heldout=an, variant=vname, null_id=null_id,
@@ -349,7 +357,7 @@ def synchrony(pc, gamma, variant, times=None, mask=None):
     idx = np.arange(pc.N)
     kern = pc.build(idx, idx, times=times, **variant)
     w, c = PartnerContext.context(kern, gamma)
-    m = (w > 0) if mask is None else (w > 0) & mask[:, None]
+    m = (w > 0) & pc.valid if mask is None else (w > 0) & pc.valid & mask[:, None]
     if not m.any():
         return np.nan, 0
     agree = (gamma * c).sum(-1)
@@ -439,13 +447,14 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
         sv = variants[conf["sync_variant"]]
         a_obs, n_obs = synchrony(pc, g0, sv, mask=orig)
         a_null = [synchrony(pc, g0, sv, times=pc.shifted_times(sh, win), mask=orig)[0] for sh in sync_shifts]
-        pbar = g0[orig].reshape(-1, K).mean(0)
+        pbar = g0[orig[:, None] & pc.valid].reshape(-1, K).mean(0)
         chance = float((pbar ** 2).sum())
         a_null = np.asarray([x for x in a_null if np.isfinite(x)])
         p_sync = float((1 + np.sum(a_null >= a_obs)) / (1 + len(a_null))) if len(a_null) else np.nan
         sync_rows += [dict(K=K, kind="observed", agreement=a_obs, n_steps=n_obs)] + \
                      [dict(K=K, kind="time_shift", agreement=x, n_steps=np.nan) for x in a_null]
         final = dict(times=pc.times, lat=pc.lat, lon=pc.lon, animal=pc.animal, key=pc.key, original=orig,
+                     valid=pc.valid,
                      gamma_indep=g0, train_ll_indep=ll0, model=bk.name, **bk.arrays(m0, "indep"))
         kf0, lab0 = _kin_final(bk, m0, g0, "indep")
         final.update(kf0)
@@ -479,7 +488,7 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
             pooled_ = float(ob["d_total"].sum())
             n_steps = int(ob["n_test_steps"].sum())
             wv = final[f"w_{vname}"]
-            sel = (wv > 0) & orig[:, None]
+            sel = (wv > 0) & orig[:, None] & pc.valid
             ent = dict(pooled_d_total=pooled_, pooled_d_per_step=pooled_ / max(n_steps, 1),
                        pooled_d_conc=float(ob["d_conc"].sum()), n_conc_steps=int(ob["n_conc_steps"].sum()),
                        alpha_median=float(ob["alpha"].median()),

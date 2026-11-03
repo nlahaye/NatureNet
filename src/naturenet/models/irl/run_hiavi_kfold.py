@@ -41,7 +41,11 @@ from naturenet.environment.pipeline_checks import check_folds, check_swirl_input
 from naturenet.models.irl.hiavi_model import HIAVI
 from naturenet.models.irl.kinematics import cached_kinematics, comparable_ll, kin_conf, labels_from_conf, p_exploit, pooled
 from naturenet.models.irl.swirl_data import (
+    PAD_ACTION,
+    align_data,
     align_for_swirl,
+    is_variable,
+    step_mask,
     as_list,
     get_folds,
     holdout_split,
@@ -59,23 +63,29 @@ N_ACTIONS = 9
 
 def prepare_hiavi_data(yml_conf, data=None):
     """Aligned (s, a) arrays, computed once and reused across folds and (K, run)."""
-    data = data if data is not None else load_swirl_dataset(yml_conf)
+    data = data if data is not None else load_swirl_dataset(yml_conf, allow_variable=True)
     align = yml_conf.get("hiavi_align", "swirl")
     if data.get("hiavi_align") == align:
         return data
     S = int(yml_conf["n_states"])
     check_swirl_inputs(data["states"], data["actions"], S, N_ACTIONS)
     if align == "swirl":
-        s, _, a = align_for_swirl(data["states"], data["actions"])
+        s, _, a = align_data(data)
         offset = 1
     elif align == "full":
-        s, a, offset = np.asarray(data["states"])[:, :-1], np.asarray(data["actions"]), 0
+        s, a, offset = np.array(data["states"])[:, :-1], np.array(data["actions"]), 0
     else:
         raise ValueError(f"hiavi_align must be swirl | full, got {align!r}")
-    s, a = np.asarray(s, dtype=np.int64), np.asarray(a, dtype=np.int64)
-    if s.min() < 0 or s.max() >= S or a.min() < 0 or a.max() >= N_ACTIONS:
+    s, a = np.array(s, dtype=np.int64), np.array(a, dtype=np.int64)
+    mask = step_mask(data, offset)                     # padded steps (segment_policy: variable): a = -1
+    assert mask.shape == s.shape and mask[:, 0].all()
+    if is_variable(data):
+        s = np.where(mask, s, s[:, :1])
+        a = np.where(mask, a, PAD_ACTION)
+    if s.min() < 0 or s.max() >= S or a[mask].min() < 0 or a.max() >= N_ACTIONS:
         raise ValueError("HIAVI inputs contain invalid states / actions after alignment")
-    data.update(n_states=S, n_actions=N_ACTIONS, hiavi_s=s, hiavi_a=a, hiavi_offset=offset, hiavi_align=align)
+    data.update(n_states=S, n_actions=N_ACTIONS, hiavi_s=s, hiavi_a=a, hiavi_offset=offset, hiavi_align=align,
+                hiavi_mask=mask)
     return data
 
 
@@ -103,7 +113,8 @@ def kin_ll_fields(model, s, a, kin, kin_null, ll_joint):
     """LL (comparable with action-only models), LL_joint, LL_kin_null, LL_action, P(exploit) per step."""
     if kin is None:
         return {}
-    cmp_, joint, null = comparable_ll(ll_joint * s.size, kin_null, kin, s.size)
+    n = int((np.asarray(a) >= 0).sum())                # real steps (padded a = -1)
+    cmp_, joint, null = comparable_ll(ll_joint * n, kin_null, kin, n)
     cfg = model.kin_cfg
     labels = labels_from_conf(model.kin_model, cfg)
     g = model.posteriors(s, a, kin)

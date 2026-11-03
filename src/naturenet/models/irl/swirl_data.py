@@ -92,6 +92,60 @@ def _chunk(states, actions, L):
     return out
 
 
+def _split_variable(states, actions, L):
+    """
+    One valid run -> pieces of at most L states (L None: no cap). A longer run is cut into the fewest
+    near-equal pieces that fit; consecutive pieces share their boundary state (as in _chunk).
+    """
+    n = len(states)
+    if L is None or n <= L:
+        return [(states, actions, 0)]
+    p = int(np.ceil((n - 1) / (L - 1)))
+    cuts = np.round(np.linspace(0, n - 1, p + 1)).astype(int)
+    return [(states[a:b + 1], actions[a:b], int(a)) for a, b in zip(cuts[:-1], cuts[1:])]
+
+
+PAD_ACTION = -1   # aligned action index of a padded step (segment_policy: variable)
+
+
+def is_variable(data):
+    return bool(data.get("variable", False))
+
+
+def seq_lengths(data):
+    """(N,) real states per sequence (= seq_len for the fixed-length policies)."""
+    if data.get("lengths") is not None:
+        return np.asarray(data["lengths"], dtype=np.int64)
+    st = np.asarray(data["states"])
+    return np.full(st.shape[0], st.shape[1], dtype=np.int64)
+
+
+def step_mask(data, offset=1, index=None):
+    """
+    (N, T) bool, True on real (not padded) model steps. offset = states dropped before step 0
+    (1 for the SWIRL alignment x = states[:, 1:-1], 0 for HIAVI "full"); T = L - 1 - offset.
+    All True for the fixed-length policies.
+    """
+    lens = seq_lengths(data)
+    if index is not None:
+        lens = lens[np.asarray(index)]
+    T = np.asarray(data["states"]).shape[1] - 1 - int(offset)
+    return np.arange(T)[None, :] < (lens - 1 - int(offset))[:, None]
+
+
+def _pad_rows(states, actions):
+    """Pad at the END to the longest row: states forward-filled with the last real state, actions 0."""
+    lens = np.array([len(s) for s in states], dtype=np.int64)
+    L = int(lens.max())
+    S = np.empty((len(states), L), dtype=np.int64)
+    A = np.zeros((len(states), L - 1), dtype=np.int64)
+    for i, (s, a) in enumerate(zip(states, actions)):
+        S[i, :len(s)] = s
+        S[i, len(s):] = s[-1]
+        A[i, :len(a)] = a
+    return S, A, lens
+
+
 def input_files(yml_conf):
     """
     (actions files, positions files). actions may be a list or a glob ("<dir>/hammerhead_v1_*_actions.pkl");
@@ -165,23 +219,38 @@ def drop_report(segs, segment_policy="exact", seq_len=None):
         print(f"  {g}: {d['segs']} segs, {d['invalid']}/{d['states']} states invalid "
               f"({100.0 * d['invalid'] / max(d['states'], 1):.1f}%); all-invalid {d['all_bad']}, "
               f"partly {d['some_bad']}, clean {d['clean']}; segment length {min(d['lens'])}..{max(d['lens'])}")
+    if segment_policy == "variable":
+        print("  variable: every valid run kept as one sequence (runs longer than seq_len split into near-equal "
+              "pieces); rows padded at the end and masked.")
     if segment_policy == "exact" and seq_len is None:
         print("  NOTE: exact + seq_len None keeps only clean segments of the MAXIMUM length; "
               "use segment_policy: chunk with seq_len to keep shorter / partly valid segments.")
     return per
 
 
-def build_dataset(segs, seq_len=None, segment_policy="exact", min_len=3, verbose=True, return_meta=False):
+def build_dataset(segs, seq_len=None, segment_policy="exact", min_len=3, verbose=True, return_meta=False,
+                  min_seq_len=None):
     """
-    Fixed-length (N, L) states / (N, L-1) actions for SWIRL.
+    (N, L) states / (N, L-1) actions for SWIRL.
 
     segment_policy:
-        "exact" - keep valid segments with exactly L states (old behaviour; L defaults to the max length)
-        "chunk" - cut every valid run into L-state windows (keeps far more data from short/long tracks)
-    Segments containing invalid (-1) states are split ("chunk") or dropped ("exact").
-    return_meta=True also returns one dict per sequence: {key, seg, start} = file key (incl. __aug),
-    segment index in that file and offset (in states) of the sequence inside the segment.
+        "exact"    - keep valid segments with exactly L states (old behaviour; L defaults to the max length)
+        "chunk"    - cut every valid run into L-state windows (keeps far more data from short/long tracks)
+        "variable" - every valid run with >= min_seq_len states is one sequence; runs longer than seq_len
+                     (a MAXIMUM here; None = no cap) are split into near-equal pieces sharing their boundary
+                     state. Rows are padded at the END to the longest one (states forward-filled, actions 0)
+                     and the real lengths are returned in meta[i]["length"] (see step_mask).
+    Segments containing invalid (-1) states are split ("chunk", "variable") or dropped ("exact").
+    return_meta=True also returns one dict per sequence: {key, seg, start, length} = file key (incl. __aug),
+    segment index in that file, offset (in states) of the sequence inside the segment and its real length.
+    For "variable" the returned L is the padded width (max length).
     """
+    if segment_policy not in ("exact", "chunk", "variable"):
+        raise ValueError(f"Unknown segment_policy {segment_policy}")
+    variable = segment_policy == "variable"
+    min_seq_len = int(min_len if min_seq_len is None else min_seq_len)
+    if min_seq_len < min_len:
+        raise ValueError(f"min_seq_len={min_seq_len} < {min_len}; SWIRL needs at least 3 states per sequence")
     runs = []
     for sg in segs:
         m = {"key": sg.get("key", sg["group"]), "seg": int(sg.get("seg", -1))}
@@ -191,15 +260,20 @@ def build_dataset(segs, seq_len=None, segment_policy="exact", min_len=3, verbose
         else:
             for s, a, st in _valid_runs(sg["states"], sg["actions"]):
                 runs.append((sg["group"], s, a, dict(m, start=int(st))))
+    if variable:
+        runs = [r for r in runs if len(r[1]) >= min_seq_len]
     if verbose or not runs:
         drop_report(segs, segment_policy, seq_len)
     if not runs:
         raise ValueError("No valid (fully observed) segments: every segment contains invalid (-1) states. "
-                         "See the report above (all -1 = no env scene for those dates / outside the env grid).")
-    if seq_len is None:
+                         "See the report above (all -1 = no env scene for those dates / outside the env grid)."
+                         + (f" (variable: no valid run has >= min_seq_len={min_seq_len} states)" if variable else ""))
+    if seq_len is None and not variable:
         seq_len = max(len(r[1]) for r in runs)
-    if seq_len < min_len:
+    if seq_len is not None and seq_len < min_len:
         raise ValueError(f"seq_len={seq_len} < {min_len}; SWIRL needs at least 3 states per sequence")
+    if variable and seq_len is not None and seq_len < min_seq_len:
+        raise ValueError(f"seq_len={seq_len} < min_seq_len={min_seq_len}")
 
     states, actions, groups, meta = [], [], [], []
     for g, s, a, m in runs:
@@ -208,44 +282,60 @@ def build_dataset(segs, seq_len=None, segment_policy="exact", min_len=3, verbose
         elif segment_policy == "chunk":
             pieces = _chunk(s, a, seq_len)
         else:
-            raise ValueError(f"Unknown segment_policy {segment_policy}")
+            pieces = _split_variable(s, a, seq_len)
         for ps, pa, off in pieces:
+            assert len(ps) == len(pa) + 1
             states.append(ps)
             actions.append(pa)
             groups.append(g)
-            meta.append(dict(m, start=m["start"] + int(off)))
+            meta.append(dict(m, start=m["start"] + int(off), length=int(len(ps))))
     if not states:
         raise ValueError(f"No sequences of length {seq_len} with segment_policy={segment_policy}")
 
-    states = np.stack(states)
-    actions = np.stack(actions)
+    if variable:
+        states, actions, lens = _pad_rows(states, actions)
+        assert lens.min() >= min_seq_len and (seq_len is None or lens.max() <= seq_len)
+    else:
+        states = np.stack(states)
+        actions = np.stack(actions)
+        lens = np.full(len(states), states.shape[1], dtype=np.int64)
     groups = np.asarray(groups)
+    L = int(states.shape[1])
 
     if verbose:
         tot = {}
         for sg in segs:
             tot[sg["group"]] = tot.get(sg["group"], 0) + len(sg["actions"])
         kept = {}
-        for g in groups:
-            kept[g] = kept.get(g, 0) + seq_len - 1
-        print(f"SWIRL dataset: {len(states)} sequences of {seq_len} states, policy={segment_policy}")
+        for g, n in zip(groups, lens):
+            kept[g] = kept.get(g, 0) + int(n) - 1
+        if variable:
+            q = np.percentile(lens, [0, 25, 50, 75, 100]).astype(int)
+            print(f"SWIRL dataset: {len(states)} sequences, policy=variable (seq_len max={seq_len}, "
+                  f"min_seq_len={min_seq_len}); states per sequence min/q25/median/q75/max = {'/'.join(map(str, q))}; "
+                  f"padded width {L}, padding {100.0 * (1 - lens.sum() / lens.size / L):.1f}% of the batch")
+        else:
+            print(f"SWIRL dataset: {len(states)} sequences of {seq_len} states, policy={segment_policy}")
         for g in sorted(tot):
             print(f"  {g}: kept {kept.get(g, 0)}/{tot[g]} transitions ({100.0 * kept.get(g, 0) / max(tot[g], 1):.1f}%)")
         missing = sorted(set(tot) - set(kept))
         if missing:
             print(f"  WARNING: {len(missing)} animals contribute no sequences: {missing[:10]}")
     if return_meta:
-        return states, actions, groups, seq_len, meta
-    return states, actions, groups, seq_len
+        return states, actions, groups, L, meta
+    return states, actions, groups, L
 
 
-def align_for_swirl(states, actions):
+def align_for_swirl(states, actions, lengths=None):
     """
     Emission p(a_t | x_t) uses the state where the action was TAKEN:
         x      = states[:, 1:-1]   (x_t,   t = 1..L-2)
         x_prev = states[:, :-2]    (x_t-1, for S-2)
         a      = actions[:, 1:]    (a_t : x_t -> x_t+1)
     (The old code paired a_t with the state reached by a_t.)
+    lengths (N,) real states per row (segment_policy: variable): padded steps get a = PAD_ACTION (-1) and
+    (x, x_prev) = the row's first real step, so every state / pair lookup stays a valid, observed index;
+    the models ignore those steps through the mask (a < 0).
     """
     states = np.asarray(states)
     actions = np.asarray(actions)
@@ -253,19 +343,45 @@ def align_for_swirl(states, actions):
         raise PipelineCheckError(f"states {states.shape} / actions {actions.shape} are not aligned")
     x, x_prev, a = states[:, 1:-1], states[:, :-2], actions[:, 1:]
     assert x.shape == x_prev.shape == a.shape
+    if lengths is not None:
+        lengths = np.asarray(lengths)
+        if lengths.min() < 3 or lengths.max() > states.shape[1]:
+            raise PipelineCheckError(f"sequence lengths must be in [3, {states.shape[1]}]")
+        pad = np.arange(x.shape[1])[None, :] >= (lengths - 2)[:, None]
+        if pad.any():
+            x, x_prev, a = x.copy(), x_prev.copy(), a.copy()
+            x[pad] = np.broadcast_to(x[:, :1], x.shape)[pad]
+            x_prev[pad] = np.broadcast_to(x_prev[:, :1], x.shape)[pad]
+            a[pad] = PAD_ACTION
     return x, x_prev, a
 
 
-def load_swirl_dataset(yml_conf, verbose=True):
-    """Load + filter + check once (hoisted out of the fold loop)."""
+def align_data(data):
+    """align_for_swirl on a load_swirl_dataset dict (padding-aware)."""
+    return align_for_swirl(data["states"], data["actions"], data.get("lengths") if is_variable(data) else None)
+
+
+def load_swirl_dataset(yml_conf, verbose=True, allow_variable=False):
+    """
+    Load + filter + check once (hoisted out of the fold loop).
+    segment_policy: variable needs allow_variable=True (the caller must handle padded rows; see step_mask).
+    """
+    policy = yml_conf.get("segment_policy", "exact")
+    if policy == "variable" and not allow_variable:
+        raise ValueError("segment_policy: variable (padded, masked sequences) is supported by run_swirl_kfold / "
+                         "get_stats / get_stats_2 / run_arhmm_kfold, run_hiavi_kfold / get_stats_hiavi, "
+                         "run_swirl_scales_kfold, run_hiavi_multiagent / run_swirl_multiagent / "
+                         "run_scales_multiagent and check_inputs. This script needs fixed-length sequences: "
+                         "use segment_policy: chunk (or exact).")
     segs = load_segments(yml_conf)
-    states, actions, groups, L, meta = build_dataset(segs, yml_conf.get("seq_len"),
-                                                     yml_conf.get("segment_policy", "exact"), verbose=verbose,
-                                                     return_meta=True)
+    states, actions, groups, L, meta = build_dataset(segs, yml_conf.get("seq_len"), policy, verbose=verbose,
+                                                     return_meta=True, min_seq_len=yml_conf.get("min_seq_len"))
     n_states = yml_conf.get("n_states")
     if n_states is not None:
         check_swirl_inputs(states, actions, n_states, N_ACTIONS)
-    return {"segments": segs, "states": states, "actions": actions, "groups": groups, "seq_len": L, "meta": meta}
+    lengths = np.array([m["length"] for m in meta], dtype=np.int64)
+    return {"segments": segs, "states": states, "actions": actions, "groups": groups, "seq_len": L, "meta": meta,
+            "lengths": lengths, "variable": policy == "variable"}
 
 
 def seq_meta_arrays(data, index=None):
@@ -273,6 +389,8 @@ def seq_meta_arrays(data, index=None):
     Per-sequence ids to store next to every LL / latent-path file, so plots can map row i of
     jax_path_vmap back to (file key, segment, offset) instead of guessing from file order.
     Latent step t of row i is the state at segment position seq_start + 1 + t (x = states[:, 1:-1]).
+    seq_length = real states in row i: only steps t < seq_length - 2 (SWIRL) are real; later entries of a
+    padded (segment_policy: variable) row are padding (latent path -1).
     """
     meta = data.get("meta")
     if meta is None:
@@ -281,7 +399,8 @@ def seq_meta_arrays(data, index=None):
     return {"seq_key": np.array([meta[i]["key"] for i in idx]),
             "seq_group": np.asarray(data["groups"])[idx],
             "seq_seg": np.array([meta[i]["seg"] for i in idx], dtype=np.int64),
-            "seq_start": np.array([meta[i]["start"] for i in idx], dtype=np.int64)}
+            "seq_start": np.array([meta[i]["start"] for i in idx], dtype=np.int64),
+            "seq_length": np.array([meta[i].get("length", len(data["states"][i])) for i in idx], dtype=np.int64)}
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from sit_fuse.utils import read_yaml
 
 
 def loop_arhmm(yml_conf, args):
-    data = load_swirl_dataset(yml_conf)
+    data = load_swirl_dataset(yml_conf, allow_variable=True)
     for conf in iter_loop_configs(yml_conf, n_hidden=args.n_hidden, run=args.run):
         print(conf["run_uid"], "seed", conf["seed"])
         run_arhmm(conf, data=data, folds_to_run=args.fold)

@@ -22,7 +22,7 @@ def parse_args():  # same flags as get_stats_nn.py (not imported: that module pu
 
 
 def loop_hiavi(yml_conf, args):
-    data = prepare_hiavi_data(yml_conf, load_swirl_dataset(yml_conf))
+    data = prepare_hiavi_data(yml_conf, load_swirl_dataset(yml_conf, allow_variable=True))
     for conf in iter_loop_configs(yml_conf, n_hidden=args.n_hidden, run=args.run):
         print(conf["run_uid"], "K", conf["n_hidden"], "seed", conf["seed"])
         if conf.get("run_hiavi_kfold", True):

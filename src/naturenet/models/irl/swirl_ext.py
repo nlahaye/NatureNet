@@ -39,6 +39,9 @@ from naturenet.models.irl.swirl_training import (
     comp_transP,
     expected_states,
     forward,
+    n_real,
+    oh_mask,
+    pad_eye,
     pi0_m_step,
     trans_m_step_jax_scipy2,
     viterbi_JAX,
@@ -59,8 +62,8 @@ def _mix(P, w, c, alpha):
 
 
 def _one_seq(pi0, log_Ps, Rs, logemit, alpha, xoh, xoh_e, aoh, kll, w, c):
-    P = _mix(comp_transP(log_Ps, Rs, xoh), w, c, alpha)
-    ll = comp_ll_jax(logemit, xoh_e, aoh) + kll
+    P = pad_eye(_mix(comp_transP(log_Ps, Rs, xoh), w, c, alpha), aoh)
+    ll = comp_ll_jax(logemit, xoh_e, aoh) + jnp.where(oh_mask(aoh)[:, None], kll, 0.0)
     al = forward(pi0, P, ll)
     be = backward(P, ll)
     g, xi = expected_states(al, be, P, ll)
@@ -74,8 +77,8 @@ def e_step_ext(pi0, log_Ps, Rs, rewards, trans_probs, temps, xohs, xohs_e, aohs,
 
 
 def _viterbi_one(pi0, log_Ps, Rs, logemit, alpha, xoh, xoh_e, aoh, kll, w, c):
-    P = _mix(comp_transP(log_Ps, Rs, xoh), w, c, alpha)
-    return viterbi_JAX(pi0, P, comp_ll_jax(logemit, xoh_e, aoh) + kll)
+    P = pad_eye(_mix(comp_transP(log_Ps, Rs, xoh), w, c, alpha), aoh)
+    return viterbi_JAX(pi0, P, comp_ll_jax(logemit, xoh_e, aoh) + jnp.where(oh_mask(aoh)[:, None], kll, 0.0))
 
 
 @partial(jax.jit, static_argnames=("use_temp",))
@@ -94,7 +97,8 @@ def _ctrans_loss(flat, xis, xohs, w, c, alpha_fixed, n_total, shapes, fit_alpha)
     P0 = jnp.exp(vmap(lambda x: comp_log_transP(log_Ps, Rs, x))(xohs))       # (N, T-1, K, K)
     aw = alpha * w[:, 1:, None, None]
     P = (1 - aw) * P0 + aw * c[:, 1:, None, :]
-    return -jnp.sum(xis * jnp.log(jnp.clip(P, 1e-300))) / n_total
+    m = oh_mask(xohs)[:, 1:, None, None]                                       # real destination steps
+    return -jnp.sum(jnp.where(m, xis * jnp.log(jnp.clip(P, 1e-300)), 0.0)) / n_total
 
 
 _ctrans_vg = jax.jit(jax.value_and_grad(_ctrans_loss), static_argnames=("shapes", "fit_alpha"))
@@ -110,7 +114,7 @@ def coupled_trans_m_step(log_Ps, Rs, alpha, xis, xohs, w, c, fit_alpha=True, num
     parts = [jnp.asarray(p) for p in (log_Ps, W1, b1, W2, b2)]
     shapes = tuple(tuple(int(d) for d in p.shape) for p in parts)
     flat0 = jnp.concatenate([p.ravel() for p in parts] + [jnp.array([_logit(alpha / ALPHA_MAX)])])
-    n_total = float(xohs.shape[0] * xohs.shape[1])
+    n_total = n_real(xohs)
     res = _minimize(_ctrans_vg, flat0, "L-BFGS-B", num_iters, xis=jnp.asarray(xis), xohs=xohs, w=w, c=c,
                     alpha_fixed=jnp.asarray(float(alpha)), n_total=n_total, shapes=shapes, fit_alpha=bool(fit_alpha))
     lp, R = _unflatten_trans(jnp.asarray(res.x[:-1]), shapes)
@@ -165,6 +169,7 @@ def em_train_ext(logpi0, log_Ps, Rs, rewards, trans_probs, xohs, aohs, xohs_emit
         pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
         g, xi, al = e_step_ext(pi0, log_Ps, Rs, rewards, tp, tmp, xo, xe, ao, _kll(kin, kin_model, N, T, K),
                                w, c, jnp.asarray(float(alpha)), use_temp)
+        g = g * oh_mask(ao)[..., None]                    # padded steps carry no posterior mass
         LL_list.append(float(jnp.sum(jax_logsumexp(al[:, -1], axis=-1))))
         if not np.isfinite(LL_list[-1]):
             raise FloatingPointError(f"SWIRL EM LL is {LL_list[-1]} at iteration {i}")
@@ -206,12 +211,14 @@ def swirl_eval(r, trans_probs, xohs, aohs, xohs_emit=None, kin=None, ctx=None, u
     kll = _kll(kin, km, N, T, K)
     g, _, al = e_step_ext(pi0, r["log_Ps"], r["Rs"], rewards, tp, tmp, xo, xe, ao, kll, w, c, alpha, use_temp)
     cum = np.asarray(jax_logsumexp(al, axis=-1))                 # (N, T) log p(a_{0:t})
-    step = np.diff(cum, axis=1, prepend=0.0)
-    out = dict(LL_total=float(cum[:, -1].sum()), LL=float(cum[:, -1].sum() / (N * T)), step_ll=step,
-               gamma=np.asarray(g), n_steps=int(N * T))
+    step = np.diff(cum, axis=1, prepend=0.0)                     # 0 on padded steps
+    m = np.asarray(oh_mask(ao))                                  # (N, T) real steps (all True without padding)
+    n = int(m.sum())
+    out = dict(LL_total=float(cum[:, -1].sum()), LL=float(cum[:, -1].sum() / max(n, 1)),
+               step_ll=np.where(m, step, 0.0), gamma=np.asarray(g) * m[..., None], n_steps=n, mask=m)
     if paths:
-        out["path"] = np.asarray(viterbi_ext(pi0, r["log_Ps"], r["Rs"], rewards, tp, tmp, xo, xe, ao, kll, w, c,
-                                             alpha, use_temp))
+        out["path"] = np.where(m, np.asarray(viterbi_ext(pi0, r["log_Ps"], r["Rs"], rewards, tp, tmp, xo, xe, ao,
+                                                         kll, w, c, alpha, use_temp)), -1)
     return out
 
 

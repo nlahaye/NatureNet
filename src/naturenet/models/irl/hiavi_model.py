@@ -28,6 +28,11 @@ Optional per-intention kinematic emissions (kinematics.KinematicEmissions; `kine
 `kin=` KinFeatures in fit / loglik / posteriors / decode): the step emission becomes
 pi_k(a | s) f_k(step) vM_k(turn); f_k / vM_k have closed-form M-steps inside the same EM loop. kin=None at
 evaluation scores actions only (kinematics marginalised), kinematics=None is the original model.
+
+Padded sequences (segment_policy: variable): an action index < 0 marks a padded step. Padded steps have
+emission LL 0 and carry the forward / Viterbi state unchanged (identity transitions), so the marginal LL,
+the real-step posteriors and the MAP path equal those of the unpadded sequences; posteriors are 0, the
+decoded path is -1 and every count / LL normaliser skips them. No padding -> identical to before.
 """
 import numpy as np
 from scipy.special import logsumexp
@@ -74,48 +79,70 @@ def softmax_policy(q):
 # HMM pieces (N sequences of length T, K latents)
 # ---------------------------------------------------------------------------
 
+def step_mask(a):
+    """(N, T) True on real steps (a >= 0); None if nothing is padded."""
+    m = np.asarray(a) >= 0
+    return None if m.all() else m
+
+
 def emission_loglik(logpis, s, a):
-    """logpis (K, S, A); s, a (N, T) int -> (N, T, K)."""
-    return np.moveaxis(logpis[:, s, a], 0, -1)
+    """logpis (K, S, A); s, a (N, T) int -> (N, T, K); 0 on padded steps (a < 0)."""
+    a = np.asarray(a)
+    out = np.moveaxis(logpis[:, s, np.maximum(a, 0)], 0, -1)
+    return np.where((a >= 0)[..., None], out, 0.0) if (a < 0).any() else out
 
 
-def forward_backward(logp_init, logp_tr, lls):
+def forward_backward(logp_init, logp_tr, lls, mask=None):
     """
     lls (N, T, K). Returns log gamma (N, T, K), expected transition counts (K, K) summed over n and t,
-    and the marginal log-likelihood per sequence (N,).
+    and the marginal log-likelihood per sequence (N,). mask (N, T) bool (None = all real): padded steps
+    carry alpha forward unchanged (beta = 0), get log gamma = -inf and no transition counts.
     """
     N, T, K = lls.shape
     la = np.empty((N, T, K))
     la[:, 0] = logp_init + lls[:, 0]
     for t in range(1, T):
         la[:, t] = logsumexp(la[:, t - 1][:, :, None] + logp_tr[None], axis=1) + lls[:, t]
+        if mask is not None:
+            la[:, t] = np.where(mask[:, t, None], la[:, t], la[:, t - 1])
     lb = np.zeros((N, T, K))
     for t in range(T - 2, -1, -1):
         lb[:, t] = logsumexp(logp_tr[None] + (lls[:, t + 1] + lb[:, t + 1])[:, None, :], axis=2)
+        if mask is not None:
+            lb[:, t] = np.where(mask[:, t + 1, None], lb[:, t], 0.0)
     ll = logsumexp(la[:, -1], axis=1)
     lg = la + lb - ll[:, None, None]
+    if mask is not None:
+        lg = np.where(mask[..., None], lg, -np.inf)
     if T > 1:
         lx = la[:, :-1, :, None] + logp_tr[None, None] + (lls[:, 1:] + lb[:, 1:])[:, :, None, :] \
             - ll[:, None, None, None]
+        if mask is not None:
+            lx = np.where(mask[:, 1:, None, None], lx, -np.inf)
         xi = np.exp(logsumexp(lx.reshape(-1, K, K), axis=0))
     else:
         xi = np.zeros((K, K))
     return lg, xi, ll
 
 
-def viterbi(logp_init, logp_tr, lls):
+def viterbi(logp_init, logp_tr, lls, mask=None):
+    """MAP intentions (N, T); -1 on padded steps (mask False)."""
     N, T, K = lls.shape
     d = logp_init + lls[:, 0]
     bp = np.zeros((N, T, K), dtype=np.int64)
     for t in range(1, T):
         sc = d[:, :, None] + logp_tr[None]
         bp[:, t] = sc.argmax(axis=1)
-        d = sc.max(axis=1) + lls[:, t]
+        dn = sc.max(axis=1) + lls[:, t]
+        if mask is not None:
+            bp[:, t] = np.where(mask[:, t, None], bp[:, t], np.arange(K)[None])
+            dn = np.where(mask[:, t, None], dn, d)
+        d = dn
     z = np.zeros((N, T), dtype=np.int64)
     z[:, -1] = d.argmax(axis=1)
     for t in range(T - 1, 0, -1):
         z[:, t - 1] = bp[np.arange(N), t, z[:, t]]
-    return z
+    return z if mask is None else np.where(mask, z, -1)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +190,9 @@ class HIAVI:
         """w (N, T, K) responsibilities -> (K, S, A) normalised counts (+ pseudocount, eps rows as hiql)."""
         K, S, A = self.K, self.S, self.A
         cnt = np.zeros((K, S * A))
+        if (a < 0).any():   # padded steps: no counts
+            w = w * (a >= 0)[..., None]
+            a = np.maximum(a, 0)
         idx = (s * A + a).ravel()
         for k in range(K):
             cnt[k] = np.bincount(idx, weights=w[..., k].ravel(), minlength=S * A)
@@ -197,15 +227,20 @@ class HIAVI:
         s, a = np.asarray(s, dtype=np.int64), np.asarray(a, dtype=np.int64)
         if s.shape != a.shape or s.ndim != 2:
             raise ValueError(f"s and a must both be (N, T); got {s.shape}, {a.shape}")
-        if s.min() < 0 or s.max() >= self.S or a.min() < 0 or a.max() >= self.A:
-            raise ValueError("state / action index out of range")
+        if s.min() < 0 or s.max() >= self.S or a.min() < -1 or a.max() >= self.A:
+            raise ValueError("state / action index out of range (a = -1 marks padded steps)")
+        mask = step_mask(a)
+        if mask is not None and not mask[:, 0].all():
+            raise ValueError("padded sequences must start with a real step")
+        n_real = s.size if mask is None else int(mask.sum())
         logp_init, logp_tr, logpis = self._init()
         self._shape = s.shape
         self._init_kin(kin)
         prev_z, prev_ll, hist = None, -np.inf, []
         for it in range(self.max_iters):
-            lg, xi, ll = forward_backward(logp_init, logp_tr, emission_loglik(logpis, s, a) + self._kll(kin, s.shape))
-            tot = float(ll.sum() / s.size)
+            lg, xi, ll = forward_backward(logp_init, logp_tr, emission_loglik(logpis, s, a) + self._kll(kin, s.shape),
+                                          mask)
+            tot = float(ll.sum() / n_real)
             if not np.isfinite(tot):
                 raise FloatingPointError(f"HIAVI log-likelihood is {tot} at iteration {it}")
             hist.append(tot)
@@ -225,7 +260,8 @@ class HIAVI:
                 print(f"HIAVI iter {it}: LL/step {tot:.5f}")
         self.logp_init, self.logp_tr, self.ll_history = logp_init, logp_tr, np.asarray(hist)
         # final E-step responsibilities -> expert policies -> IAVI once per latent
-        lg, _, _ = forward_backward(logp_init, logp_tr, emission_loglik(logpis, s, a) + self._kll(kin, s.shape))
+        lg, _, _ = forward_backward(logp_init, logp_tr, emission_loglik(logpis, s, a) + self._kll(kin, s.shape),
+                                    mask)
         expert = self._policies_from_counts(np.exp(lg), s, a)
         self.r = np.zeros((self.K, self.S, self.A))
         self.q = np.zeros((self.K, self.S, self.A))
@@ -238,19 +274,27 @@ class HIAVI:
     # -- evaluation with the IAVI policies --
     def _lls(self, s, a, kin=None):
         s = np.asarray(s, dtype=np.int64)
-        return emission_loglik(np.log(self.pis), s, np.asarray(a, dtype=np.int64)) + self._kll(kin, s.shape)
+        a = np.asarray(a, dtype=np.int64)
+        kll = self._kll(kin, s.shape)
+        if kin is not None and (a < 0).any():
+            kll = np.where((a >= 0)[..., None], kll, 0.0)
+        return emission_loglik(np.log(self.pis), s, a) + kll
 
     def loglik(self, s, a, kin=None):
-        """Mean forward log-likelihood per step (comparable to SWIRL's LL / (N * T); joint with kin)."""
-        _, _, ll = forward_backward(self.logp_init, self.logp_tr, self._lls(s, a, kin))
-        return float(ll.sum() / np.asarray(s).size)
+        """Mean forward log-likelihood per REAL step (comparable to SWIRL's LL / n_steps; joint with kin)."""
+        _, _, ll = forward_backward(self.logp_init, self.logp_tr, self._lls(s, a, kin), step_mask(a))
+        return float(ll.sum() / int((np.asarray(a) >= 0).sum()))
+
+    def seq_loglik(self, s, a, kin=None):
+        """(N,) forward log-likelihood per sequence."""
+        return forward_backward(self.logp_init, self.logp_tr, self._lls(s, a, kin), step_mask(a))[2]
 
     def posteriors(self, s, a, kin=None):
-        lg, _, _ = forward_backward(self.logp_init, self.logp_tr, self._lls(s, a, kin))
+        lg, _, _ = forward_backward(self.logp_init, self.logp_tr, self._lls(s, a, kin), step_mask(a))
         return np.exp(lg)
 
     def decode(self, s, a, kin=None):
-        return viterbi(self.logp_init, self.logp_tr, self._lls(s, a, kin))
+        return viterbi(self.logp_init, self.logp_tr, self._lls(s, a, kin), step_mask(a))
 
     def params(self):
         p = dict(logp_init=self.logp_init, logp_tr=self.logp_tr, pis=self.pis, r=self.r, q=self.q,

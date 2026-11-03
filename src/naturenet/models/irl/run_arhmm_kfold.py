@@ -19,7 +19,7 @@ from ssm.swirl import ARHMMs
 
 from sit_fuse.utils import read_yaml
 
-from naturenet.models.irl.swirl_data import align_for_swirl, as_list, get_folds, load_swirl_dataset
+from naturenet.models.irl.swirl_data import align_data, as_list, get_folds, load_swirl_dataset, step_mask
 from naturenet.models.irl.kinematics import KinFeatures, KinematicEmissions, cached_kinematics, kin_conf, pooled
 
 
@@ -37,7 +37,7 @@ def _as_list_x(positions):
 
 def kin_datas(positions, kin):
     """ARHMM data rows [state, step, turn] (float) for the kinematic ARHMM; row t = move x_t -> x_{t+1}."""
-    return [np.c_[np.asarray(p, dtype=float), kin.step[i], kin.turn[i]] for i, p in enumerate(positions)]
+    return [np.c_[np.asarray(p, dtype=float), kin.step[i, :len(p)], kin.turn[i, :len(p)]] for i, p in enumerate(positions)]
 
 
 def fit_arhmm_params(positions, n_hidden_states, n_states, emission_dim=1, latent_state_dim=1, epochs=100,
@@ -71,10 +71,14 @@ def arhmm_start_params(arhmm_s):
             getattr(arhmm_s.dynamics, "kin_model", None))
 
 
-def _kin_null_split(kin_null, kin):
-    """Pooled kinematic LL on the ARHMM moves (rows 0..T-2 of every sequence)."""
-    k = KinFeatures(kin.step[:, :-1], kin.turn[:, :-1])
-    return kin_null.total_loglik(k) * kin_null.weight
+def _kin_null_split(kin_null, kin, lengths=None):
+    """Pooled kinematic LL on the ARHMM moves (steps 0..n_i-2 of every sequence; n_i = real steps, default T)."""
+    st, tu = kin.step.copy(), kin.turn.copy()
+    n = np.full(st.shape[0], st.shape[1]) if lengths is None else np.asarray(lengths)
+    drop = np.arange(st.shape[1])[None, :] >= (n - 1)[:, None]
+    st[drop] = np.nan
+    tu[drop] = np.nan
+    return kin_null.total_loglik(KinFeatures(st, tu)) * kin_null.weight
 
 
 def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, positions, out_dir, run_uid, kf_ind,
@@ -109,9 +113,10 @@ def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_
         kin_null = pooled(kin_train, kin_cfg)
         n_tr = sum(len(x) for x in list_x)
         extra = dict(train_ll_joint=train_ll, test_ll_joint=test_ll)
-        train_ll = train_ll - _kin_null_split(kin_null, kin_train) / n_tr
+        train_ll = train_ll - _kin_null_split(kin_null, kin_train, [len(x) for x in list_x]) / n_tr
         if test_x:
-            test_ll = test_ll - _kin_null_split(kin_null, kin_test) / sum(len(x) for x in test_x)
+            test_ll = test_ll - _kin_null_split(kin_null, kin_test, [len(x) for x in test_x]) / \
+                sum(len(x) for x in test_x)
     print("ARHMM train LL", train_ll, "test LL", test_ll)
     np.savez(fname_ll, log_likelihood=lls_arhmm, train_ll=train_ll, test_ll=test_ll,
              n_train_steps=int(sum(len(x) for x in list_x)),
@@ -148,9 +153,16 @@ def run_arhmm(yml_conf, data=None, folds_to_run=None):
     overwrite = yml_conf.get("overwrite", False)
     folds_to_run = folds_to_run if folds_to_run is not None else yml_conf.get("folds_to_run")
 
-    data = data if data is not None else load_swirl_dataset(yml_conf)
-    xs, _, _ = align_for_swirl(data["states"], data["actions"])
+    data = data if data is not None else load_swirl_dataset(yml_conf, allow_variable=True)
+    xs, _, _ = align_data(data)
     folds = get_folds(yml_conf, data["groups"])
+    if data.get("variable", False):   # padded rows -> per-sequence arrays of the real steps (ssm takes lists)
+        n_real = step_mask(data, offset=1).sum(1)
+        xs_rows = np.empty(len(xs), dtype=object)
+        for i in range(len(xs)):
+            xs_rows[i] = xs[i, :n_real[i]]
+    else:
+        xs_rows = xs
     kcfg = kin_conf(yml_conf)
     kin = None if kcfg is None else cached_kinematics(yml_conf, data, kcfg, offset=1, shape=np.asarray(xs).shape)
 
@@ -165,8 +177,8 @@ def run_arhmm(yml_conf, data=None, folds_to_run=None):
         print("ARHMM fold", kf_ind, ":", len(train_index), "train /", len(test_index), "test sequences")
         npr.seed(seed + kf_ind)
         has_te = len(test_index) > 0
-        run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, xs[train_index], out_dir, run_uid, kf_ind,
-                           test_positions=xs[test_index] if has_te else None,
+        run_arhmm_internal(seed, emission_dim, n_hidden, latent_state_dim, n_states, xs_rows[train_index], out_dir,
+                           run_uid, kf_ind, test_positions=xs_rows[test_index] if has_te else None,
                            kin_train=None if kin is None else kin[train_index],
                            kin_test=None if kin is None or not has_te else kin[test_index], kin_cfg=kcfg,
                            epochs=int(yml_conf.get("arhmm_epochs", 100)))

@@ -89,11 +89,19 @@ class SwirlBackend:
             km = None
         else:
             from naturenet.models.irl.run_arhmm_kfold import arhmm_start_params, fit_arhmm_params
+            from naturenet.models.irl.swirl_data import is_variable, step_mask
             import contextlib
             import io
             npr.seed(seed % (2 ** 31 - 1))
             with contextlib.redirect_stdout(io.StringIO()):
-                ar, _, _ = fit_arhmm_params(np.asarray(self.data["x"])[idx], K, self.S,
+                xs = np.asarray(self.data["x"])[idx]
+                if is_variable(self.data):                    # ssm takes per-row lists: drop padded steps
+                    n_real = step_mask(self.data, 1, idx).sum(1)
+                    rows = np.empty(len(xs), dtype=object)
+                    for i in range(len(xs)):
+                        rows[i] = xs[i, :n_real[i]]
+                    xs = rows
+                ar, _, _ = fit_arhmm_params(xs, K, self.S,
                                             epochs=int(self.sw["arhmm_epochs"]), kin=self._k(idx), kin_cfg=self.kcfg)
             lp0, lPs, Rs, km = arhmm_start_params(ar)
         if self.kin is not None and km is None:

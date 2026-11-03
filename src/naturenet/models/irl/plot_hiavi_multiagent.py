@@ -60,6 +60,8 @@ def plot_concurrency(d, conf, path, final=None):
             m = (an_all == an) & orig
             t = final["times"][m].ravel()
             col = w[m].ravel() if w is not None else np.zeros_like(t)
+            ok = np.isfinite(t)                       # padded steps (segment_policy: variable) have NaN times
+            t, col = t[ok], col[ok]
             sc = ax0.scatter(_dates(t), np.full(len(t), i), c=col, cmap="viridis", vmin=0, vmax=1, s=9)
         ax0.set_yticks(range(len(np.unique(an_all))))
         ax0.set_yticklabels([_short(a) for a in sorted(np.unique(an_all))])

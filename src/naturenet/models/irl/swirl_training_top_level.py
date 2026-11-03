@@ -177,6 +177,12 @@ def comp_LLloss(pi0, trans_Ps, lls):
     alphas_list = vmap(partial(forward, jnp.array(pi0)))(trans_Ps, lls)
     return jnp.sum(jax_logsumexp(alphas_list[:, -1], axis=-1))
 
+def _masked_ll_path(ll_total, path, all_aohs):
+    """LL per real step and the Viterbi path with -1 on padded steps (segment_policy: variable)."""
+    m = oh_mask(jnp.asarray(all_aohs))
+    return ll_total / jnp.maximum(m.sum(), 1), jnp.where(m, path, -1)
+
+
 def learnt_LL1(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, trans_probs, all_xohs, all_aohs):
     pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
     rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
@@ -185,8 +191,9 @@ def learnt_LL1(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, trans_pr
     logemit = _safe_log(pi)
     new_lls_jax_vmap = vmap(partial(comp_ll_jax, logemit))(jnp.array(all_xohs), jnp.array(all_aohs))
     new_trans_Ps_vmap = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(all_xohs))
+    new_trans_Ps_vmap = vmap(pad_eye)(new_trans_Ps_vmap, jnp.asarray(all_aohs))
     jax_path_vmap = vmap(partial(viterbi_JAX, jnp.array(pi0)))(jnp.array(new_trans_Ps_vmap), jnp.array(new_lls_jax_vmap))
-    return comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap) / (all_xohs.shape[0]*all_xohs.shape[1]), jax_path_vmap
+    return _masked_ll_path(comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap), jax_path_vmap, all_aohs)
 
 def learnt_LL2(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, new_trans_probs, all_xohs, all_xohs2, all_aohs):
     n_states, n_actions, _ = new_trans_probs.shape
@@ -197,7 +204,8 @@ def learnt_LL2(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, new_tran
     logemit = _safe_log(pi)
     new_lls_jax_vmap = vmap(partial(comp_ll_jax, logemit))(jnp.array(all_xohs2), jnp.array(all_aohs))
     new_trans_Ps_vmap = vmap(partial(comp_transP, jnp.array(log_Ps), Rs))(jnp.array(all_xohs))
+    new_trans_Ps_vmap = vmap(pad_eye)(new_trans_Ps_vmap, jnp.asarray(all_aohs))
     jax_path_vmap = vmap(partial(viterbi_JAX, jnp.array(pi0)))(jnp.array(new_trans_Ps_vmap), jnp.array(new_lls_jax_vmap))
-    return comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap) / (all_xohs.shape[0]*all_xohs.shape[1]), jax_path_vmap
+    return _masked_ll_path(comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap), jax_path_vmap, all_aohs)
 
 

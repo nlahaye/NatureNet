@@ -93,6 +93,21 @@ def comp_log_transP(log_Ps, Wbs, one_hot_x):
 def comp_transP(log_Ps, Wbs, one_hot_x):
     return jnp.exp(comp_log_transP(log_Ps, Wbs, one_hot_x))
 
+def oh_mask(oh):
+    """(..., T) True on real steps: padded steps (segment_policy: variable) have all-zero one-hots."""
+    return oh.reshape(oh.shape[:-2] + (-1,)).sum(-1) > 0 if oh.ndim >= 3 else oh.sum(-1) > 0
+
+
+def pad_eye(Ps, aoh):
+    """
+    (T-1, K, K) transitions with the identity into padded steps (aoh row all zero). With the zero emission
+    LL of a padded step this leaves the forward LL, the real-step posteriors AND the Viterbi path exact (the
+    padded tail continues every state with probability 1). No-op without padding.
+    """
+    m = oh_mask(aoh)[1:]
+    return jnp.where(m[:, None, None], Ps, jnp.eye(Ps.shape[-1], dtype=Ps.dtype))
+
+
 def viterbi_JAX(pi0, Ps, ll):
     """
     Implements the Viterbi algorithm in JAX.
@@ -179,7 +194,7 @@ def expected_states(alphas, betas, Ps, ll):
     return expected_states, expected_joints
 
 def jax_e_step_logpi2(pi0, log_Ps, Rs, logemit, trans_probs, xoh, xoh2, aoh):
-    Ps_jax = comp_transP(jnp.array(log_Ps), Rs, jnp.array(xoh))
+    Ps_jax = pad_eye(comp_transP(jnp.array(log_Ps), Rs, jnp.array(xoh)), aoh)
     log_likes_jax = comp_ll_jax(jnp.array(logemit), jnp.array(xoh2), jnp.array(aoh))
     alpha_jax = forward(pi0, Ps_jax, log_likes_jax)
     beta_jax = backward(Ps_jax, log_likes_jax)
@@ -187,7 +202,7 @@ def jax_e_step_logpi2(pi0, log_Ps, Rs, logemit, trans_probs, xoh, xoh2, aoh):
     return gamma_jax, xi_jax, alpha_jax
 
 def jax_e_step_logpi(pi0, log_Ps, Rs, logemit, trans_probs, xoh, aoh):
-    Ps_jax = comp_transP(jnp.array(log_Ps), Rs, jnp.array(xoh))
+    Ps_jax = pad_eye(comp_transP(jnp.array(log_Ps), Rs, jnp.array(xoh)), aoh)
     log_likes_jax = comp_ll_jax(jnp.array(logemit), jnp.array(xoh), jnp.array(aoh))
     alpha_jax = forward(pi0, Ps_jax, log_likes_jax)
     beta_jax = backward(Ps_jax, log_likes_jax)
@@ -273,7 +288,13 @@ def _unflatten_trans(flat, shapes):
 def _trans_loss(flat, xis, xohs, n_total, shapes):
     log_Ps, Rs = _unflatten_trans(flat, shapes)
     log_trans = vmap(lambda x: comp_log_transP(log_Ps, Rs, x))(xohs)  # (N, T-1, K, K)
-    return -jnp.sum(xis * log_trans) / n_total
+    m = oh_mask(xohs)[:, 1:, None, None]                              # transitions into real steps only
+    return -jnp.sum(jnp.where(m, xis * log_trans, 0.0)) / n_total
+
+
+def n_real(one_hot_xs):
+    """Real (unpadded) steps in a (N, T, ...) one-hot batch (= N * T without padding)."""
+    return float(np.asarray(oh_mask(jnp.asarray(one_hot_xs))).sum())
 
 
 _trans_vg = jax.jit(jax.value_and_grad(_trans_loss), static_argnames=("shapes",))
@@ -294,7 +315,7 @@ def trans_m_step_jax_scipy2(log_Ps, Rs, expectations, one_hot_xs, num_iters=1000
     parts = [jnp.asarray(p) for p in (log_Ps, W1, b1, W2, b2)]
     shapes = tuple(tuple(int(d) for d in p.shape) for p in parts)
     flat0 = jnp.concatenate([p.ravel() for p in parts])
-    n_total = float(one_hot_xs.shape[0] * one_hot_xs.shape[1])
+    n_total = n_real(one_hot_xs)
     result = _minimize(_trans_vg, flat0, "L-BFGS-B", num_iters, xis=jnp.asarray(expectations[1]),
                        xohs=one_hot_xs, n_total=n_total, shapes=shapes)
     log_Ps_opt, Rs_opt = _unflatten_trans(result.x, shapes)
@@ -305,7 +326,7 @@ def _emit_m_step(rewards, trans_probs, temps, expectations, one_hot_xs, one_hot_
     rewards = jnp.asarray(rewards)
     one_hot_xs = jnp.asarray(one_hot_xs)
     shape = tuple(int(d) for d in rewards.shape)
-    n_total = float(one_hot_xs.shape[0] * one_hot_xs.shape[1])
+    n_total = n_real(one_hot_xs)
     result = _minimize(_emit_vg, rewards.ravel(), "BFGS", num_iters, trans_probs=jnp.asarray(trans_probs),
                        temps=None if temps is None else jnp.asarray(temps), gammas=jnp.asarray(expectations[0]),
                        xohs=one_hot_xs, aohs=jnp.asarray(one_hot_acs), n_total=n_total, shape=shape,
