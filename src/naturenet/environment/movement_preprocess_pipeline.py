@@ -55,7 +55,7 @@ def run_movement_track_preprocess(yml_conf):
             ids.append((os.path.splitext(os.path.basename(yml_conf["pre_split_movement_csvs"][i]))[0]).replace(" ", "_"))
 
         movement_dfs = split_pre_split_streams(dfs_by_id, ids, yml_conf["out_dir"], yml_conf["run_uid"],
-                                               **_segment_kwargs(yml_conf, 29))
+                                               **_segment_kwargs(yml_conf, yml_conf["split_len"]))
 
     elif os.path.exists(df_fname):
 
@@ -65,7 +65,7 @@ def run_movement_track_preprocess(yml_conf):
     else:
         movement_df = pd.read_csv(yml_conf["movement_csv"])
         movement_dfs = split_movement_streams(movement_df, yml_conf["out_dir"], yml_conf["run_uid"],
-                                              **_segment_kwargs(yml_conf, 49))
+                                              **_segment_kwargs(yml_conf, yml_conf["split_len"]))
 
     # One grid shared by every key. Without lon/lat_bounds, use the extent of ALL keys
     # (per-key grids gave inconsistent flat indices in the pooled transition model).
