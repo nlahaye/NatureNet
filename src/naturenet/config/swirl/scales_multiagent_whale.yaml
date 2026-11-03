@@ -97,7 +97,7 @@ multiagent:
 # SWIRL keys (as in init_test_swirl.yaml)
 emission_dim: 1
 latent_state_dim: 1
-temps_final: [1.0, 1.0]       # per-intention policy temperatures in stage 2 (the pipeline default
+temps_final: 1.0              # all intentions at temperature 1 in stage 2, for every K (the default
                               # [0.01, 1, ...] collapsed K=2 to one intention without kinematics in the synthetic test)
 em_tol: null
 

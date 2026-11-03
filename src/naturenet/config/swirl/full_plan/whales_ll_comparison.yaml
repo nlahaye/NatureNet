@@ -1,0 +1,20 @@
+# Full plan, Phase E1 (whales): baseline LL comparison (paths relative to this file).
+#   python -m naturenet.models.irl.plot_ll_comparison -y full_plan/whales_ll_comparison.yaml [--methods swirl_s1 hiavi]
+# Missing files are reported and skipped.
+
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/ll_comparison/"
+out_prefix: "whale_v1"
+title: "Blue whale K-fold log-likelihood"
+ci: 0.95
+compare_k: null          # K for the per-fold plot; null = each method's best test K
+reference: "swirl_s1"    # paired test-LL differences vs this method (shared folds)
+
+methods:
+  - {name: arhmm,    yaml: "whales_swirl_kfold.yaml"}
+  - {name: swirl_s1, yaml: "whales_swirl_kfold.yaml"}
+  - {name: swirl_s2, yaml: "whales_swirl_kfold.yaml"}
+  - {name: hiavi,    yaml: "whales_hiavi_kfold.yaml"}
+  # NN-SWIRL: add only if whale NN runs exist with the same folds_dir / seq_len
+  # - {name: swirl_nn_s1, yaml: "<whale NN yaml>"}
+  # hiql IAVI (K = 1) baseline, if run_hiql_iavi was run for whales:
+  # - {name: hiql_iavi, csv: "/data/nlahaye/NatureNet/Blue_Whale_v1/hiql/ll_iavi.csv"}

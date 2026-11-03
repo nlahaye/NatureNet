@@ -142,6 +142,8 @@ def _save(path, **kw):
 def _temps(yml_conf, key, K, default):
     t = yml_conf.get(key)
     t = default if t is None else list(as_list(t))
+    if len(t) == 1 and K > 1:       # a single value (e.g. temps_final: 1.0) applies to every intention
+        t = t * K
     if len(t) != K:
         raise ValueError(f"{key} has {len(t)} entries, expected n_hidden = {K}")
     return jnp.array(t, dtype=jnp.float64)
