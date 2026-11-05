@@ -119,13 +119,27 @@ def s2_inputs(yml_conf, data, T):
         max_dense_entries=float(yml_conf.get("s2_max_dense_entries", DEFAULT_S2_MAX_DENSE_ENTRIES)))
     check_trans_prob(new_T, n_actions=n_actions, name="S-2 trans_prob")
     xs_prev = preprocess_xs_prev_np(data["x"], data["x_prev"], prev_state_map, n_actions, n_states)
-    one_hotx2 = vmap(partial(one_hotx2_partial, n_states=n_states, n_actions=M))
-    xohs2 = one_hotx2(jnp.asarray(data["x"]), jnp.asarray(xs_prev))
-    if "step_mask" in data:   # padded steps: zero one-hots (segment_policy: variable)
-        xohs2 = xohs2 * jnp.asarray(data["step_mask"], dtype=xohs2.dtype)[:, :, None, None]
-    out = (jnp.asarray(new_T), xohs2, M)
+    print(f"S-2: M = {M} predecessor slots, {n_states * M} augmented states, new_T "
+          f"{np.asarray(new_T).nbytes / 1e9:.2f} GB")
+    if yml_conf.get("s2_index_emissions", True):
+        # (N, T, 1) int32 index x * M + slot (-1 on padded steps) instead of the dense (N, T, 1, S*M) float64
+        # one-hot: same LLs (swirl_training.comp_ll_jax) with 2*S*M times less memory.
+        x2 = np.asarray(data["x"], dtype=np.int64) * M + np.asarray(xs_prev, dtype=np.int64)
+        if "step_mask" in data:
+            x2 = np.where(np.asarray(data["step_mask"], dtype=bool), x2, -1)
+        if x2.max() >= np.iinfo(np.int32).max:
+            raise ValueError("S-2 index exceeds int32")
+        xohs2 = x2.astype(np.int32)[:, :, None]
+    else:  # previous dense one-hots (needs N * T * S * M * 8 bytes)
+        one_hotx2 = vmap(partial(one_hotx2_partial, n_states=n_states, n_actions=M))
+        xohs2 = one_hotx2(jnp.asarray(data["x"]), jnp.asarray(xs_prev))
+        if "step_mask" in data:   # padded steps: zero one-hots (segment_policy: variable)
+            xohs2 = xohs2 * jnp.asarray(data["step_mask"], dtype=xohs2.dtype)[:, :, None, None]
+    # new_T stays in HOST memory; each fit moves it to the device once and frees it afterwards (previously
+    # every fold's dense new_T stayed on the GPU through the cache).
+    out = (np.asarray(new_T), xohs2, M)
     cache[("S2psm", id(T))] = prev_state_map  # small; kept for plots (reward2 layout = x * M + slot)
-    if yml_conf.get("cache_fold_inputs", True):  # set False if 5 folds of S-2 tensors do not fit in memory
+    if yml_conf.get("cache_fold_inputs", True):  # host memory only; set False if 5 folds of new_T do not fit
         cache[key] = out
     return out
 

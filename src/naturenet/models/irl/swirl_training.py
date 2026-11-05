@@ -71,8 +71,18 @@ def vi_temp(trans_prob, reward, temp, discount=0.95):
     return piG, QG, VG
 
 def comp_ll_jax(logits, one_hot_x, one_hot_a):
+    """
+    (T, K) emission LLs. one_hot_x is either the (T, 1, S) one-hot states or an integer (T, 1) / (T,) array of
+    state indices (S-2: x * M + slot, -1 on padded steps). The index form gives the same LLs without the dense
+    (N, T, S*M) one-hot tensor, which is what runs out of GPU memory for S-2 with many sequences / slots.
+    Padded steps have an all-zero one_hot_a row, so their LL is 0 in both forms.
+    """
     logits = logits - jax_logsumexp(logits, axis=-1, keepdims=True)
-    transition_probs = jnp.einsum('...i,...ij->...j', one_hot_x, logits)
+    if jnp.issubdtype(one_hot_x.dtype, jnp.integer):
+        idx = jnp.clip(one_hot_x.reshape(one_hot_x.shape[0]), 0, logits.shape[-2] - 1)
+        transition_probs = jnp.moveaxis(jnp.take(logits, idx, axis=-2), -2, 0)  # (T, K, A)
+    else:
+        transition_probs = jnp.einsum('...i,...ij->...j', one_hot_x, logits)
     lls = jnp.sum(one_hot_a * transition_probs, axis=-1)
     return lls
 
@@ -94,7 +104,12 @@ def comp_transP(log_Ps, Wbs, one_hot_x):
     return jnp.exp(comp_log_transP(log_Ps, Wbs, one_hot_x))
 
 def oh_mask(oh):
-    """(..., T) True on real steps: padded steps (segment_policy: variable) have all-zero one-hots."""
+    """
+    (..., T) True on real steps: padded steps (segment_policy: variable) have all-zero one-hots. Integer
+    (..., T, 1) index arrays (S-2 index emissions, see comp_ll_jax) mark padded steps with -1.
+    """
+    if jnp.issubdtype(oh.dtype, jnp.integer):
+        return oh[..., 0] >= 0
     return oh.reshape(oh.shape[:-2] + (-1,)).sum(-1) > 0 if oh.ndim >= 3 else oh.sum(-1) > 0
 
 
