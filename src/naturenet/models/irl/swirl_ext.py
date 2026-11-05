@@ -29,6 +29,8 @@ from jax import vmap
 from jax.scipy.special import logsumexp as jax_logsumexp
 
 from naturenet.models.irl.swirl_training import (
+    MSTEP,
+    device_tp,
     _emit_m_step,
     _log_policy,
     _minimize,
@@ -127,7 +129,7 @@ def coupled_trans_m_step(log_Ps, Rs, alpha, xis, xohs, w, c, fit_alpha=True, num
 # ---------------------------------------------------------------------------
 
 def _inputs(trans_probs, xohs, aohs, xohs_emit, temps, K, kin, kin_model, ctx):
-    tp = jnp.asarray(_dense(trans_probs))
+    tp = device_tp(trans_probs)
     xo, ao = jnp.asarray(xohs), jnp.asarray(aohs)
     xe = xo if xohs_emit is None else jnp.asarray(xohs_emit)
     N, T = xo.shape[0], xo.shape[1]
@@ -152,7 +154,7 @@ def _kll(kin, kin_model, N, T, K):
 
 def em_train_ext(logpi0, log_Ps, Rs, rewards, trans_probs, xohs, aohs, xohs_emit=None, temps=None,
                  kin=None, kin_model=None, ctx=None, alpha=0.0, fit_alpha=False, iters=100, init=True,
-                 trans=True, emit=True, kin_mstep=True, tol=None, verbose=False, num_iters=1000):
+                 trans=True, emit=True, kin_mstep=True, tol=None, verbose=False, num_iters=None):
     """
     One SWIRL EM run (S-1: xohs_emit=None, trans_probs (S, A, S); S-2: xohs_emit = S-2 one-hots, trans_probs
     the S-2 tensor). temps=None -> naturenet (no temperature) policy, else the temperature policy.
@@ -180,8 +182,9 @@ def em_train_ext(logpi0, log_Ps, Rs, rewards, trans_probs, xohs, aohs, xohs_emit
         new_logpi0 = pi0_m_step(g) if init else logpi0
         if trans:
             if coupled:
-                new_log_Ps, new_Rs, alpha = coupled_trans_m_step(log_Ps, Rs, alpha, xi, xo, w, c, fit_alpha,
-                                                                 num_iters)
+                new_log_Ps, new_Rs, alpha = coupled_trans_m_step(
+                    log_Ps, Rs, alpha, xi, xo, w, c, fit_alpha,
+                    MSTEP["trans_iters"] if num_iters is None else num_iters)
             else:
                 new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (g, xi), xo, num_iters=num_iters)
         else:

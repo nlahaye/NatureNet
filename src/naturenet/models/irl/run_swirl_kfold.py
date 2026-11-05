@@ -23,6 +23,7 @@ from naturenet.models.irl.swirl_data import (
     seq_meta_arrays,
     as_rs,
     get_folds,
+    subsample_fold,
     init_rewards,
     load_swirl_dataset,
     trans_prob_from_segments,
@@ -105,6 +106,20 @@ def _idx_key(idx):
     return None if idx is None else hash(np.asarray(idx, dtype=np.int64).tobytes())
 
 
+def s2_structured_trans(T, prev_state_map, n_states, M):
+    """S2Trans(T dense (S, A, S), G (S, S)) with G[x, x'] = x' * M + slot(x', x) (0 where x -> x' is impossible)."""
+    Td = np.asarray(T.todense() if hasattr(T, "todense") else T, dtype=np.float64)
+    lut = prev_slot_lookup(prev_state_map)
+    G = np.zeros((n_states, n_states), dtype=np.int32)
+    for (xn, xp), j in lut.items():           # x' = xn reached from x = xp
+        G[xp, xn] = xn * M + j
+    reach = Td.sum(1) > 0                      # (x, x') with T[x, a, x'] > 0 for some a: x must be a slot of x'
+    bad = [(int(x), int(y)) for x, y in zip(*np.where(reach)) if (int(y), int(x)) not in lut]
+    if bad:
+        raise ValueError(f"prev_state_map is missing predecessors present in T, e.g. {bad[:5]}; rebuild it from T")
+    return S2Trans(Td, G)
+
+
 def s2_inputs(yml_conf, data, T):
     """Prev-slot table (from T support + all observed pairs), S-2 tensor and one-hots over (x, slot)."""
     n_states, n_actions = data["n_states"], data["n_actions"]
@@ -114,13 +129,21 @@ def s2_inputs(yml_conf, data, T):
         return cache[key]
     prev_state_map = compute_prev_state_map(T, n_states, n_actions, observed_pairs=[(data["x"], data["x_prev"])])
     M = n_prev_slots(prev_state_map)
-    new_T, _ = construct_new_trans_probs_limited(
-        T, prev_state_map, None, n_states, n_actions, n_slots=M,
-        max_dense_entries=float(yml_conf.get("s2_max_dense_entries", DEFAULT_S2_MAX_DENSE_ENTRIES)))
-    check_trans_prob(new_T, n_actions=n_actions, name="S-2 trans_prob")
+    if yml_conf.get("s2_structured_vi", True):
+        # Exact structured form (swirl_training.S2Trans): value iteration on T (S, A, S) plus a gather, instead of
+        # the dense (S*M, A, S*M) new_T. M^2 less VI compute and no dense S-2 tensor in host or device memory.
+        new_T = s2_structured_trans(T, prev_state_map, n_states, M)
+        size = new_T.T.nbytes + new_T.G.nbytes
+    else:
+        new_T, _ = construct_new_trans_probs_limited(
+            T, prev_state_map, None, n_states, n_actions, n_slots=M,
+            max_dense_entries=float(yml_conf.get("s2_max_dense_entries", DEFAULT_S2_MAX_DENSE_ENTRIES)))
+        check_trans_prob(new_T, n_actions=n_actions, name="S-2 trans_prob")
+        new_T = np.asarray(new_T)
+        size = new_T.nbytes
     xs_prev = preprocess_xs_prev_np(data["x"], data["x_prev"], prev_state_map, n_actions, n_states)
-    print(f"S-2: M = {M} predecessor slots, {n_states * M} augmented states, new_T "
-          f"{np.asarray(new_T).nbytes / 1e9:.2f} GB")
+    print(f"S-2: M = {M} predecessor slots, {n_states * M} augmented states, "
+          f"{'structured' if is_s2(new_T) else 'dense'} new_T {size / 1e9:.3f} GB")
     if yml_conf.get("s2_index_emissions", True):
         # (N, T, 1) int32 index x * M + slot (-1 on padded steps) instead of the dense (N, T, 1, S*M) float64
         # one-hot: same LLs (swirl_training.comp_ll_jax) with 2*S*M times less memory.
@@ -137,7 +160,7 @@ def s2_inputs(yml_conf, data, T):
             xohs2 = xohs2 * jnp.asarray(data["step_mask"], dtype=xohs2.dtype)[:, :, None, None]
     # new_T stays in HOST memory; each fit moves it to the device once and frees it afterwards (previously
     # every fold's dense new_T stayed on the GPU through the cache).
-    out = (np.asarray(new_T), xohs2, M)
+    out = (new_T, xohs2, M)
     cache[("S2psm", id(T))] = prev_state_map  # small; kept for plots (reward2 layout = x * M + slot)
     if yml_conf.get("cache_fold_inputs", True):  # host memory only; set False if 5 folds of new_T do not fit
         cache[key] = out
@@ -395,10 +418,12 @@ def _fold_iter(yml_conf, data, folds_to_run):
     sel = None if sel is None else set(int(k) for k in as_list(sel))
     for kf_ind, (tr, te) in enumerate(folds):
         if sel is None or kf_ind in sel:
+            tr, te = subsample_fold(yml_conf, data, tr, te, kf_ind)
             yield kf_ind, tr, te
 
 
 def run_swirl_init(yml_conf, data=None, folds_to_run=None):
+    print("M-step options:", set_mstep_options(yml_conf))
     data = prepare_data(yml_conf, data)
     out_dir, run_uid, seed, K = yml_conf["out_dir"], yml_conf["run_uid"], yml_conf["seed"], yml_conf["n_hidden_init"]
     for kf_ind, tr, te in _fold_iter(yml_conf, data, folds_to_run):
@@ -413,6 +438,7 @@ def run_swirl_init(yml_conf, data=None, folds_to_run=None):
 
 
 def run_swirl_final(yml_conf, data=None, folds_to_run=None):
+    print("M-step options:", set_mstep_options(yml_conf))
     data = prepare_data(yml_conf, data)
     out_dir, run_uid, seed, K = yml_conf["out_dir"], yml_conf["run_uid"], yml_conf["seed"], yml_conf["n_hidden"]
     for kf_ind, tr, te in _fold_iter(yml_conf, data, folds_to_run):

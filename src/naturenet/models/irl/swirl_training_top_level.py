@@ -33,7 +33,7 @@ def _to_device(loc):
     """Convert T and the one-hot inputs to device arrays ONCE (not on every E/M step)."""
     tp = loc.get("trans_probs", loc.get("new_trans_probs"))
     xohs2 = loc.get("train_xohs2")
-    return (jnp.asarray(_dense(tp)), jnp.asarray(loc["train_xohs"]),
+    return (device_tp(tp), jnp.asarray(loc["train_xohs"]),
             None if xohs2 is None else jnp.asarray(xohs2), jnp.asarray(loc["train_aohs"]))
 
 
@@ -196,10 +196,10 @@ def learnt_LL1(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, trans_pr
     return _masked_ll_path(comp_LLloss(pi0, new_trans_Ps_vmap, new_lls_jax_vmap), jax_path_vmap, all_aohs)
 
 def learnt_LL2(logpi0, log_Ps, Rs, rewards, temps, n_states, n_actions, new_trans_probs, all_xohs, all_xohs2, all_aohs):
-    n_states, n_actions, _ = new_trans_probs.shape
+    n_states, n_actions = int(rewards.shape[-1]), tp_n_actions(new_trans_probs)   # S*M augmented states
     pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
     rewards_sa = jnp.expand_dims(rewards[:, 0, :], axis=2) * np.ones((1, n_states, n_actions))
-    new_trans_probs = jnp.asarray(_dense(new_trans_probs))
+    new_trans_probs = device_tp(new_trans_probs)
     pi, _, _ = vmap(partial(vi_temp, new_trans_probs))(rewards_sa, temps)
     logemit = _safe_log(pi)
     new_lls_jax_vmap = vmap(partial(comp_ll_jax, logemit))(jnp.array(all_xohs2), jnp.array(all_aohs))

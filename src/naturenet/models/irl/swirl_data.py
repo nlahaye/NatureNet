@@ -465,6 +465,71 @@ def get_folds(yml_conf, groups):
     return fold_indices(groups, fold_groups)
 
 
+def subsample_index(index, groups, lengths, max_n, seed=0, min_per_group=1):
+    """
+    Representative subset of ``index`` (sequence rows) with at most ``max_n`` rows, for faster K-fold runs:
+      - every animal keeps a share proportional to its sequence count (largest remainder, at least
+        ``min_per_group`` while max_n allows), so the per-animal mix of the fold is preserved;
+      - within an animal, rows are taken at evenly spaced quantiles of sequence length (ties broken with
+        ``seed``), so the length distribution (variable segments) and the time coverage are preserved.
+    Deterministic for a given (index, seed). max_n None / <= 0 / >= len(index) -> index unchanged.
+    """
+    index = np.asarray(index)
+    if max_n is None or int(max_n) <= 0 or len(index) <= int(max_n):
+        return index
+    max_n = int(max_n)
+    g = np.asarray(groups)[index]
+    L = np.asarray(lengths)[index]
+    uniq, counts = np.unique(g, return_counts=True)
+    floor_min = min_per_group if max_n >= min_per_group * len(uniq) else 0
+    share = counts / counts.sum() * max_n
+    alloc = np.minimum(counts, np.maximum(np.floor(share).astype(np.int64), floor_min))
+    rem = max_n - alloc.sum()
+    order = np.argsort(-(share - np.floor(share)), kind="stable")
+    i = 0
+    while rem > 0 and i < 10 * len(order):   # hand out the remainder (largest fractional share first)
+        j = order[i % len(order)]
+        if alloc[j] < counts[j]:
+            alloc[j] += 1
+            rem -= 1
+        i += 1
+    while alloc.sum() > max_n:               # floor_min pushed us over: trim the largest allocations
+        alloc[np.argmax(alloc)] -= 1
+    rng = np.random.RandomState(seed)
+    keep = []
+    for gi, n_keep in zip(uniq, alloc):
+        if n_keep <= 0:
+            continue
+        rows = np.where(g == gi)[0]
+        rows = rows[np.lexsort((rng.permutation(len(rows)), L[rows]))]       # by length, random ties
+        pick = np.unique(np.round(np.linspace(0, len(rows) - 1, int(n_keep))).astype(np.int64))
+        keep.extend(rows[pick].tolist())
+    out = np.sort(index[np.asarray(keep, dtype=np.int64)])
+    assert len(out) <= max_n and set(np.asarray(groups)[out]) <= set(uniq)
+    return out
+
+
+def subsample_fold(yml_conf, data, train, test, kf_ind=0):
+    """
+    Apply yml max_train_seqs / max_test_seqs (null = all) to one fold. Seeded by fold_seed + fold index only,
+    so the same rows are used for every K and run in get_stats* (LLs stay comparable across K). Animals stay
+    disjoint between train and test (only rows are dropped). T (per_fold_trans_prob) still uses all TRAIN
+    animals' segments.
+    """
+    mtr, mte = yml_conf.get("max_train_seqs"), yml_conf.get("max_test_seqs")
+    if not mtr and not mte:
+        return train, test
+    seed = int(yml_conf.get("fold_seed", 0)) + 1000 * (int(kf_ind) + 1)
+    lengths, groups = seq_lengths(data), np.asarray(data["groups"])
+    tr = subsample_index(train, groups, lengths, mtr, seed)
+    te = subsample_index(test, groups, lengths, mte, seed + 1)
+    if len(tr) < len(train) or len(te) < len(test):
+        print(f"fold {kf_ind}: subsampled train {len(train)} -> {len(tr)}, test {len(test)} -> {len(te)} "
+              f"(per-animal and length stratified)")
+    check_folds(groups, tr, te, name=f"fold {kf_ind} (subsampled)")
+    return tr, te
+
+
 def holdout_split(yml_conf, groups):
     """Final-run train/test split by animal. holdout_fraction 0 -> train on everything (test empty)."""
     groups = np.asarray(groups)
