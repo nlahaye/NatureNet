@@ -55,3 +55,6 @@ num_runs: 3
 run_arhmm: False            # ARHMM sweep runs via get_stats (Phase B1)
 run_swirl_init: True
 run_swirl_final: True
+
+s2_index_emissions: True 
+
