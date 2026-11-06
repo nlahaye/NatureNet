@@ -10,10 +10,10 @@ compare_k: null          # K for the per-fold plot; null = each method's best te
 reference: "swirl_s1"    # paired test-LL differences vs this method (shared folds)
 
 methods:
-  - {name: arhmm,    yaml: "whales_swirl_kfold.yaml"}
-  - {name: swirl_s1, yaml: "whales_swirl_kfold.yaml"}
-  - {name: swirl_s2, yaml: "whales_swirl_kfold.yaml"}
-  - {name: hiavi,    yaml: "whales_hiavi_kfold.yaml"}
+  - {name: arhmm,    yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/whales_swirl_kfold.yaml"}
+  - {name: swirl_s1, yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/whales_swirl_kfold.yaml"}
+  - {name: swirl_s2, yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/whales_swirl_kfold.yaml"}
+  - {name: hiavi,    yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/whales_hiavi_kfold.yaml"}
   # NN-SWIRL: add only if whale NN runs exist with the same folds_dir / seq_len
   # - {name: swirl_nn_s1, yaml: "<whale NN yaml>"}
   # hiql IAVI (K = 1) baseline, if run_hiql_iavi was run for whales:

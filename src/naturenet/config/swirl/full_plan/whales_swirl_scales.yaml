@@ -4,7 +4,7 @@
 #   python -m naturenet.models.irl.run_swirl_scales_kfold -y full_plan/whales_swirl_scales.yaml [--fold k] [--variant ...]
 #   python -m naturenet.models.irl.plot_swirl_scales      -y full_plan/whales_swirl_scales.yaml
 # --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
-n_states: 75                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
+n_states: 99                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/"
@@ -21,8 +21,8 @@ folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for 
 # Every toggle defaults to off (order 1 + all off = SWIRL S-1). Durations need max_duration <= seq_len / 3 (12 at 40).
 
 seed: 12345
-n_hidden_init: 3            # = whale K* from Phase B (edit)
-n_hidden: 3                 # = whale K* from Phase B (edit)
+n_hidden_init: 5            # = whale K* from Phase B (edit)
+n_hidden: 5                 # = whale K* from Phase B (edit)
 emission_dim: 1
 latent_state_dim: 1
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/scales/"
