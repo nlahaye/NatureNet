@@ -16,6 +16,7 @@ reference: "swirl_s1"    # paired test-LL differences vs this method (needs shar
 
 methods:
   - {name: arhmm,       yaml: "sharks_swirl_kfold.yaml"}        # run_arhmm_kfold.py (linear-SWIRL init)
+  - {name: arhmm_act,   yaml: "sharks_swirl_kfold.yaml"}        # ARHMM re-scored as actions (comparable with SWIRL / HIAVI)
   - {name: swirl_s1,    yaml: "sharks_swirl_kfold.yaml"}        # run_swirl_kfold.py / get_stats_2.py
   - {name: swirl_s2,    yaml: "sharks_swirl_kfold.yaml"}
   - {name: arhmm_nn,    yaml: "../swirl_nn_kfold.yaml"}   # existing NN runs (as-is); comparable only with the same folds / seq_len     # run_arhmm_kfold_nn.py (NN-SWIRL init)

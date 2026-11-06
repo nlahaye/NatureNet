@@ -188,6 +188,16 @@ def _save(path, **kw):
     jnp.savez(path, **kw)
 
 
+def default_final_temps(K):
+    """
+    Default temps_final. K >= 2: [0.01, 1, ..., 1] (original SWIRL: one near-greedy intention). K = 1: [1.0].
+    With K = 1 the 0.01 default made the ONLY intention near-greedy: pi = softmax(Q / 0.01) puts ~1e-8 on every
+    non-greedy action (log ~ -18), so S-2 K = 1 gave LL -5 to -15 per step and S-1 K = 1 collapsed to a flat
+    reward (LL = -log 9). Set temps_final: 1.0 in the YAML to use temperature 1 for every intention and K.
+    """
+    return [1.0] if int(K) == 1 else [0.01] + [1.0] * (int(K) - 1)
+
+
 def _temps(yml_conf, key, K, default):
     t = yml_conf.get(key)
     t = default if t is None else list(as_list(t))
@@ -340,7 +350,7 @@ def fit_swirl_final(yml_conf, data, T, train_index, test_index, arhmm, tag, name
     S, A = data["n_states"], data["n_actions"]
     tol = yml_conf.get("em_tol")
     epochs, epochs_2 = int(yml_conf.get("epochs", 50)), int(yml_conf.get("epochs_2", 30))
-    temps = _temps(yml_conf, "temps_final", K, [0.01] + [1.0] * (K - 1))
+    temps = _temps(yml_conf, "temps_final", K, default_final_temps(K))
     _, R_start2 = init_rewards(K, S, A, seed)
     R_start2 = jnp.array(R_start2)[:, None]  # (K, 1, S)
     if yml_conf.get("use_init_reward", False):

@@ -80,8 +80,8 @@ class SwirlBackend:
         return jnp.asarray(T.todense() if hasattr(T, "todense") else T)
 
     def _temps(self, K):
-        from naturenet.models.irl.run_swirl_kfold import _temps
-        return jnp.asarray(_temps(self.yml_conf, "temps_final", K, [0.01] + [1.0] * (K - 1)))
+        from naturenet.models.irl.run_swirl_kfold import _temps, default_final_temps
+        return jnp.asarray(_temps(self.yml_conf, "temps_final", K, default_final_temps(K)))
 
     def _init(self, K, idx, seed):
         if self.sw["init"] == "sticky":

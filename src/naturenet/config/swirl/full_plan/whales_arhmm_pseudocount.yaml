@@ -1,0 +1,34 @@
+# ARHMM pseudo-count test (whales). Runs (from src/, one per variant; each writes <run_uid>_pc<value>_* files and
+# leaves the base run's SWIRL init files alone):
+#   python -m naturenet.models.irl.get_stats -y config/swirl/full_plan/whales_swirl_kfold.yaml --pseudo_count 0.01
+#   python -m naturenet.models.irl.get_stats -y config/swirl/full_plan/whales_swirl_kfold.yaml --pseudo_count 0.1
+#   python -m naturenet.models.irl.get_stats -y config/swirl/full_plan/whales_swirl_kfold.yaml --pseudo_count 1
+#   python -m naturenet.models.irl.get_stats -y config/swirl/full_plan/whales_swirl_kfold.yaml --pseudo_count 1 --pseudo_support T
+# The base run (1e-5) gets train_ll_act / test_ll_act by re-running get_stats.py without flags (re-scores existing
+# folds from the saved logits, or re-fits with the same seed if the logits file is missing).
+# Then: python -m naturenet.models.irl.plot_ll_comparison -y config/swirl/full_plan/sharks_arhmm_pseudocount.yaml
+#
+# With A augmented copies per track, a pseudo-count c is worth ~c/A of one real transition.
+# Compare on the action LL (arhmm_act): same event space and steps as SWIRL S-1 / S-2.
+
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/ll_comparison_pseudocount/"
+out_prefix: "blue_whale_v1_arhmm_pc"
+title: "Blue whale ARHMM pseudo-count (action LL)"
+ci: 0.95
+compare_k: 3
+reference: "swirl_s1"
+
+methods:
+  - {name: arhmm_act, alias: arhmm_act_pc1e-5, label: "ARHMM pc 1e-5", yaml: "whales_swirl_kfold.yaml"}
+  - {name: arhmm_act, alias: arhmm_act_pc0.01, label: "ARHMM pc 0.01", yaml: "whales_swirl_kfold.yaml",
+     run_uid: "WHALE_SWIRL_BASE_pc0.01", color: "#c49c94"}
+  - {name: arhmm_act, alias: arhmm_act_pc0.1, label: "ARHMM pc 0.1", yaml: "whales_swirl_kfold.yaml",
+     run_uid: "WHALE_SWIRL_BASE_pc0.1", color: "#e377c2"}
+  - {name: arhmm_act, alias: arhmm_act_pc1, label: "ARHMM pc 1", yaml: "whales_swirl_kfold.yaml",
+     run_uid: "WHALE_SWIRL_BASE_pc1", color: "#7f7f7f"}
+  - {name: arhmm_act, alias: arhmm_act_pc1T, label: "ARHMM pc 1 (T support)", yaml: "whales_swirl_kfold.yaml",
+     run_uid: "WHALE_SWIRL_BASE_pc1T", color: "#bcbd22"}
+  - {name: arhmm, alias: arhmm_state_pc1, label: "ARHMM pc 1 (state LL)", yaml: "whales_swirl_kfold.yaml",
+     run_uid: "WHALE_SWIRL_BASE_pc1", color: "#17becf"}
+  - {name: swirl_s1, yaml: "whales_swirl_kfold.yaml"}
+  - {name: swirl_s2, yaml: "whales_swirl_kfold.yaml"}

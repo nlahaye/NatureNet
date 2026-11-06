@@ -50,7 +50,8 @@ mstep_trans_iters: 1000     #   each M-step warm-starts from the previous one; 1
 max_train_seqs: null        # e.g. 400: per-fold representative subsample (per-animal share + length quantiles,
 max_test_seqs: null         #   fixed per fold across K / runs). null = all sequences.
 temps_init: null            # default all 1
-temps_final: null           # default [0.01, 1, ...]
+temps_final: null           # default [0.01, 1, ...] for K >= 2, [1.0] for K = 1 (0.01 broke K = 1). 1.0 = all
+                            #   intentions at temperature 1 (recommended test: it also removes the near-greedy mode 0)
 use_init_reward: False
 run_s2: True                # S-2 is the cost driver: if the pilot is > 3x S-1, run S-2 only at K <= K* + 1
 s2_max_dense_entries: 2.0e+8
@@ -66,5 +67,10 @@ max_latent: 5
 num_runs: 3
 
 run_arhmm: False            # ARHMM sweep runs via get_stats (Phase B1)
+arhmm_action_ll: True       # also score the ARHMM as an action model (train_ll_act / test_ll_act; plot "arhmm_act")
+arhmm_pseudo_count: 1.0e-5  # ARHMM transition-count pseudo-count (ssm default 1e-5). Sweep with get_stats.py
+                            #   --pseudo_count 0.01 / 0.1 / 1 (suffixes run_uid with _pc<value>)
+arhmm_pseudo_support: null  # null = every x -> x'; "T" = only moves reachable under the fold's T
+arhmm_pseudo_floor: 1.0e-5  # pseudo-count on unreachable moves when arhmm_pseudo_support = "T"
 run_swirl_init: True
 run_swirl_final: True

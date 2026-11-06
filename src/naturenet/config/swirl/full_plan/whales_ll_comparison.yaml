@@ -11,6 +11,7 @@ reference: "swirl_s1"    # paired test-LL differences vs this method (shared fol
 
 methods:
   - {name: arhmm,    yaml: "whales_swirl_kfold.yaml"}
+  - {name: arhmm_act, yaml: "whales_swirl_kfold.yaml"}   # ARHMM re-scored as actions (comparable with SWIRL / HIAVI)
   - {name: swirl_s1, yaml: "whales_swirl_kfold.yaml"}
   - {name: swirl_s2, yaml: "whales_swirl_kfold.yaml"}
   - {name: hiavi,    yaml: "whales_hiavi_kfold.yaml"}
