@@ -11,10 +11,11 @@ df_run_uid: "hammerhead_v1"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
-seq_len: 60                 # chunk windows: long enough for durations (D <= 20) and regimes
-segment_policy: "chunk"     # or "variable": one sequence per valid run, seq_len = MAX length (runs split into
+seq_len: 60                 # chunk windows: long enough for durations (D <= 20) and regimes. Must be <= the
+                            # preprocessing cap max_segment_len (49 for the existing pkls; 60 gave 0 sequences)
+segment_policy: "variable"     # or "variable": one sequence per valid run, seq_len = MAX length (runs split into
                             # near-equal pieces; null = no cap), padded + masked (exact LLs). Not for NN-SWIRL.
-# min_seq_len: 10           # variable only: drop runs shorter than this (default 3); set >= 3 * max_duration
+min_seq_len: 10           # variable only: drop runs shorter than this (default 3); set >= 3 * max_duration
 n_folds: 5
 fold_seed: 0
 folds_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/folds/"     # one fold file for ARHMM, SWIRL, NN-SWIRL, HIAVI and decision scales
@@ -49,12 +50,26 @@ epochs_init_2: 30
 epochs: 50
 epochs_2: 30
 em_tol: null                # e.g. 1.0e-5 relative LL change for early stopping (null = fixed epochs)
+# --- Speed (see CHANGES_SPEED.md). Exact options first, then the ones that trade accuracy for time. ---
+s2_structured_vi: True      # exact: S-2 value iteration on T (S,A,S) + gather instead of the dense (S*M,A,S*M) new_T
+                            #   (M^2 less VI compute, no dense S-2 tensor on host/GPU). False = previous dense path.
+mstep_suff_stats: True      # exact: M-step objectives from per-E-step counts (independent of N and T)
+mstep_emit_method: "auto"   # BFGS for <= mstep_emit_bfgs_max_params rewards (S-1, as before), else L-BFGS-B (S-2).
+                            #   scipy BFGS's dense inverse Hessian costs ~1 s / iteration at K*S*M ~ 3000. "BFGS" = old.
+mstep_emit_bfgs_max_params: 1000
+mstep_emit_iters: 1000      # max optimizer iterations per M-step (generalised EM: 100-200 is usually enough because
+mstep_trans_iters: 1000     #   each M-step warm-starts from the previous one; 1000 = original)
+max_train_seqs: null        # e.g. 400: per-fold representative subsample (per-animal share + length quantiles,
+max_test_seqs: null         #   fixed per fold across K / runs). null = all sequences.
 temps_init: null            # default all 1
-temps_final: null           # default [0.01, 1, ...]
+temps_final: null           # default [0.01, 1, ...] for K >= 2, [1.0] for K = 1 (0.01 broke K = 1). 1.0 = all
+                            #   intentions at temperature 1 (recommended test: it also removes the near-greedy mode 0)
 use_init_reward: False      # warm-start final rewards from the *_init1 reward
 run_s2: True
 s2_max_dense_entries: 2.0e+8
 cache_fold_inputs: True
+s2_index_emissions: True     # S-2 emissions from int indices (x*M+slot) instead of dense (N,T,S*M) one-hots; same LLs,
+                             # far less GPU memory. False = previous dense one-hots
 overwrite: False            # False = skip folds whose outputs exist (resume)
 
 # get_stats* loops (K in [min_latent, max_latent] inclusive)
@@ -63,6 +78,11 @@ max_latent: 5
 num_runs: 3
 
 run_arhmm: False           # ARHMM sweep runs via get_stats (Phase B1)
+arhmm_action_ll: True       # also score the ARHMM as an action model (train_ll_act / test_ll_act; plot "arhmm_act")
+arhmm_pseudo_count: 1.0e-5  # ARHMM transition-count pseudo-count (ssm default 1e-5). Sweep with get_stats.py
+                            #   --pseudo_count 0.01 / 0.1 / 1 (suffixes run_uid with _pc<value>)
+arhmm_pseudo_support: null  # null = every x -> x'; "T" = only moves reachable under the fold's T
+arhmm_pseudo_floor: 1.0e-5  # pseudo-count on unreachable moves when arhmm_pseudo_support = "T"
 run_swirl_init: True
 run_swirl_final: True
 

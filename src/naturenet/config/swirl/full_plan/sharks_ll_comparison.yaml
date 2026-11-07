@@ -23,6 +23,7 @@ methods:
   #- {name: swirl_nn_s2, yaml: "../swirl_nn_kfold.yaml"}   # existing NN runs (as-is); comparable only with the same folds / seq_len
   - {name: hiavi,       yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_hiavi_kfold.yaml"}        # run_hiavi_kfold.py / get_stats_hiavi.py
   #- {name: hiql_iavi,   csv: "/mnt/data/NatureNet/Hammerhead_Out_v1/hiql/ll_iavi.csv"}   # run_hiql_iavi.py
+  - {name: arhmm_act,   yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml"}        # ARHMM re-scored as actions (comparable with SWIRL / HIAVI)
   # Overrides, e.g. a single (non-sweep) run in another directory:
   # - {name: swirl_s1, yaml: "swirl_kfold.yaml", sweep: false, n_hidden: 3, run_uid: "SWIRL_TEST",
   #    out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/", label: "SWIRL S-1 (K=3)"}

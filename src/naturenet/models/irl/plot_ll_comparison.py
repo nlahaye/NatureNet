@@ -8,6 +8,7 @@ Train vs test log-likelihood comparison across the K-fold runs:
 Each method entry points at the YAML its runs used (out_dir, run_uid, seed, n_hidden or the get_stats sweep
 min_latent / max_latent / num_runs, n_folds), so the file names are rebuilt exactly as the run scripts write them:
   arhmm        <run_uid>_<K>_hidden_<seed>_seed_arhmm_s_LLs_KF_<k>.npz          train_ll / test_ll
+  arhmm_act    <run_uid>_<K>_hidden_<seed>_seed_arhmm_s_LLs_KF_<k>.npz          train_ll_act / test_ll_act
   arhmm_nn     <run_uid>_<K>_hidden_<seed>_seed_arhmm_nn_s_LLs_KF_<k>.npz       train_ll / test_ll
   swirl_s1     <run_uid>_<K>_<seed>_naturenet_S1_iter2_LL1[_test]_KF_<k>.npz    LL
   swirl_s2     <run_uid>_<K>_<seed>_naturenet_S2_iter2_LL2[_test]_KF_<k>.npz    LL
@@ -49,6 +50,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 METHODS = {
     "arhmm": dict(label="ARHMM", color="#d62728", kind="arhmm",
                   pattern="{K}_hidden_{seed}_seed_arhmm_s_LLs_KF_{k}.npz"),
+    # The ARHMM re-scored as an action model on the SWIRL steps (train_ll_act / test_ll_act in the same LL file;
+    # arhmm_action_ll.py): same event space and steps as SWIRL / HIAVI, unlike "arhmm" (next-state LL).
+    "arhmm_act": dict(label="ARHMM (actions)", color="#8c564b", kind="arhmm", key="{sp}_ll_act",
+                      pattern="{K}_hidden_{seed}_seed_arhmm_s_LLs_KF_{k}.npz"),
     "arhmm_nn": dict(label="ARHMM (NN init)", color="#ff9896", kind="arhmm",
                      pattern="{K}_hidden_{seed}_seed_arhmm_nn_s_LLs_KF_{k}.npz"),
     "swirl_s1": dict(label="SWIRL S-1", color="#1f77b4", kind="ll",
@@ -146,7 +151,7 @@ def collect_method(entry, base_dir=None):
                 if not os.path.exists(path):
                     missing += 1
                     continue
-                vals = {sp: _load_ll(path, sp + "_ll") for sp in SPLITS}
+                vals = {sp: _load_ll(path, spec.get("key", "{sp}_ll").format(sp=sp)) for sp in SPLITS}
                 if vals["train"] is None:
                     old += 1
                     continue
@@ -163,12 +168,33 @@ def collect_method(entry, base_dir=None):
     if missing:
         print(f"{name}: {missing} expected LL file(s) missing")
     if old:
-        warnings.warn(f"{name}: {old} ARHMM LL file(s) have no train_ll / test_ll (written before the update); "
-                      f"re-run run_arhmm_kfold{'_nn' if name == 'arhmm_nn' else ''}.py (it re-fits those folds)")
+        if name == "arhmm_act":
+            warnings.warn(f"{name}: {old} ARHMM LL file(s) have no train_ll_act / test_ll_act; re-run get_stats.py / "
+                          f"run_arhmm_kfold.py (it adds them; SWIRL init files are kept)")
+        else:
+            warnings.warn(f"{name}: {old} ARHMM LL file(s) have no train_ll / test_ll (written before the update); "
+                          f"re-run run_arhmm_kfold{'_nn' if name == 'arhmm_nn' else ''}.py (it re-fits those folds)")
     return rows
 
 
+def register_aliases(conf):
+    """
+    Entries may set alias: <unique name> to include one method several times (e.g. ARHMM pseudo-count variants,
+    each with its own run_uid / arhmm_pseudo_count). The alias is registered as a copy of the method spec and
+    replaces entry["name"], so rows, summaries and plots keep the variants apart. Idempotent.
+    """
+    for e in conf["methods"]:
+        alias = e.get("alias")
+        if alias and e["name"] != alias:
+            if e["name"] not in METHODS:
+                raise ValueError(f"unknown method {e['name']}; options: {sorted(METHODS)}")
+            METHODS[alias] = dict(METHODS[e["name"]], label=e.get("label", alias))
+            e["base"], e["name"] = e["name"], alias
+    return conf
+
+
 def collect_lls(conf, base_dir=None, methods=None):
+    register_aliases(conf)
     rows = []
     for entry in conf["methods"]:
         if entry["name"] not in METHODS:

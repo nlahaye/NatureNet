@@ -33,7 +33,8 @@ import jax.numpy as jnp
 
 from naturenet.models.irl import swirl_scales as sc
 from naturenet.models.irl.run_swirl_kfold import (
-    _fold_iter, _init_kin_model, _temps, fold_trans_prob, load_arhmm, prepare_data, swirl_kinematics)
+    _fold_iter, _init_kin_model, _temps, default_final_temps, fold_trans_prob, load_arhmm, prepare_data,
+    swirl_kinematics)
 from naturenet.models.irl.swirl_data import init_rewards, load_swirl_dataset, seq_lengths, seq_meta_arrays, step_mask
 from naturenet.models.irl.kinematics import comparable_ll, kin_conf, pooled
 from naturenet.models.irl.swirl_multiagent import sticky_init
@@ -289,7 +290,7 @@ def run_scales(yml_conf, folds_to_run=None, only=None, check=False):
     if check:
         return None
     os.makedirs(yml_conf["out_dir"], exist_ok=True)
-    temps = _temps(yml_conf, "temps_final", K, [0.01] + [1.0] * (K - 1))
+    temps = _temps(yml_conf, "temps_final", K, default_final_temps(K))
     _, R_start = init_rewards(K, S, A, seed)
     kcfg = kin_conf(yml_conf)
     kin = swirl_kinematics(yml_conf, data, kcfg) if kcfg is not None else None

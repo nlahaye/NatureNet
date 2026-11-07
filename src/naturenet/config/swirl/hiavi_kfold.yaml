@@ -7,16 +7,16 @@ seed: 12345                 # base seed; get_stats_hiavi runs use seed + run ind
 n_hidden_init: 3
 n_hidden: 3                 # K for run_hiavi_kfold / plot_hiavi (get_stats_hiavi sweeps min..max_latent)
 n_states: 75
-out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/hiavi/"
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hiavi/"
 run_uid: "HIAVI_TEST"       # get_stats_hiavi appends _loop_<i>_latent_<K>_states; plot that run_uid / seed
 
 actions:
-  - "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_183623_1_actions.pkl"
+  - "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hammerhead_v1_183623_1_actions.pkl"
 positions:
-  - "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_183623_1_states_abstract_env.pkl"
+  - "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hammerhead_v1_183623_1_states_abstract_env.pkl"
 
 # Transitions: per fold from the train animals (no leakage); trans_probs only if per_fold_trans_prob False
-trans_probs: "/mnt/data/NatureNet/Hammerhead_Out_v1/hammerhead_v1_trans_prob_abstract_env.npz"
+trans_probs: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hammerhead_v1_trans_prob_abstract_env.npz"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
@@ -28,7 +28,7 @@ segment_policy: "exact"
 # Folds: same file as the SWIRL / ARHMM runs (point folds_dir at the SWIRL out_dir to share them)
 n_folds: 5
 fold_seed: 0
-# folds_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
+# folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
 folds_to_run: null
 holdout_fraction: 0.2
 # holdout_groups: ["183623"]
@@ -54,15 +54,15 @@ max_latent: 6
 num_runs: 3
 
 # Plots / time series (plot_hiavi -> plot_swirl_new.run_plots with swirl_model hiavi)
-df_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/"
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
 df_run_uid: "hammerhead_v1"
 lon_bounds: [-125, -115]
 lat_bounds: [28, 36]
 splits: ["train", "test"]
 plot_trajs: True
 plot_gifs: False
-# envs: "/mnt/data/NatureNet/Hammerhead_Out_v1/envs.pkl"
-# hiavi_env_map: "/mnt/data/NatureNet/Hammerhead_Out_v1/env_map.npy"   # (H, W) abstract env states
+# envs: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/envs.pkl"
+# hiavi_env_map: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/env_map.npy"   # (H, W) abstract env states
 # env_lon_bounds: [-125, -115]
 # env_lat_bounds: [28, 36]
 plot_inputs: False
@@ -71,4 +71,4 @@ static_layers: {}
 reward_normalize: "none"
 hiavi_plot_series: True
 hiavi_cv_plot: True
-# plot_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/hiavi/plots"
+# plot_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hiavi/plots"
