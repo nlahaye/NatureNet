@@ -1,0 +1,82 @@
+# Full plan, Phase D1 (sharks, secondary): base coupled-intention SWIRL S-1 at K = 3 (Phase B / C S-1 K).
+#   python -m naturenet.models.irl.run_swirl_multiagent  -y full_plan/sharks_multiagent_swirl.yaml --skip_null
+#   python -m naturenet.models.irl.run_swirl_multiagent  -y full_plan/sharks_multiagent_swirl.yaml     # nulls (if it passes)
+#   python -m naturenet.models.irl.plot_hiavi_multiagent -y full_plan/sharks_multiagent_swirl.yaml --subdir multiagent_swirl
+#   python -m naturenet.models.irl.plot_multiagent_compare --dirs <out_dir>/multiagent <out_dir>/multiagent_swirl \
+#       --labels HIQL SWIRL --K 3 --out <out_dir>/ma_compare
+# Multi-agent SWIRL is S-1 only. Outputs: <out_dir>/multiagent_swirl (same out_dir as sharks_multiagent.yaml).
+# --- shared data block (identical to the Phase B / C shark configs -> same sequences) ---
+n_states: 75                # = n_clusters of the abstract env (n_clusters + 1 with invalid_state: absorbing); = Phase B
+actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hammerhead_v1_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+df_run_uid: "hammerhead_v1" # step times / positions from <df_dir>/<df_run_uid>_dfs.pkl
+per_fold_trans_prob: True   # T from the training animals of each fold
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy (= Phase B / C)
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5                  # unused by the multi-agent runner (leave-one-animal-out), kept identical
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/folds/"
+# --- end shared data block ---
+
+seed: 12345
+n_hidden: 3                 # = Ks (cosmetic; Ks sets K)
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/multiagent/"
+run_uid: "SHARK_MA_SWIRL"
+
+hiavi_discount: 0.9         # = Phase B HIQL
+hiavi_restarts: 10
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"
+
+multiagent:
+  backend: "swirl"
+  swirl:
+    init: "arhmm"             # kinematic-free ARHMM warm start per fold (as run_swirl_kfold)
+    arhmm_epochs: 50
+    restarts: 1               # independent-model restarts per fold (best train LL kept)
+    epochs: 50                # stage 1 (S-1 EM) = Phase B / C schedule
+    epochs_2: 30              # stage 2 (temps_final) = Phase B / C
+    coupled_iters: 10         # EM iterations per mean-field outer iteration (n_outer)
+  animals: ["235283", "244607", "244608", "261743"]   # tracked inside the env window (check with --concurrency_only)
+  max_aug: 2                  # originals + __aug1..2 per shark (as whales)
+  window: ["2023-11-01", "2024-10-10"]               # shark env window (345 d), calendar for the time-shift null
+  Ks: [3]
+  variants:
+    temporal:  {h_days: 1.0, max_dt_days: 3.0}                                  # co-timing only
+    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 50.0, max_km: 150.0}  # co-timing x closeness
+  n_outer: 5                  # mean-field outer iterations (context <-> posteriors)
+  alpha0: 0.1                 # initial coupling
+  n_null: 20
+  null_variants: ["temporal", "proximity"]
+  null_min_shift_days: 30     # partners shifted by U(30, L - 30) days, independently per animal
+  n_null_sync: 500            # replicates for the synchrony index (no refit; cheap)
+  sync_variant: "temporal"
+  eval_include_aug: False     # score held-out ORIGINAL tracks only
+  min_context_steps: 30       # warn if < 2 animals reach this many steps with partner context
+  ma_subdir: "multiagent_swirl"
+
+# SWIRL keys (used by the swirl backend; harmless for HIAVI)
+emission_dim: 1
+latent_state_dim: 1
+temps_final: 1.0            # scalar -> every intention at T = 1 in stage 2 (= Phase B / C; a 2-element list breaks K = 3)
+em_tol: null
+
+# Action-only, as Phase B / C. Kinematics (step speed, turn) are a sensitivity run, not the primary test.
+kinematics:
+  enabled: False
+  step_feature: "speed_kmh"
+  step_dist: "gamma"
+  zero_km: 0.05
+  min_dt_h: 0.5
+  max_speed_kmh: 10.0
+  label_margin: 0.5

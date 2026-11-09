@@ -3,6 +3,8 @@
 #   python -m naturenet.models.irl.run_scales_multiagent -y full_plan/whales_scales_multiagent_swirl.yaml --variant S1_N1 S1_N2 --skip_null
 #   python -m naturenet.models.irl.run_scales_multiagent -y full_plan/whales_scales_multiagent_swirl.yaml --variant <passing>
 #   python -m naturenet.models.irl.plot_scales_multiagent -y full_plan/whales_scales_multiagent_swirl.yaml --K 5
+# Unlike Phase C, N2 is not warm-started from N1 here: both start from the ARHMM init with the same schedule, so
+# S1_N2 - S1_N1 (independent models) is also an equal-iteration check of the Phase C N2 gain.
 # Run the nulls only for variant / kernel pairs that pass (i) pooled gain > 0 and (ii) > half of animals improved.
 n_states: 75                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
@@ -21,7 +23,7 @@ folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for 
 # --- end shared data block ---
 
 seed: 12345
-n_hidden: 2
+n_hidden: 5                  # = Ks (cosmetic; Ks sets K)
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/multiagent_scales/"
 run_uid: "WHALE_SCALES_MA_SWIRL"
 
@@ -44,16 +46,16 @@ multiagent:
     init: "arhmm"
     arhmm_epochs: 50
     restarts: 2
-    epochs: 30
-    epochs_2: 20
+    epochs: 50                # = Phase B / C S-1 schedule (was 30)
+    epochs_2: 30              # (was 20)
     coupled_iters: 10
     ctx_source: independent   # partner context from own-evidence posteriors (mean_field: coupled, echo-prone)
   scales_defaults:            # shared by every variant; "on" toggles take these blocks
     reward_l2: 1.0
     reward_tol: null          # 1e-4 at order 1, 1e-8 above
-    context_min_count: 3      # deep contexts seen >= 3 times in the training animals
-    switch_history: {kind: ["lags"], lags: 2}
-    durations: {max_duration: 12, hazard: "logistic", l2: 0.01}
+    context_min_count: 5      # = Phase C (k-grams seen >= 5 times in the training animals; was 3)
+    switch_history: {kind: "lags+decay", lags: 2, decay_steps: [3, 10], window: 10}   # = Phase C (was lags only)
+    durations: {max_duration: 12, hazard: "logistic", hazard_features: False, smooth: 1.0, l2: 1.0}   # = Phase C (l2 was 0.01)
     hierarchy: {n_regimes: 2, sticky: 0.95, init_noise: 0.5}
     hiql: {backoff: 5.0}      # HIQL: Dirichlet back-off of deep contexts to their parent (inf = order 1)
     coupling: {fit_alpha: True, fit_beta: True, beta0: 0.0, tol: 1.0e-8}

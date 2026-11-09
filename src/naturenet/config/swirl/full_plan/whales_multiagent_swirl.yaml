@@ -3,6 +3,8 @@
 #   python -m naturenet.models.irl.run_swirl_multiagent  -y full_plan/whales_multiagent_swirl.yaml --skip_null
 #   python -m naturenet.models.irl.run_swirl_multiagent  -y full_plan/whales_multiagent_swirl.yaml
 #   python -m naturenet.models.irl.plot_hiavi_multiagent -y full_plan/whales_multiagent_swirl.yaml --subdir multiagent_swirl
+# Independent-model schedule = Phase B / C S-1 (50 + 30 EM iterations), so the coupled refit (n_outer x coupled_iters
+# extra iterations) does not gain from an under-converged independent fit.
 # Outputs: <out_dir>/multiagent_swirl (same out_dir as the HIAVI run in whales_multiagent.yaml).
 n_states: 75                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
@@ -21,7 +23,7 @@ folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for 
 # --- end shared data block ---
 
 seed: 12345
-n_hidden: 2
+n_hidden: 5                  # = Ks (cosmetic; Ks sets K)
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/multiagent/"
 run_uid: "WHALE_MA"
 
@@ -44,8 +46,8 @@ multiagent:
     init: "arhmm"             # arhmm (kinematic ARHMM warm start, as in run_swirl_kfold) | sticky
     arhmm_epochs: 50
     restarts: 1               # independent-model restarts per fold (best train LL kept)
-    epochs: 30                # stage 1 (S-1 EM)
-    epochs_2: 20              # stage 2 (EM with temps_final)
+    epochs: 50                # stage 1 (S-1 EM) = Phase B / C S-1 schedule (was 30)
+    epochs_2: 30              # stage 2 (EM with temps_final) = Phase B / C (was 20)
     coupled_iters: 10         # EM iterations per mean-field outer iteration (n_outer)
   # animals: null -> all 23 tags (all inside the window); 825 (4 d) and 5800 (8 d) only act as partners
   # SWIRL backend: the 10 best-connected held-out animals keep runtime manageable (all 23 tags still act as partners)
