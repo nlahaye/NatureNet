@@ -19,6 +19,18 @@ Outputs in out_dir (run_uid_v = <run_uid>_SC_<variant tag>):
                                                                    jax_path_vmap (posterior-argmax z), seq meta
   <run_uid>_scales_cv.csv                                          one row per (variant, fold)
 --check prints the segment-length / context-coverage report and exits (use it to choose order, D and R).
+
+HIQL / HIAVI emission (scales.emission: hiql): the same variants with tabular HIAVI policies per context
+(closed-form M-step, Dirichlet back-off scales.hiql.backoff towards the parent context; order 1 + all off =
+HIAVI), state-free intention switching (transition_input none, as HIAVI) and no temperatures. Init per fold:
+hiavi_restarts random HIAVI inits (HIAVI._init: random policies, sticky Lambda), best training LL kept; no ARHMM.
+Schedule: one EM run of hiavi_max_iters iterations, relative tol scales.hiql_tol (default 1e-7, as the
+multi-agent hiql_scales backend); order-N children warm-start from the fitted parent (one fit). Unset
+scales.hiql keys default to hiavi_pseudocount / hiavi_discount / hiavi_iavi_tol / hiavi_iavi_max_iters, so N1
+matches run_hiavi_kfold (hiavi_align: swirl). IAVI rewards on the context MDP (sc_iavi_r / sc_iavi_q) are added
+after the fit (scales.hiql_iavi: False skips). Variant tags and CSV rows are the same as for SWIRL (N1, N2, ...)
+with an `emission` column; use a separate run_uid (or out_dir) for HIQL runs - the runner refuses to mix
+emissions in one CSV.
 Multi-agent (partner-coupled) fits of the same variants: run_scales_multiagent / scales_multiagent.
 """
 import argparse
@@ -38,12 +50,48 @@ from naturenet.models.irl.run_swirl_kfold import (
 from naturenet.models.irl.swirl_data import init_rewards, load_swirl_dataset, seq_lengths, seq_meta_arrays, step_mask
 from naturenet.models.irl.kinematics import comparable_ll, kin_conf, pooled
 from naturenet.models.irl.swirl_multiagent import sticky_init
+from naturenet.models.irl.hiavi_model import HIAVI
+from naturenet.models.irl.run_hiavi_kfold import _seed, hiavi_settings
 
 from sit_fuse.utils import read_yaml
 
 LATENT_KEYS = ("switch_history", "durations", "hierarchy")
 SHARED_KEYS = ("reward_param", "reward_l2", "context_min_count", "context_source", "context_t_support",
-               "reward_optimizer", "reward_tol")
+               "reward_optimizer", "reward_tol", "emission", "transition_input", "hiql")
+EMISSIONS = ("swirl", "hiql")
+
+
+def scales_emission(yml_conf):
+    """Run-wide emission: scales.emission (swirl | hiql; default swirl)."""
+    e = str((yml_conf.get("scales") or {}).get("emission", "swirl")).lower()
+    if e in ("hiavi",):
+        e = "hiql"
+    if e not in EMISSIONS:
+        raise ValueError(f"scales.emission must be swirl | hiql, got {e!r}")
+    return e
+
+
+def _hiql_block(yml_conf):
+    """scales.hiql with unset keys taken from the hiavi_* settings (as the multi-agent hiql_scales backend)."""
+    st = hiavi_settings(yml_conf)
+    if st["mstep"] != "soft":
+        raise ValueError("scales.emission hiql supports hiavi_mstep: soft only")
+    hq = dict((yml_conf.get("scales") or {}).get("hiql") or {})
+    for k in ("pseudocount", "discount", "iavi_tol", "iavi_max_iters"):
+        hq.setdefault(k, st[k])
+    return hq
+
+
+def _tag(cfg):
+    """Variant tag without the emission prefix (one emission per run, so N1 is the baseline for either)."""
+    t = cfg.tag()
+    pre = cfg.emission.upper() + "_"
+    return t[len(pre):] if cfg.emission != "swirl" and t.startswith(pre) else t
+
+
+def _np_T(T):
+    T = T.todense() if hasattr(T, "todense") else T
+    return np.asarray(T, dtype=float)
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +115,10 @@ def scales_variants(yml_conf):
     s = yml_conf.get("scales") or {}
     defaults = s.get("defaults") or {}
     shared = {k: s[k] for k in SHARED_KEYS if k in s}
+    emission = scales_emission(yml_conf)
+    shared["emission"] = emission
+    if emission == "hiql":
+        shared["hiql"] = _hiql_block(yml_conf)
     confs = [dict(order=1)]
     grid = s.get("grid")
     if grid:
@@ -89,11 +141,15 @@ def scales_variants(yml_conf):
                 if t is not None:
                     c[k] = t
         c.update({k: v[k] for k in v if k != "name"})
+        if str(c.get("emission", emission)).lower().replace("hiavi", "hiql") != emission:
+            raise ValueError(f"variant {v.get('name', c)} sets emission {c['emission']!r}; this run is {emission!r} "
+                             "(scales.emission). Use a separate config / run_uid per emission.")
+        c.pop("emission", None)
         confs.append(c)
     out, seen = [], set()
     for c in confs:
         c = {**shared, **c, "seed": int(yml_conf.get("seed", 0))}
-        tag = sc.ScalesConfig.from_dict(c).tag()
+        tag = _tag(sc.ScalesConfig.from_dict(c))
         if tag not in seen:
             seen.add(tag)
             out.append((tag, c))
@@ -101,7 +157,8 @@ def scales_variants(yml_conf):
 
 
 def _latent_key(cfg):
-    return cfg.tag().split("_", 1)[1] if "_" in cfg.tag() else ""
+    t = _tag(cfg)
+    return t.split("_", 1)[1] if "_" in t else ""
 
 
 def _parent_tag(cfg):
@@ -159,6 +216,8 @@ def segment_report(data, variants, S):
 # ---------------------------------------------------------------------------
 
 def _base_init(yml_conf, scales_conf, K, S, kf_ind):
+    if scales_emission(yml_conf) == "hiql":
+        return None                                                  # HIAVI random inits per restart
     mode = scales_conf.get("init", "auto")
     out_dir, run_uid, seed = yml_conf["out_dir"], yml_conf["run_uid"], int(yml_conf["seed"])
     if mode in ("arhmm", "auto"):
@@ -204,6 +263,59 @@ def fit_variant_fold(yml_conf, data, T, tr, te, tag, conf, base, R_start, temps,
     tree = _tree(cfg, data, T, tr, S)
     dtr = sc.scales_data(rows, a, tree, cfg.history, S, kin=kin, idx=tr)
     dte = None if te is None or len(te) == 0 else sc.scales_data(rows, a, tree, cfg.history, S, kin=kin, idx=te)
+    if cfg.emission == "hiql":
+        r = _fit_hiql(yml_conf, s, cfg, tree, dtr, T, tr, kin, parent, kf_ind)
+    else:
+        r = _fit_swirl(yml_conf, s, cfg, tree, dtr, base, R_start, temps, km0, parent, tol, epochs, epochs_2)
+    sec = time.time() - t0
+    return _finish_fold(yml_conf, data, cfg, tree, r, dtr, dte, tr, te, tag, kin, kin_null, kf_ind, sec)
+
+
+def _fit_hiql(yml_conf, s, cfg, tree, dtr, T, tr, kin, parent, kf_ind):
+    """HIQL emission: best of hiavi_restarts HIAVI inits (training LL), or one warm-started fit for order N."""
+    from naturenet.models.irl.kinematics import KinematicEmissions
+    st = hiavi_settings(yml_conf)
+    K = int(yml_conf["n_hidden"])
+    tol = float(s.get("hiql_tol", 1e-7))
+    iters = int(st["max_iters"])
+    kcfg = kin_conf(yml_conf)
+    if parent is not None and s.get("warm_start", True):
+        r_par, tree_par = parent
+        p = sc.init_params(cfg, tree, (r_par["params"]["logpi0"][0], r_par["params"]["log_Ps"][0], None),
+                           np.zeros((K, tree.S, tree.A)), dtr["phi"].shape[-1])
+        p = sc.warm_start(p, tree, r_par, tree_par)
+        print("  warm start from the fitted parent (HIQL)")
+        r = sc.em_train_scales(p, cfg, tree, dtr, temps=None, kin_model=r_par.get("kin_model"),
+                               iters=int(s.get("warm_epochs", iters)), tol=tol)
+    else:
+        T_np = _np_T(T)
+        best, best_ll = None, -np.inf
+        for rs in range(int(yml_conf.get("hiavi_restarts", 10))):
+            ss = _seed(yml_conf["seed"], kf_ind, rs)
+            hm = HIAVI(K, T_np, seed=ss, sticky=st["sticky"])
+            lp0, lP, lpis = hm._init()
+            km = None
+            if kin is not None and kcfg is not None:
+                km = KinematicEmissions.from_conf(K, kcfg).init_quantiles(kin[tr], rng=hm.rng)
+            seed = int(np.asarray(ss.generate_state(1))[0]) % (2 ** 31 - 1)
+            p = sc.init_params(cfg, tree, (lp0, lP, None), lpis, dtr["phi"].shape[-1], seed=seed)
+            try:
+                rr = sc.em_train_scales(p, cfg, tree, dtr, temps=None, kin_model=km, iters=iters, tol=tol)
+            except FloatingPointError as e:
+                print(f"  restart {rs} failed: {e}")
+                continue
+            ll = sc.scales_eval(rr, tree, dtr)["LL"]
+            if np.isfinite(ll) and ll > best_ll:
+                best, best_ll = rr, ll
+        if best is None:
+            raise RuntimeError(f"all HIQL restarts failed (fold {kf_ind})")
+        r = best
+    if s.get("hiql_iavi", True):
+        r = sc.hiql_finalize(r, tree, dtr)
+    return r
+
+
+def _fit_swirl(yml_conf, s, cfg, tree, dtr, base, R_start, temps, km0, parent, tol, epochs, epochs_2):
     p = sc.init_params(cfg, tree, base, R_start, dtr["phi"].shape[-1])
     km = km0
     if parent is not None and s.get("warm_start", True):
@@ -217,7 +329,10 @@ def fit_variant_fold(yml_conf, data, T, tr, te, tag, conf, base, R_start, temps,
         r = sc.em_train_scales(p, cfg, tree, dtr, temps=None, kin_model=km, iters=epochs, tol=tol)
         r = sc.em_train_scales(r["params"], cfg, tree, dtr, temps=temps, kin_model=r["kin_model"], iters=epochs_2,
                                tol=tol)
-    sec = time.time() - t0
+    return r
+
+
+def _finish_fold(yml_conf, data, cfg, tree, r, dtr, dte, tr, te, tag, kin, kin_null, kf_ind, sec):
     uid, f_par, f_ll, f_llt = _names(yml_conf, tag, kf_ind)
     m_tr = np.asarray(sc.data_mask(dtr))                              # real (unpadded) steps
     counts = np.bincount(np.asarray(dtr["ctx"])[m_tr], minlength=tree.H)
@@ -226,7 +341,7 @@ def fit_variant_fold(yml_conf, data, T, tr, te, tag, conf, base, R_start, temps,
                 phi_mean=np.asarray(dtr["phi"])[m_tr].mean(0)
                 if dtr["phi"].shape[-1] else np.zeros(0), variant=tag, fit_sec=sec)
     np.savez(f_par, **sc.params_to_save(r, tree), **diag)
-    row = dict(variant=tag, fold=kf_ind, order=cfg.order, latent=_latent_key(cfg) or "none",
+    row = dict(variant=tag, fold=kf_ind, emission=cfg.emission, order=cfg.order, latent=_latent_key(cfg) or "none",
                history="+".join(cfg.history.kind) or "off",
                durations=cfg.durations.hazard if cfg.durations.enabled else "off", D=cfg.D, R=cfg.R,
                reward_param=cfg.reward_param, H=tree.H, n_params=sc.n_params(r["params"], cfg, tree),
@@ -267,6 +382,11 @@ def _write_rows(yml_conf, rows):
     new = pd.DataFrame(rows)
     if os.path.exists(path):
         old = pd.read_csv(path)
+        e_old = set(old["emission"].dropna()) if "emission" in old else {"swirl"}
+        e_new = set(new["emission"]) if "emission" in new else {"swirl"}
+        if e_old and e_old != e_new:
+            raise ValueError(f"{path} holds {sorted(e_old)} rows; this run is {sorted(e_new)}. Use a separate "
+                             "run_uid (or out_dir) per emission so N1 baselines and files do not collide.")
         key = set(zip(new["variant"], new["fold"]))
         old = old[[(v, f) not in key for v, f in zip(old["variant"], old["fold"])]]
         new = pd.concat([old, new], ignore_index=True)
@@ -290,8 +410,14 @@ def run_scales(yml_conf, folds_to_run=None, only=None, check=False):
     if check:
         return None
     os.makedirs(yml_conf["out_dir"], exist_ok=True)
-    temps = _temps(yml_conf, "temps_final", K, default_final_temps(K))
-    _, R_start = init_rewards(K, S, A, seed)
+    emission = scales_emission(yml_conf)
+    if emission == "hiql":
+        temps, R_start = None, None
+        print("Emission: HIQL (HIAVI policies per context);", int(yml_conf.get("hiavi_restarts", 10)),
+              "restarts per fold; no ARHMM init, no temperatures")
+    else:
+        temps = _temps(yml_conf, "temps_final", K, default_final_temps(K))
+        _, R_start = init_rewards(K, S, A, seed)
     kcfg = kin_conf(yml_conf)
     kin = swirl_kinematics(yml_conf, data, kcfg) if kcfg is not None else None
     rows_out = []

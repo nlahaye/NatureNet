@@ -1,0 +1,94 @@
+# Phase C (whales), HIQL emission: decision scales on HIQL / HIAVI at K = 3 (same data / folds as Phase B).
+# N1 (order 1, all layers off) = HIAVI K = 3 (Phase B: -1.663); N2 / N3 back off deep contexts to their parent.
+# Nothing to precompute (no ARHMM init). Reward-side options (reward_param, reward_l2, reward_tol, init) are ignored.
+#   python -m naturenet.models.irl.run_swirl_scales_kfold -y full_plan/whales_hiql_scales.yaml --check
+#   python -m naturenet.models.irl.run_swirl_scales_kfold -y full_plan/whales_hiql_scales.yaml [--fold k] [--variant ...]
+#   python -m naturenet.models.irl.plot_swirl_scales      -y full_plan/whales_hiql_scales.yaml
+n_states: 75                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/"
+df_run_uid: "SWIRL_WHALE_v1"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy (= Phase B): one sequence per valid run, runs > 60 split into
+segment_policy: "variable"  # near-equal pieces, padded + masked (exact LLs)
+min_seq_len: 10             # = Phase B
+n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+# Every toggle defaults to off (order 1 + all off = SWIRL S-1). Durations need max_duration <= seq_len / 3 (D = 12).
+
+seed: 12345
+n_hidden_init: 3            # unused for HIQL (no ARHMM init)
+n_hidden: 3                 # HIQL K (Phase B)
+emission_dim: 1
+latent_state_dim: 1
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/scales/"
+run_uid: "WHALE_HIQL_SCALES"   # separate from the SWIRL scales run (the runner refuses to mix)
+
+folds_to_run: null
+holdout_fraction: 0.2
+
+epochs: 50                  # stage 1 (no temperature)
+epochs_2: 30                # stage 2 (temps_final)
+em_tol: 1.0e-5
+temps_final: null            # unused for HIQL (no temperatures)
+run_arhmm: False
+run_swirl_init: False
+run_swirl_final: False
+run_s2: False
+epochs_init: 50
+epochs_init_2: 30
+overwrite: False
+
+# kinematics: {enabled: True, step_feature: "speed_kmh", min_dt_h: 3.0}   # sensitivity only (short-dt Argos error)
+
+
+# --- HIQL / HIAVI settings (= Phase B whales_hiavi_kfold.yaml) ---
+hiavi_discount: 0.9         # IAVI rewards after the fit
+hiavi_restarts: 10          # random HIAVI inits per fold (N1 and every non-warm-started variant); best TRAIN LL
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5      # -> scales.hiql.pseudocount
+hiavi_max_iters: 200        # EM iterations per fit
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+
+scales:
+  emission: "hiql"          # HIQL / HIAVI policies per context (swirl | hiql)
+  hiql: {backoff: 5.0}      # Dirichlet back-off of deep contexts to their parent (inf = order 1); other keys <- hiavi_*
+  hiql_tol: 1.0e-7          # relative EM tol on the total training LL
+  hiql_iavi: True           # IAVI rewards on the context MDP after the fit (sc_iavi_r / sc_iavi_q)
+  init: "auto"
+  warm_start: True
+  warm_epochs: 30
+  reward_param: "additive"
+  reward_l2: 1.0
+  context_min_count: 5      # prune k-grams (k >= 2) seen < 5 times in the training animals
+  context_source: "train"
+  context_t_support: False
+  reward_optimizer: "auto"
+  reward_tol: null
+
+  defaults:
+    switch_history: {kind: "lags+decay", lags: 2, decay_steps: [3, 10], window: 10}
+    durations: {hazard: "logistic", max_duration: 12, hazard_features: False, smooth: 1.0, l2: 1.0}
+    hierarchy: {n_regimes: 2, sticky: 0.95, prior: 0.0, init_noise: 0.5}
+
+  grid:
+    order: [1, 2, 3]          # drop 3 if --check shows < ~20 steps per deep context; add 4 only if N3 is N*
+    switch_history: ["off"]
+    durations: ["off"]
+    hierarchy: ["off"]
+  variants:
+    - {switch_history: "on"}
+    - {durations: "on"}
+    # - {durations: {hazard: "nonparametric", smooth: 5.0}}     # only if the logistic hazard is kept (shape check)
+    - {hierarchy: "on"}
+    - {switch_history: "on", durations: "on"}
+    # - {switch_history: "on", durations: "on", hierarchy: "on"}   # only if >= 2 single layers are kept
+  # Stage B (after A): best latent configuration crossed with order, e.g.
+  #   - {order: 2, durations: "on"}

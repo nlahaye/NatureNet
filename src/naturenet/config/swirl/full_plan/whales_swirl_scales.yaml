@@ -12,17 +12,18 @@ df_run_uid: "SWIRL_WHALE_v1"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
-seq_len: 40                 # chunk windows: whales have ~360 original fixes/animal (17-640); D <= 12, regimes
-segment_policy: "chunk"
+seq_len: 60                 # variable policy (= Phase B): one sequence per valid run, runs > 60 split into
+segment_policy: "variable"  # near-equal pieces, padded + masked (exact LLs)
+min_seq_len: 10             # = Phase B
 n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
 # --- end shared data block ---
-# Every toggle defaults to off (order 1 + all off = SWIRL S-1). Durations need max_duration <= seq_len / 3 (12 at 40).
+# Every toggle defaults to off (order 1 + all off = SWIRL S-1). Durations need max_duration <= seq_len / 3 (D = 12).
 
 seed: 12345
-n_hidden_init: 3            # = whale K* from Phase B (edit)
-n_hidden: 3                 # = whale K* from Phase B (edit)
+n_hidden_init: 5            # whale K* (S-1 1-SE rule; Phase C run)
+n_hidden: 5                 # whale K* (S-1 1-SE rule; Phase C run)
 emission_dim: 1
 latent_state_dim: 1
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/scales/"
@@ -34,7 +35,7 @@ holdout_fraction: 0.2
 epochs: 50                  # stage 1 (no temperature)
 epochs_2: 30                # stage 2 (temps_final)
 em_tol: 1.0e-5
-temps_final: null
+temps_final: 1.0            # = Phase B / the Phase C run
 run_arhmm: True             # run_swirl_kfold on this YAML writes the per-fold ARHMM init (scales.init auto)
 run_swirl_init: True        # S-1 / S-2 reference fits at K* (same folds / seq_len)
 run_swirl_final: True
