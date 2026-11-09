@@ -4,7 +4,7 @@
 # trans_probs is not needed (per_fold_trans_prob: True). The shorter seq_len (40 vs 60 for sharks) means whale and
 # shark LLs are not directly comparable; compare methods / K within a species.
 # --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
-n_states: 75                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
+n_states: 99                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/"
@@ -12,10 +12,10 @@ df_run_uid: "SWIRL_WHALE_v1"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
-seq_len: 40                 # chunk windows: whales have ~360 original fixes/animal (17-640); D <= 12, regimes
-segment_policy: "chunk"     # or "variable": one sequence per valid run, seq_len = MAX length (runs split into
+seq_len: 60                 # chunk windows: whales have ~360 original fixes/animal (17-640); D <= 12, regimes
+segment_policy: "variable"     # or "variable": one sequence per valid run, seq_len = MAX length (runs split into
                             # near-equal pieces; null = no cap), padded + masked (exact LLs). Not for NN-SWIRL.
-# min_seq_len: 10           # variable only: drop runs shorter than this (default 3); set >= 3 * max_duration
+min_seq_len: 10           # variable only: drop runs shorter than this (default 3); set >= 3 * max_duration
 n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
@@ -50,6 +50,7 @@ mstep_trans_iters: 1000     #   each M-step warm-starts from the previous one; 1
 max_train_seqs: null        # e.g. 400: per-fold representative subsample (per-animal share + length quantiles,
 max_test_seqs: null         #   fixed per fold across K / runs). null = all sequences.
 temps_init: null            # default all 1
+temps_final: 1.0          # default [0.01, 1, ...]
 temps_final: null           # default [0.01, 1, ...] for K >= 2, [1.0] for K = 1 (0.01 broke K = 1). 1.0 = all
                             #   intentions at temperature 1 (recommended test: it also removes the near-greedy mode 0)
 use_init_reward: False
@@ -58,7 +59,7 @@ s2_max_dense_entries: 2.0e+8
 cache_fold_inputs: True
 s2_index_emissions: True     # S-2 emissions from int indices (x*M+slot) instead of dense (N,T,S*M) one-hots; same LLs,
                              # far less GPU memory. False = previous dense one-hots
-overwrite: False            # False = skip folds whose outputs exist (resume)
+overwrite: True              # False = skip folds whose outputs exist (resume)
 
 # get_stats* loops (K in [min_latent, max_latent] inclusive). K = 1 is the no-switching reference.
 # Extend to 6 only if test LL at K = 5 is > 1 SEM above K = 4.

@@ -97,19 +97,19 @@ def run_movement_track_preprocess(yml_conf):
             ids.append((os.path.splitext(os.path.basename(yml_conf["pre_split_movement_csvs"][i]))[0]).replace(" ", "_"))
 
         movement_dfs = split_pre_split_streams(dfs_by_id, ids, yml_conf["out_dir"], yml_conf["run_uid"],
-                                               **_segment_kwargs(yml_conf, 29))
-        seg_kwargs = _segment_kwargs(yml_conf, 29)
+                                               **_segment_kwargs(yml_conf, None))
+        seg_kwargs = _segment_kwargs(yml_conf, None)
 
     elif os.path.exists(df_fname):
 
         movement_dfs = None
         with open(df_fname, "rb") as f:
             movement_dfs = pd.read_pickle(f)
-        seg_kwargs = _segment_kwargs(yml_conf, 49)
+        seg_kwargs = _segment_kwargs(yml_conf, None)
         _check_cached_segments(df_fname, movement_dfs, seg_kwargs)
     else:
         movement_df = pd.read_csv(yml_conf["movement_csv"])
-        seg_kwargs = _segment_kwargs(yml_conf, 49)
+        seg_kwargs = _segment_kwargs(yml_conf, None)
         movement_dfs = split_movement_streams(movement_df, yml_conf["out_dir"], yml_conf["run_uid"], **seg_kwargs)
 
     # One grid shared by every key. Without lon/lat_bounds, use the extent of ALL keys

@@ -7,7 +7,7 @@
 # Outputs: <out_dir>/IAVI_BASE_1_12345_hiavi[_LL[_test]]_KF_<k>.npz and rows (K = 1) in <out_dir>/ll_hiavi.csv.
 # With K = 1 the E-step is trivial (EM converges in ~2 iterations), so one restart is enough.
 # --- shared data block (identical in every full_plan shark config -> comparable LLs, shared folds) ---
-n_states: 75
+n_states: 76
 actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hammerhead_v1_*_actions.pkl"
 positions: "auto"
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"

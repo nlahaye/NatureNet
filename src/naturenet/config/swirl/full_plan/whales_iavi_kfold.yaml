@@ -7,7 +7,7 @@
 # Outputs: <out_dir>/WHALE_IAVI_BASE_1_12345_hiavi[_LL[_test]]_KF_<k>.npz and rows (K = 1) in <out_dir>/ll_hiavi.csv.
 # With K = 1 the E-step is trivial (EM converges in ~2 iterations), so one restart is enough.
 # --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
-n_states: 75
+n_states: 99
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"
 positions: "auto"
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/"

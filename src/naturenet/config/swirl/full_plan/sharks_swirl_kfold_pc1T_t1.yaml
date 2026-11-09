@@ -13,7 +13,7 @@
 # Needs the ssm observations.py with ARCategoricalObservations._pseudo (pseudo-count fix) and the run_swirl_kfold.py
 # temperature fix (default_final_temps).
 # --- shared data block (identical in every full_plan shark config -> comparable LLs, shared folds) ---
-n_states: 75                # = n_clusters of the abstract env (n_clusters + 1 if invalid_state: absorbing)
+n_states: 76                # = n_clusters of the abstract env (n_clusters + 1 if invalid_state: absorbing)
 actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hammerhead_v1_*_actions.pkl"
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
@@ -82,7 +82,7 @@ s2_index_emissions: True     # S-2 emissions from int indices (x*M+slot) instead
 overwrite: False            # False = skip folds whose outputs exist (resume)
 
 # get_stats* loops (K in [min_latent, max_latent] inclusive)
-min_latent: 2
+min_latent: 1
 max_latent: 5
 num_runs: 3
 

@@ -74,3 +74,6 @@ arhmm_pseudo_support: null  # null = every x -> x'; "T" = only moves reachable u
 arhmm_pseudo_floor: 1.0e-5  # pseudo-count on unreachable moves when arhmm_pseudo_support = "T"
 run_swirl_init: True
 run_swirl_final: True
+
+s2_index_emissions: True 
+
