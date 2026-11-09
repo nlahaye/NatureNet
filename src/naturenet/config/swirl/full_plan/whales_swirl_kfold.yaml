@@ -50,7 +50,7 @@ mstep_trans_iters: 1000     #   each M-step warm-starts from the previous one; 1
 max_train_seqs: null        # e.g. 400: per-fold representative subsample (per-animal share + length quantiles,
 max_test_seqs: null         #   fixed per fold across K / runs). null = all sequences.
 temps_init: null            # default all 1
-temps_final: null #1.0          # default [0.01, 1, ...]
+temps_final: 1.0          # default [0.01, 1, ...]
 temps_final: null           # default [0.01, 1, ...] for K >= 2, [1.0] for K = 1 (0.01 broke K = 1). 1.0 = all
                             #   intentions at temperature 1 (recommended test: it also removes the near-greedy mode 0)
 use_init_reward: False
@@ -59,7 +59,7 @@ s2_max_dense_entries: 2.0e+8
 cache_fold_inputs: True
 s2_index_emissions: True     # S-2 emissions from int indices (x*M+slot) instead of dense (N,T,S*M) one-hots; same LLs,
                              # far less GPU memory. False = previous dense one-hots
-overwrite: False           # False = skip folds whose outputs exist (resume)
+overwrite: True              # False = skip folds whose outputs exist (resume)
 
 # get_stats* loops (K in [min_latent, max_latent] inclusive). K = 1 is the no-switching reference.
 # Extend to 6 only if test LL at K = 5 is > 1 SEM above K = 4.

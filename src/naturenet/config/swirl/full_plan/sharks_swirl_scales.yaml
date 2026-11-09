@@ -29,8 +29,8 @@ folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/folds/"     # one fold fil
 # ARHMM init: run run_swirl_kfold with run_arhmm: True on this YAML first (or scales.init: sticky).
 
 seed: 12345
-n_hidden_init: 5            # = K* from Phase B (edit)
-n_hidden: 5                 # = K* from Phase B (edit)
+n_hidden_init: 3            # = K* from Phase B (edit)
+n_hidden: 3                 # = K* from Phase B (edit)
 emission_dim: 1
 latent_state_dim: 1
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/scales/"
@@ -47,7 +47,7 @@ holdout_fraction: 0.2
 epochs: 50                  # stage 1 (no temperature)
 epochs_2: 30                # stage 2 (temps_final)
 em_tol: 1.0e-5
-temps_final: null           # default [0.01, 1, ...]
+temps_final: 1.0           # default [0.01, 1, ...]
 run_arhmm: True             # run_swirl_kfold on this YAML writes the per-fold ARHMM init (scales.init auto)
 run_swirl_init: True        # run_swirl_kfold on this YAML: S-1 / S-2 reference fits at K* (same folds / seq_len)
 run_swirl_final: True

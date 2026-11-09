@@ -11,7 +11,7 @@
 # Counts come from 11x augmented copies, so a pseudo-count c is worth ~c/11 of one real transition.
 # Compare on the action LL (arhmm_act): same event space and steps as SWIRL S-1 / S-2.
 
-out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/ll_comparison_pseudocount/"
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/ll_comparison_pseudocount/"
 out_prefix: "hammerhead_v1_arhmm_pc"
 title: "Hammerhead ARHMM pseudo-count (action LL)"
 ci: 0.95
@@ -19,16 +19,16 @@ compare_k: 3
 reference: "swirl_s1"
 
 methods:
-  - {name: arhmm_act, alias: arhmm_act_pc1e-5, label: "ARHMM pc 1e-5", yaml: "sharks_swirl_kfold.yaml"}
-  - {name: arhmm_act, alias: arhmm_act_pc0.01, label: "ARHMM pc 0.01", yaml: "sharks_swirl_kfold.yaml",
+  - {name: arhmm_act, alias: arhmm_act_pc1e-5, label: "ARHMM pc 1e-5", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml"}
+  - {name: arhmm_act, alias: arhmm_act_pc0.01, label: "ARHMM pc 0.01", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml",
      run_uid: "SWIRL_BASE_pc0.01", color: "#c49c94"}
-  - {name: arhmm_act, alias: arhmm_act_pc0.1, label: "ARHMM pc 0.1", yaml: "sharks_swirl_kfold.yaml",
+  - {name: arhmm_act, alias: arhmm_act_pc0.1, label: "ARHMM pc 0.1", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml",
      run_uid: "SWIRL_BASE_pc0.1", color: "#e377c2"}
-  - {name: arhmm_act, alias: arhmm_act_pc1, label: "ARHMM pc 1", yaml: "sharks_swirl_kfold.yaml",
+  - {name: arhmm_act, alias: arhmm_act_pc1, label: "ARHMM pc 1", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml",
      run_uid: "SWIRL_BASE_pc1", color: "#7f7f7f"}
-  - {name: arhmm_act, alias: arhmm_act_pc1T, label: "ARHMM pc 1 (T support)", yaml: "sharks_swirl_kfold.yaml",
+  - {name: arhmm_act, alias: arhmm_act_pc1T, label: "ARHMM pc 1 (T support)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml",
      run_uid: "SWIRL_BASE_pc1T", color: "#bcbd22"}
-  - {name: arhmm, alias: arhmm_state_pc1, label: "ARHMM pc 1 (state LL)", yaml: "sharks_swirl_kfold.yaml",
+  - {name: arhmm, alias: arhmm_state_pc1, label: "ARHMM pc 1 (state LL)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml",
      run_uid: "SWIRL_BASE_pc1", color: "#17becf"}
-  - {name: swirl_s1, yaml: "sharks_swirl_kfold.yaml"}
-  - {name: swirl_s2, yaml: "sharks_swirl_kfold.yaml"}
+  - {name: swirl_s1, yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml"}
+  - {name: swirl_s2, yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml"}

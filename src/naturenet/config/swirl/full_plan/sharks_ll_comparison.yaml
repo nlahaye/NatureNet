@@ -24,6 +24,12 @@ methods:
   - {name: hiavi,       yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_hiavi_kfold.yaml"}        # run_hiavi_kfold.py / get_stats_hiavi.py
   #- {name: hiql_iavi,   csv: "/mnt/data/NatureNet/Hammerhead_Out_v1/hiql/ll_iavi.csv"}   # run_hiql_iavi.py
   - {name: arhmm_act,   yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold.yaml"}        # ARHMM re-scored as actions (comparable with SWIRL / HIAVI)
+  # Rerun with pc1T ARHMM init + temps_final 1.0 (sharks_swirl_kfold_pc1T_t1.yaml) and the temps-only ablation
+  - {name: arhmm_act, alias: arhmm_act_pc1T, label: "ARHMM (actions) pc 1 T", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold_pc1T_t1.yaml", color: "#bcbd22"}
+  - {name: swirl_s1, alias: swirl_s1_pc1T_t1, label: "SWIRL S-1 (pc1T, T=1)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold_pc1T_t1.yaml", color: "#17becf"}
+  - {name: swirl_s2, alias: swirl_s2_pc1T_t1, label: "SWIRL S-2 (pc1T, T=1)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold_pc1T_t1.yaml", color: "#9467bd"}
+  - {name: swirl_s1, alias: swirl_s1_t1, label: "SWIRL S-1 (T=1)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold_T1.yaml", color: "#aec7e8"}
+  - {name: swirl_s2, alias: swirl_s2_t1, label: "SWIRL S-2 (T=1)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold_T1.yaml", color: "#98df8a"}
   # Overrides, e.g. a single (non-sweep) run in another directory:
   # - {name: swirl_s1, yaml: "swirl_kfold.yaml", sweep: false, n_hidden: 3, run_uid: "SWIRL_TEST",
-  #    out_dir: "/mnt/data/NatureNet/Hammerhead_Out_v1/", label: "SWIRL S-1 (K=3)"}
+  #    out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/", label: "SWIRL S-1 (K=3)"}

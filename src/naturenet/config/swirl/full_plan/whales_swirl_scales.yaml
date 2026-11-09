@@ -34,14 +34,14 @@ holdout_fraction: 0.2
 epochs: 50                  # stage 1 (no temperature)
 epochs_2: 30                # stage 2 (temps_final)
 em_tol: 1.0e-5
-temps_final: null
+temps_final: 1.0
 run_arhmm: True             # run_swirl_kfold on this YAML writes the per-fold ARHMM init (scales.init auto)
 run_swirl_init: True        # S-1 / S-2 reference fits at K* (same folds / seq_len)
 run_swirl_final: True
 run_s2: True
 epochs_init: 50
 epochs_init_2: 30
-overwrite: False
+overwrite: True #False
 
 # kinematics: {enabled: True, step_feature: "speed_kmh", min_dt_h: 3.0}   # sensitivity only (short-dt Argos error)
 
