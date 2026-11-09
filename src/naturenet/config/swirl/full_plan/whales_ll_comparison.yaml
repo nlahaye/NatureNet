@@ -15,6 +15,7 @@ methods:
   - {name: swirl_s1, yaml: "whales_swirl_kfold.yaml"}
   - {name: swirl_s2, yaml: "whales_swirl_kfold.yaml"}
   - {name: hiavi,    yaml: "whales_hiavi_kfold.yaml"}
+  - {name: hiavi, alias: iavi, label: "IAVI (K=1, matched folds)", yaml: "whales_iavi_kfold.yaml", color: "#7f7f7f"}   # run_hiavi_kfold.py, K = 1
   # NN-SWIRL: add only if whale NN runs exist with the same folds_dir / seq_len
   # - {name: swirl_nn_s1, yaml: "<whale NN yaml>"}
   # hiql IAVI (K = 1) baseline, if run_hiql_iavi was run for whales:

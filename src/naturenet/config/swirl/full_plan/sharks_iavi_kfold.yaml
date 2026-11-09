@@ -1,0 +1,59 @@
+# Full plan, Phase B (sharks): IAVI baseline = single-intention HIAVI (K = 1) on the same data / folds / LL
+# definition as the SWIRL, HIAVI and decision-scales runs, so it is the matched K = 1 reference in the LL plots.
+#   python -m naturenet.models.irl.run_hiavi_kfold -y full_plan/sharks_iavi_kfold.yaml              # 5-fold CV
+#   python -m naturenet.models.irl.run_hiavi_kfold -y full_plan/sharks_iavi_kfold.yaml --holdout    # final (holdout) fit
+#   python -m naturenet.models.irl.plot_hiavi      -y full_plan/sharks_iavi_kfold.yaml              # maps / time series
+#   python -m naturenet.models.irl.plot_ll_comparison -y full_plan/sharks_ll_comparison.yaml   # "IAVI (K=1)" entry
+# Outputs: <out_dir>/IAVI_BASE_1_12345_hiavi[_LL[_test]]_KF_<k>.npz and rows (K = 1) in <out_dir>/ll_hiavi.csv.
+# With K = 1 the E-step is trivial (EM converges in ~2 iterations), so one restart is enough.
+# --- shared data block (identical in every full_plan shark config -> comparable LLs, shared folds) ---
+n_states: 75
+actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hammerhead_v1_*_actions.pkl"
+positions: "auto"
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+df_run_uid: "hammerhead_v1"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/folds/"
+# --- end shared data block ---
+
+seed: 12345
+n_hidden_init: 1
+n_hidden: 1                 # IAVI = one intention
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/baselines_hiavi/"
+run_uid: "IAVI_BASE"            # separate from the HIAVI sweep in the same out_dir
+
+folds_to_run: null
+holdout_fraction: 0.2
+overwrite: False
+
+# IAVI (HIAVI settings, identical to the HIAVI baseline except K and restarts)
+hiavi_discount: 0.9
+hiavi_restarts: 1
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5      # same smoothing as HIAVI (0 = original hiql: unseen (s, a) -> log 1e-6)
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95          # unused at K = 1
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"        # s = states[:, 1:-1], comparable to SWIRL
+
+# Plots (plot_hiavi)
+lon_bounds: [-125, -115]
+lat_bounds: [28, 36]
+splits: ["train", "test"]
+plot_trajs: True
+plot_gifs: False
+plot_inputs: False
+input_keys: []
+static_layers: {}
+reward_normalize: "none"
+hiavi_plot_series: True
+hiavi_cv_plot: True
