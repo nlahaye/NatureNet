@@ -15,8 +15,9 @@ df_run_uid: "SWIRL_WHALE_v1"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
-seq_len: 40                 # chunk windows: whales have ~360 original fixes/animal (17-640); D <= 12, regimes
-segment_policy: "chunk"
+seq_len: 60                 # variable policy (= Phase B / C): one sequence per valid run, runs > 60 split into
+segment_policy: "variable"  # near-equal pieces, padded + masked (exact LLs)
+min_seq_len: 10             # = Phase B / C
 n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
@@ -56,7 +57,7 @@ multiagent:
   # heldout_animals: ["10826", "847", "1385", "835", "845", "4176", "10831", "841", "5840", "5910"]
   max_aug: 2                  # originals + __aug1..2 per whale (10 copies -> 11x data and 121x kernel pairs)
   window: ["2017-07-10", "2017-12-12"]               # whale env window, calendar for the time-shift null
-  Ks: [2, 3]                                         # = [K*, K* + 1] from Phase B (edit)
+  Ks: [3]                                            # HIQL K* = 3 (Phase B best HIQL K)
   variants:
     temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
     proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 20.0, max_km: 75.0}   # local (1215 pair-days < 20 km)
