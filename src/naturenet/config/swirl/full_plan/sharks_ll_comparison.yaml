@@ -30,6 +30,8 @@ methods:
   - {name: swirl_s2, alias: swirl_s2_pc1T_t1, label: "SWIRL S-2 (pc1T, T=1)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold_pc1T_t1.yaml", color: "#9467bd"}
   - {name: swirl_s1, alias: swirl_s1_t1, label: "SWIRL S-1 (T=1)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold_T1.yaml", color: "#aec7e8"}
   - {name: swirl_s2, alias: swirl_s2_t1, label: "SWIRL S-2 (T=1)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_swirl_kfold_T1.yaml", color: "#98df8a"}
+  - {name: hiavi,       yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_hiavi_kfold.yaml"}        # run_hiavi_kfold.py / get_stats_hiavi.py
+  - {name: hiavi, alias: iavi, label: "IAVI (K=1, matched folds)", yaml: "/home/nlahaye/NatureNet/src/naturenet/config/swirl/full_plan/sharks_iavi_kfold.yaml", color: "#7f7f7f"}   # run_hiavi_kfold.py, K = 1
   # Overrides, e.g. a single (non-sweep) run in another directory:
   # - {name: swirl_s1, yaml: "swirl_kfold.yaml", sweep: false, n_hidden: 3, run_uid: "SWIRL_TEST",
   #    out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/", label: "SWIRL S-1 (K=3)"}

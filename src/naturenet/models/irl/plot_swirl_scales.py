@@ -66,7 +66,7 @@ def summarize(df):
     return s
 
 
-def plot_ll_vs_order(s, conf, path):
+def plot_ll_vs_order(s, conf, path, emission="swirl"):
     fig, ax = plt.subplots(figsize=(7, 4.2))
     for lat, g in s.groupby("latent"):
         g = g.sort_values("order")
@@ -85,7 +85,8 @@ def plot_ll_vs_order(s, conf, path):
     ax.set_ylabel("held-out LL per step")
     ax.set_xticks(sorted(s["order"].unique()))
     ax.legend(fontsize=7, title="latent layers", title_fontsize=7)
-    ax.set_title("Held-out LL vs order (star = N*, within 1 SE of best)")
+    ax.set_title(f"{'HIQL' if emission == 'hiql' else 'SWIRL'} decision scales: held-out LL vs order "
+                 "(star = N*, within 1 SE of best)", fontsize=9)
     fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -277,7 +278,8 @@ def plot_swirl_scales(conf, fold=0, n_seq=6):
     tags = list(s["variant"])
     n_folds = int(df["fold"].max()) + 1
     if "LL_test" in df:
-        plot_ll_vs_order(s, conf, out + "_ll_vs_order.png")
+        em = str(df["emission"].dropna().iloc[0]) if "emission" in df and df["emission"].notna().any() else "swirl"
+        plot_ll_vs_order(s, conf, out + "_ll_vs_order.png", emission=em)
         plot_layer_gain(df, s, out + "_layer_gain.png")
     plot_hazard(conf, tags, fold, out + "_hazard.png")
     plot_regimes(conf, tags, fold, n_seq, out + "_regimes.png")

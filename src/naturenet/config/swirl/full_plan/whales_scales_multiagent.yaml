@@ -6,6 +6,8 @@
 #   python -m naturenet.models.irl.plot_scales_multiagent -y full_plan/whales_scales_multiagent.yaml --K <K*>
 # Order <= 2 by default; S1_N3_hist only if Phase C --check shows >= ~20 steps per deep context. SWIRL-scales: the 10
 # best-connected held-out animals and n_null 20 (cost). Variants should match the layers kept in Phase C.
+# Phase C (whales, K = 5): N2 kept (+0.087 vs N1, 5/5 folds); history, durations, regimes null -> screen S1_N1 and
+# S1_N2 only; the remaining variants are kept for reference. SWIRL-scales copy: whales_scales_multiagent_swirl.yaml.
 # --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
 n_states: 75                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
@@ -15,8 +17,9 @@ df_run_uid: "SWIRL_WHALE_v1"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
-seq_len: 40                 # chunk windows: whales have ~360 original fixes/animal (17-640); D <= 12, regimes
-segment_policy: "chunk"
+seq_len: 60                 # variable policy (= Phase B / C): one sequence per valid run, runs > 60 split into
+segment_policy: "variable"  # near-equal pieces, padded + masked (exact LLs)
+min_seq_len: 10             # = Phase B / C
 n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
@@ -64,6 +67,7 @@ multiagent:
   scales_variants:
     # step 1: order N + switching history, destination coupling (alpha)
     - {name: S1_N1, step: 1, order: 1}
+    - {name: S1_N2, step: 1, order: 2}                       # Phase C N* (history / durations / regimes were null)
     - {name: S1_N2_hist, step: 1, order: 2, switch_history: on}
     - {name: S1_N3_hist, step: 1, order: 3, switch_history: on}
     # step 2: per-animal regimes, shared alpha
@@ -79,7 +83,7 @@ multiagent:
   # heldout_animals: ["10826", "847", "1385", "835", "845", "4176", "10831", "841", "5840", "5910"]
   max_aug: 2                  # originals + __aug1..2 per whale (10 copies -> 11x data and 121x kernel pairs)
   window: ["2017-07-10", "2017-12-12"]               # whale env window, calendar for the time-shift null
-  Ks: [2, 3]                                         # = [K*, K* + 1] (edit); K >= 3 needed for alpha with durations
+  Ks: [3]                                            # hiql_scales K = 3; swirl_scales: pass --K 5 (Phase C N2 at K = 5)
   variants:
     temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
     proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 20.0, max_km: 75.0}   # local (1215 pair-days < 20 km)
