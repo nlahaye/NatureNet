@@ -1,0 +1,87 @@
+# Final single-animal SWIRL fit (whales, S-1 and S-2 at K = 5) for maps, time series and reward projection.
+#   python -m naturenet.models.irl.run_swirl               -y full_plan/whales_swirl_final.yaml
+#   python -m naturenet.models.irl.plot_swirl_new          -y full_plan/whales_swirl_final.yaml
+#   python -m naturenet.models.irl.reward_env_projection   -y full_plan/whales_swirl_final.yaml -p full_plan/whales_reward_env_projection.yaml --n_hidden 5
+# Same data block and training settings as the Phase B CV (seq_len 60, variable, min_seq_len 10). One seed (12345);
+# the CV already gives the uncertainty. Check n_states / actions against the Phase B YAML you ran.
+# --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
+n_states: 75                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/"
+df_run_uid: "SWIRL_WHALE_v1"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy (= Phase B / C): one sequence per valid run, runs > 60 split into
+segment_policy: "variable"  # near-equal pieces, padded + masked (exact LLs)
+min_seq_len: 10             # = Phase B / C
+n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+
+
+seed: 12345                 # base seed; get_stats* runs use seed + run index
+n_hidden_init: 5
+n_hidden: 5   # Phase B best S-1 K
+emission_dim: 1
+latent_state_dim: 1
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/final/swirl/"
+run_uid: "WHALE_SWIRL_FINAL"
+
+holdout_fraction: 0.0   # train on every animal (test LLs come from the CV); 0.2 = holdout check
+
+# Training
+epochs_init: 50
+epochs_init_2: 30
+epochs: 50
+epochs_2: 30
+em_tol: null                # e.g. 1.0e-5 relative LL change for early stopping (null = fixed epochs)
+# --- Speed (see CHANGES_SPEED.md). Exact options first, then the ones that trade accuracy for time. ---
+s2_structured_vi: True      # exact: S-2 value iteration on T (S,A,S) + gather instead of the dense (S*M,A,S*M) new_T
+                            #   (M^2 less VI compute, no dense S-2 tensor on host/GPU). False = previous dense path.
+mstep_suff_stats: True      # exact: M-step objectives from per-E-step counts (independent of N and T)
+mstep_emit_method: "auto"   # BFGS for <= mstep_emit_bfgs_max_params rewards (S-1, as before), else L-BFGS-B (S-2).
+                            #   scipy BFGS's dense inverse Hessian costs ~1 s / iteration at K*S*M ~ 3000. "BFGS" = old.
+mstep_emit_bfgs_max_params: 1000
+mstep_emit_iters: 1000      # max optimizer iterations per M-step (generalised EM: 100-200 is usually enough because
+mstep_trans_iters: 1000     #   each M-step warm-starts from the previous one; 1000 = original)
+max_train_seqs: null        # e.g. 400: per-fold representative subsample (per-animal share + length quantiles,
+max_test_seqs: null         #   fixed per fold across K / runs). null = all sequences.
+temps_init: null            # default all 1
+temps_final: 1.0
+                            #   K = 1 results made before the fix are invalid: rerun with whales_swirl_kfold_k1_rerun.yaml
+use_init_reward: False
+run_s2: True   # S-2 at K = 5 for whales (Table 1); sharks: S-1 only
+s2_max_dense_entries: 2.0e+8
+cache_fold_inputs: True
+s2_index_emissions: True     # S-2 emissions from int indices (x*M+slot) instead of dense (N,T,S*M) one-hots; same LLs,
+                             # far less GPU memory. False = previous dense one-hots
+overwrite: False            # False = skip folds whose outputs exist (resume)
+
+# get_stats* loops (K in [min_latent, max_latent] inclusive). K = 1 is the no-switching reference.
+# Extend to 6 only if test LL at K = 5 is > 1 SEM above K = 4.
+
+run_arhmm: True
+arhmm_pseudo_count: 1.0e-5  # ARHMM transition-count pseudo-count (ssm default 1e-5). Sweep with get_stats.py
+                            #   --pseudo_count 0.01 / 0.1 / 1 (suffixes run_uid with _pc<value>)
+arhmm_pseudo_support: null  # null = every x -> x'; "T" = only moves reachable under the fold's T
+arhmm_pseudo_floor: 1.0e-5  # pseudo-count on unreachable moves when arhmm_pseudo_support = "T"
+run_swirl_init: True
+run_swirl_final: True
+arhmm_epochs: 100
+
+# Plots / time series (plot_swirl_new) and reward projection (reward_env_projection) read the final files
+swirl_model: "linear"
+swirl_orders: ["s1", "s2"]
+splits: ["train"]           # holdout_fraction 0: no test files
+lon_bounds: [-126, -110]
+lat_bounds: [22, 40]
+plot_trajs: True
+plot_gifs: False            # True + envs pickle for reward / env GIFs
+plot_inputs: False
+reward_normalize: "global"
+plot_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/final/swirl/plots/"
+# envs: "/data/nlahaye/NatureNet/Blue_Whale_v1/envs.pkl"
+# env_lon_bounds / env_lat_bounds: extent of the env maps, if different from the track bounds

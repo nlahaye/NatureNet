@@ -2,7 +2,7 @@
 Side-by-side comparison of multi-agent runs (e.g. coupled HIAVI vs coupled SWIRL, with / without kinematics).
 
     python -m naturenet.models.irl.plot_multiagent_compare --dirs <out>/multiagent <out>/multiagent_swirl \
-        [--labels HIAVI SWIRL] [--K 2] --out <out>/ma_compare
+        [--labels HIAVI SWIRL] [--K 2 | --K 3 5] --out <out>/ma_compare
 
 Each dir holds ma_summary.json + ma_cv.csv from run_hiavi_multiagent / run_swirl_multiagent. Writes
 <out>.png (pooled held-out gain vs time-shift null, per-step gain per held-out animal, coupling alpha,
@@ -30,9 +30,9 @@ def load_run(d, K):
     return s, cv[cv["K"] == K], s["K"][str(K)]
 
 
-def table(runs, labels, K):
+def table(runs, labels, Ks):
     rows = []
-    for lab, (s, cv, sk) in zip(labels, runs):
+    for lab, K, (s, cv, sk) in zip(labels, Ks, runs):
         for v, e in sk["variants"].items():
             rows.append(dict(run=lab, model=s.get("model", "HIAVI"), kinematics=bool(s.get("kinematics")), K=K,
                              variant=v, pooled_gain_nats=e["pooled_d_total"], gain_per_step=e["pooled_d_per_step"],
@@ -45,15 +45,15 @@ def table(runs, labels, K):
     return pd.DataFrame(rows)
 
 
-def plot(runs, labels, K, path):
-    df = table(runs, labels, K)
+def plot(runs, labels, Ks, path):
+    df = table(runs, labels, Ks)
     variants = list(dict.fromkeys(df["variant"]))
     nr = len(labels)
     w = 0.8 / nr
     fig, axes = plt.subplots(1, 4, figsize=(19, 4.4))
     ax = axes[0]
     for j, lab in enumerate(labels):
-        d = df[df["run"] == lab].set_index("variant").loc[variants]
+        d = df[df["run"] == lab].set_index("variant").reindex(variants)
         x = np.arange(len(variants)) + (j - (nr - 1) / 2) * w
         ax.bar(x, d["pooled_gain_nats"], w, color=f"C{j}", label=lab)
         if d["null_mean"].notna().any():
@@ -84,7 +84,7 @@ def plot(runs, labels, K, path):
 
     ax = axes[2]
     for j, lab in enumerate(labels):
-        d = df[df["run"] == lab].set_index("variant").loc[variants]
+        d = df[df["run"] == lab].set_index("variant").reindex(variants)
         x = np.arange(len(variants)) + (j - (nr - 1) / 2) * w
         ax.bar(x, d["alpha_median"], w, color=f"C{j}", alpha=0.6, label=f"{lab} CV median")
         ax.scatter(x, d["alpha_full"], color=f"C{j}", edgecolor="k", zorder=3, marker="D", s=30)
@@ -109,7 +109,9 @@ def plot(runs, labels, K, path):
     ax.set_xticklabels(labels)
     ax.set_title("Synchrony index (independent fits)", fontsize=10)
     ax.legend(fontsize=8, frameon=False)
-    fig.suptitle(f"Multi-agent comparison, K={K}", fontsize=11)
+    kk = sorted(set(int(k) for k in Ks))
+    fig.suptitle("Multi-agent comparison, " + ", ".join(f"{lab}: K={k}" for lab, k in zip(labels, Ks))
+                 if len(kk) > 1 else f"Multi-agent comparison, K={kk[0]}", fontsize=11)
     fig.tight_layout()
     fig.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -120,14 +122,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dirs", nargs="+", required=True)
     ap.add_argument("--labels", nargs="*", default=None)
-    ap.add_argument("--K", type=int, default=2)
+    ap.add_argument("--K", type=int, nargs="+", default=[2],
+                    help="one K for every dir, or one per dir (e.g. --K 3 5 for HIQL K=3 vs SWIRL K=5); gains are "
+                         "coupled - independent differences within a model, so they compare across K in nats")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
-    runs = [load_run(d, a.K) for d in a.dirs]
+    Ks = a.K * len(a.dirs) if len(a.K) == 1 else a.K
+    if len(Ks) != len(a.dirs):
+        raise SystemExit(f"--K: give one value or one per dir ({len(a.dirs)})")
+    runs = [load_run(d, k) for d, k in zip(a.dirs, Ks)]
     labels = a.labels or [f"{r[0].get('model', 'HIAVI')}{'+kin' if r[0].get('kinematics') else ''}" for r in runs]
     if len(set(labels)) < len(labels):
         labels = [f"{lab} ({os.path.basename(os.path.normpath(d))})" for lab, d in zip(labels, a.dirs)]
-    df = plot(runs, labels, a.K, a.out + ".png")
+    df = plot(runs, labels, Ks, a.out + ".png")
     df.to_csv(a.out + ".csv", index=False)
     print(df.to_string(index=False))
 
