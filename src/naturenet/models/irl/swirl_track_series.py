@@ -399,7 +399,11 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
                 with open(fin, "rb") as f:
                     inputs_cache[dkey] = pickle.load(f)
             feats = np.asarray(inputs_cache[dkey][seg], dtype=float)
-            if feats.shape[0] != n or feats.shape[1] < len(input_keys):
+            if feats.ndim == 2 and feats.shape == (n, 0):
+                # no env scene for any fix of this segment (e.g. track dates outside the scene period):
+                # gather_input wrote a zero-width array; treat as all-missing
+                feats = np.full((n, len(input_keys)), np.nan)
+            if feats.ndim != 2 or feats.shape[0] != n or feats.shape[1] < len(input_keys):
                 raise ValueError(f"{dkey} segment {seg}: input features {feats.shape} for {n} fixes / "
                                  f"{len(input_keys)} input_keys")
             for j, name in enumerate(input_keys):

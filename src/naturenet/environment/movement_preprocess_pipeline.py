@@ -97,19 +97,19 @@ def run_movement_track_preprocess(yml_conf):
             ids.append((os.path.splitext(os.path.basename(yml_conf["pre_split_movement_csvs"][i]))[0]).replace(" ", "_"))
 
         movement_dfs = split_pre_split_streams(dfs_by_id, ids, yml_conf["out_dir"], yml_conf["run_uid"],
-                                               **_segment_kwargs(yml_conf, None))
-        seg_kwargs = _segment_kwargs(yml_conf, None)
+                                               **_segment_kwargs(yml_conf, 29))
+        seg_kwargs = _segment_kwargs(yml_conf, 29)
 
     elif os.path.exists(df_fname):
 
         movement_dfs = None
         with open(df_fname, "rb") as f:
             movement_dfs = pd.read_pickle(f)
-        seg_kwargs = _segment_kwargs(yml_conf, None)
+        seg_kwargs = _segment_kwargs(yml_conf, 49)
         _check_cached_segments(df_fname, movement_dfs, seg_kwargs)
     else:
         movement_df = pd.read_csv(yml_conf["movement_csv"])
-        seg_kwargs = _segment_kwargs(yml_conf, None)
+        seg_kwargs = _segment_kwargs(yml_conf, 49)
         movement_dfs = split_movement_streams(movement_df, yml_conf["out_dir"], yml_conf["run_uid"], **seg_kwargs)
 
     # One grid shared by every key. Without lon/lat_bounds, use the extent of ALL keys
@@ -430,6 +430,21 @@ def generate_input_feature_states(yml_conf):
             states = gather_input_features(movement_sub_df[i], maps, grid, env_grid=env_grid, flip_lat=flip_lat)
             check_input_features(states, len(movement_sub_df[i]), name=f"{key} segment {i}")
             states_full.append(states)
+
+        # Segments without any env scene come back as (n, 0); give them the channel count of the other
+        # segments (or n_input_features) filled with NaN so every segment has the same columns.
+        widths = {s.shape[1] for s in states_full if s.shape[1] > 0}
+        if len(widths) > 1:
+            raise ValueError(f"{key}: segments with different channel counts {sorted(widths)}")
+        n_feat = widths.pop() if widths else yml_conf.get("n_input_features")
+        if n_feat:
+            n_empty = sum(s.shape[1] == 0 for s in states_full)
+            if n_empty:
+                print(f"{key}: {n_empty}/{len(states_full)} segments have no env scene; written as NaN")
+            states_full = [s if s.shape[1] else np.full((s.shape[0], int(n_feat)), np.nan, dtype=np.float32)
+                           for s in states_full]
+        else:
+            print(f"WARNING: {key}: no env scene for any fix and n_input_features not set; zero-width arrays")
 
         out = os.path.join(df_dir, df_uid + "_" + str(key) + "_states_input.pkl")
         print("SAVING", out)

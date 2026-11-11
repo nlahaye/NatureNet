@@ -11,6 +11,7 @@ run_uid: "hammerhead_v1"
 feature_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/input_env/"
 feature_uid: "input_env_maps_"
 uids: null                    # null = every key in <df_run_uid>_dfs.pkl (originals + __aug)
+n_input_features: 28          # channel count used for tracks with no env scene at all (written as NaN)
 env_lat_ascending: False      # TODO: same as the abstract-env run (True for south-to-north rasters)
 env_lon_bounds: [-100, -60]    # TODO: confirm = extent of the shark cop_env scenes
 env_lat_bounds: [20, 40]
