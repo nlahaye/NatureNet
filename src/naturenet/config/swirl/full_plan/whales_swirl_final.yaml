@@ -80,7 +80,11 @@ lon_bounds: [-126, -110]
 lat_bounds: [22, 40]
 plot_trajs: True
 plot_gifs: False            # True + envs pickle for reward / env GIFs
-plot_inputs: False
+# input_keys = cop_env channel order; needs <df_dir>/SWIRL_WHALE_v1_<key>_states_input.pkl from
+#   env_data_format -y config/environment/whales_env_format_inputs.yaml, then
+#   movement_preprocess_pipeline -y config/environment/whales_gather_input.yaml
+plot_inputs: True
+input_keys: [T, U, V, zooc, npp, CHL]
 reward_normalize: "global"
 plot_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/final/swirl/plots/"
 # envs: "/data/nlahaye/NatureNet/Blue_Whale_v1/envs.pkl"

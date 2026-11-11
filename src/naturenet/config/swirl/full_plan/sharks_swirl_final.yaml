@@ -85,11 +85,15 @@ arhmm_epochs: 100
 swirl_model: "linear"
 swirl_orders: ["s1"]
 splits: ["train"]           # holdout_fraction 0: no test files
-lon_bounds: [-125, -115]
-lat_bounds: [28, 36]
+lon_bounds: [-100, -60]    # = hammerhead_movement_preprocess.yaml (was the whale-like [-125, -115])
+lat_bounds: [20, 40]
 plot_trajs: True
 plot_gifs: False            # True + envs pickle for reward / env GIFs
-plot_inputs: False
+# input_keys = cop_env channel order; needs <df_dir>/hammerhead_v1_<key>_states_input.pkl from
+#   env_data_format -y config/environment/sharks_env_format_inputs.yaml, then
+#   movement_preprocess_pipeline -y config/environment/sharks_gather_input.yaml
+plot_inputs: True
+input_keys: [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zooc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]
 reward_normalize: "global"
 plot_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/final/swirl/plots/"
 # envs: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/envs.pkl"

@@ -1,0 +1,19 @@
+# Raw (non-clustered) env maps along the sharks tracks, for input_keys plots and swirl_track_series inputs.
+#   python -m naturenet.models.feature_rep.env_data_format -y config/environment/sharks_env_format_inputs.yaml
+# Writes <out_dir>/<output_uid><key>.pkl per track key and <out_dir>/<output_uid>hammerhead_v1.pkl (merged).
+# Use the same scene list / dates / mask as the abstract-env (cluster) run, only on the raw cop_env scenes.
+# Channels (C = 29): [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zooc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]
+df_uid: "hammerhead_v1"
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/input_env/"
+output_uid: "input_env_maps_"
+scene_file_template: "/data/nlahaye/NatureNet_Env/Copernicus/cop_env_shark_t{i}.zarr"
+n_days: 345
+start_time: "2023-11-01"
+# scene_dates_file: "/data/nlahaye/NatureNet_Env/Copernicus/cop_env_shark_dates.json"   # preferred if written by preprocess_copernicus
+nearest_scene_days: 0         # = the abstract run
+strict_scene_coverage: True
+mask_path: "TODO"             # same water mask as the abstract env_data_format run
+land_value: 0                 # TODO: same as the abstract run
+land_fill: nan                # raw features: -1 is a valid value, so land -> NaN
+sit_fuse_output: False        # no cluster compression / class mapper for raw inputs

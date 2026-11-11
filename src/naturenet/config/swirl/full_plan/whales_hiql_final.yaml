@@ -49,8 +49,11 @@ lat_bounds: [22, 40]
 splits: ["train"]
 plot_trajs: True
 plot_gifs: False
-plot_inputs: False
-input_keys: []
+# input_keys = cop_env channel order; needs <df_dir>/SWIRL_WHALE_v1_<key>_states_input.pkl from
+#   env_data_format -y config/environment/whales_env_format_inputs.yaml, then
+#   movement_preprocess_pipeline -y config/environment/whales_gather_input.yaml
+plot_inputs: True
+input_keys: [T, U, V, zooc, npp, CHL]
 static_layers: {}
 reward_normalize: "none"
 hiavi_plot_series: True

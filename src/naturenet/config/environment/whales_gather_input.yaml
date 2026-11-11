@@ -1,0 +1,16 @@
+# Raw input features at each fix -> <df_dir>/SWIRL_WHALE_v1_<key>_states_input.pkl (read by plot_swirl_new, plot_hiavi
+# and swirl_track_series when plot_inputs: True / input_keys are set).
+#   python -m naturenet.environment.movement_preprocess_pipeline -y config/environment/whales_gather_input.yaml
+# Run after whales_env_format_inputs.yaml. Feature column j = input_keys[j] in the *_final.yaml files.
+init_preprocess: False
+gather_input: True
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/"
+df_run_uid: "SWIRL_WHALE_v1"
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/"
+run_uid: "SWIRL_WHALE_v1"
+feature_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/input_env/"
+feature_uid: "input_env_maps_"
+uids: null                    # null = every key in <df_run_uid>_dfs.pkl (originals + __aug)
+env_lat_ascending: False      # TODO: same as the abstract-env run (True for south-to-north rasters)
+env_lon_bounds: [-126, -110]   # TODO: extent of the whale cop_env scenes
+env_lat_bounds: [22, 40]
