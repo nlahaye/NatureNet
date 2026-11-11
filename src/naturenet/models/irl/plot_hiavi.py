@@ -33,6 +33,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from naturenet.models.irl.plot_swirl_new import map_reward_heat_to_env, run_plots  # noqa: E402
+from naturenet.models.irl.swirl_data import as_list  # noqa: E402
 from naturenet.models.irl.swirl_track_series import load_latents, swirl_file  # noqa: E402
 
 TAG = "_hiavi_s1"
@@ -171,14 +172,19 @@ def run_lengths(z):
 
 
 def plot_occupancy(yml_conf, K, out_dir, tag=TAG):
-    lat = load_latents(yml_conf, "hiavi", "s1")
+    splits = tuple(as_list(yml_conf.get("splits", ["train", "test"])))
+    lat = load_latents(yml_conf, "hiavi", "s1", splits)
     occ, runs = {}, {k: [] for k in range(K)}
     for sp in np.unique(lat["split"]):
-        zz = [z for z, s in zip(lat["zs"], lat["split"]) if s == sp]
-        allz = np.concatenate([np.ravel(z) for z in zz])
+        # padded steps (segment_policy: variable) are decoded as -1: drop them before counting
+        zz = [np.ravel(z).astype(np.int64) for z, s in zip(lat["zs"], lat["split"]) if s == sp]
+        zz = [z[z >= 0] for z in zz]
+        allz = np.concatenate(zz) if zz else np.zeros(0, dtype=np.int64)
         occ[sp] = np.bincount(allz, minlength=K) / max(len(allz), 1)
         for z in zz:
-            ks, ls = run_lengths(np.ravel(z))
+            if z.size == 0:
+                continue
+            ks, ls = run_lengths(z)
             for k, l in zip(ks, ls):
                 runs[int(k)].append(int(l))
     fig, axes = plt.subplots(1, 2, figsize=(9, 3.2))
