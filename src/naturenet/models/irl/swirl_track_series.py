@@ -14,7 +14,12 @@ Replaces the counter-based matching in the old plot_swirl_new.run_plots / plot_t
   visited state / pair / action under the decoded mode; invalid -> NaN), month sin / cos, static layers
   sampled by lat / lon on their own extent, gathered input features;
 - rewards are not min-max scaled per mode (scaling per mode makes modes incomparable); reward_normalize:
-  "global" scales all modes together.
+  "global" scales all modes together;
+- env_window (optional): fixes outside the environmental scene calendar are dropped from the series (and so
+  from the exported CSVs, plots, correlation, exploit / explore and reward projection). Fixes inside the
+  calendar that have no env data (land / nodata -> the absorbing state) are kept. The fits are unchanged.
+      env_window: {start_time: "2023-11-01", n_days: 345}      # or {scene_dates_file: ..., n_days: ...}
+                                                               # nearest_days: 0 (same as env_data_format)
 """
 import os
 import pickle
@@ -302,6 +307,42 @@ def load_layers(yml_conf):
 # Series
 # ---------------------------------------------------------------------------
 
+def env_window_bounds(yml_conf):
+    """[lo, hi) tz-naive UTC bounds of the scene calendar from env_window, or None when not set.
+    Day semantics follow env_data_format: scene days are UTC midnights; a fix belongs to its UTC day, so
+    every fix on the last scene day is inside; nearest_days widens both ends."""
+    w = yml_conf.get("env_window")
+    if not w:
+        return None
+    n_days = int(w["n_days"])
+    if w.get("scene_dates_file"):
+        import json
+        with open(w["scene_dates_file"]) as f:
+            d = json.load(f)
+        days = [_naive_day(d[str(i)]) for i in range(n_days)]
+    else:
+        t0 = _naive_day(w["start_time"])
+        days = [t0, t0 + pd.Timedelta(days=n_days - 1)]
+    near = pd.Timedelta(days=int(w.get("nearest_days", 0)))
+    return min(days) - near, max(days) + pd.Timedelta(days=1) + near
+
+
+def _naive_day(x):
+    ts = pd.Timestamp(x)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return ts.normalize()
+
+
+def apply_env_window(sdf, bounds):
+    """Rows of sdf (timestamp column, tz-naive UTC) inside [lo, hi); (filtered frame, n dropped)."""
+    if bounds is None or not len(sdf):
+        return sdf, 0
+    t = pd.DatetimeIndex(sdf["timestamp"])
+    keep = np.asarray((t >= bounds[0]) & (t < bounds[1]))
+    return sdf[keep], int((~keep).sum())
+
+
 def _df_key(seq_key, df_run_uid):
     k = str(seq_key)
     pre = str(df_run_uid) + "_"
@@ -327,6 +368,8 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
     layers = load_layers(yml_conf)
     input_keys = as_list(yml_conf.get("input_keys"))
     min_step = float(yml_conf.get("min_step_km", 1e-3))
+    window = env_window_bounds(yml_conf)
+    n_out = {}
 
     # latent per (key, seg, pos)
     lab = {}
@@ -414,7 +457,22 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
         sdf = pd.DataFrame(cols)
         if drop_unlabelled:
             sdf = sdf[np.isfinite(sdf["latent"])]
+        sdf, n_drop = apply_env_window(sdf, window)
+        n_out[animal] = n_out.get(animal, 0) + n_drop
+        if not len(sdf):
+            continue
         out.setdefault(animal, []).append(sdf)
+
+    if window is not None:
+        print(f"env_window {window[0].date()} .. {(window[1] - pd.Timedelta(days=1)).date()}: "
+              f"dropped {sum(n_out.values())} fixes outside the scene calendar")
+        for animal in sorted(n_out):
+            kept = sum(len(p) for p in out.get(animal, []))
+            flag = "   <- no fixes in window, animal skipped" if not kept else ""
+            print(f"  {animal}: kept {kept}, dropped {n_out[animal]}{flag}")
+        if not out:
+            raise ValueError("env_window: no fixes of any animal fall inside the scene calendar "
+                             "(check env_window start_time / n_days against the track dates)")
 
     series = {}
     for animal, parts in out.items():

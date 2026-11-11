@@ -55,6 +55,15 @@ plot_gifs: False
 # input_keys = cop_env channel order; needs <df_dir>/hammerhead_v1_<key>_states_input.pkl from
 #   env_data_format -y config/environment/sharks_env_format_inputs.yaml, then
 #   movement_preprocess_pipeline -y config/environment/sharks_gather_input.yaml
+# Post-hoc analyses only (series export, plots, correlation, exploit / explore, reward projection): fixes outside
+# the environmental scene calendar are dropped. Fixes inside it with no env data (land / nodata) keep the
+# absorbing state. Fits / LLs are unchanged (still trained with invalid_state: absorbing). Same calendar as
+# config/environment/sharks_env_format_inputs.yaml (start_time / n_days / nearest_scene_days).
+env_window:
+  start_time: "2023-11-01"
+  n_days: 345
+  nearest_days: 0
+  # scene_dates_file: "/data/nlahaye/NatureNet_Env/Copernicus/cop_env_shark_dates.json"
 plot_inputs: True
 input_keys: [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]
 static_layers: {}
