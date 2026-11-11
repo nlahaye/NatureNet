@@ -1,0 +1,22 @@
+# Reward-to-environment projection and use vs availability (Phase E, interpretability).
+#   python -m naturenet.models.irl.reward_env_projection -y full_plan/sharks_hiql_final.yaml \
+#       -p full_plan/sharks_reward_env_projection_hiql.yaml --n_hidden 3
+# The run yml supplies out_dir / run_uid / seed / actions / df files; this file only adds the block below.
+reward_env_projection:
+  model: hiavi                # HIQL (HIAVI) final run
+  order: s1                   # s1 | s2 (s2 state reward = mean over valid predecessors)
+  tag: ""                     # "" = final run; "_KF_k" = fold k
+  fold_tags: []               # e.g. ["_KF_0", "_KF_1", "_KF_2", "_KF_3", "_KF_4"] -> coefficient stability across folds
+  profiles_csv: "/data/nlahaye/output/Learnergy/COP_SHARK_DEMO/xai/interpret/cluster_profiles_wide.csv"   # <SIT-FUSE output.out_dir>/xai/interpret (cluster_interpret)
+  class_mapper: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/TODO_class_mapper.pkl"   # TODO: <out_dir><output_uid>_class_mapper.pkl of the ABSTRACT (cluster) env_data_format run
+  cluster_scale: 1000         # as in env_data_format (keys = rint(label * cluster_scale))
+  profile_index: cluster      # "cluster" = SIT-FUSE label values; "state" = rows already indexed by state id
+  variables: [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zooc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]   # = SIT-FUSE xai.feature_names (cluster_profiles_wide columns)
+  weight_by_use: True         # weight states by how often tracked animals occupy them
+  min_state_visits: 1
+  alphas: [0.01, 0.1, 1.0, 10.0, 100.0]
+  n_boot: 500                 # bootstrap over states (coefficient CIs)
+  n_bins: 5                   # quantile bins for partial dependence
+  n_boot_animals: 500         # bootstrap over animals (use vs availability CIs)
+  splits: [train]          # final runs use holdout_fraction 0 (no test files)
+  out_dir: null               # null = <out_dir>/reward_env_projection

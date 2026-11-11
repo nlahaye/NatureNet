@@ -1,6 +1,6 @@
 # Reward-to-environment projection and use vs availability (Phase E, interpretability).
 #   python -m naturenet.models.irl.reward_env_projection -y full_plan/sharks_swirl_final.yaml   (or *_hiql_final.yaml with model: hiavi) \
-#       -p full_plan/sharks_reward_env_projection.yaml --n_hidden <K*>
+#       -p full_plan/sharks_reward_env_projection.yaml --n_hidden 3
 # The run yml supplies out_dir / run_uid / seed / actions / df files; this file only adds the block below.
 reward_env_projection:
   model: linear               # linear | nn | hiavi (final-run reward files from swirl_track_series.SWIRL_FILES)

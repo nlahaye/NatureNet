@@ -1,6 +1,6 @@
 # Reward-to-environment projection and use vs availability (Phase E, interpretability).
 #   python -m naturenet.models.irl.reward_env_projection -y full_plan/whales_swirl_final.yaml   (or *_hiql_final.yaml with model: hiavi) \
-#       -p full_plan/whales_reward_env_projection.yaml --n_hidden <K*>
+#       -p full_plan/whales_reward_env_projection.yaml --n_hidden 5
 # The run yml supplies out_dir / run_uid / seed / actions / df files; this file only adds the block below.
 reward_env_projection:
   model: linear               # linear | nn | hiavi (final-run reward files from swirl_track_series.SWIRL_FILES)
@@ -19,4 +19,4 @@ reward_env_projection:
   n_bins: 5                   # quantile bins for partial dependence
   n_boot_animals: 500         # bootstrap over animals (use vs availability CIs)
   splits: [train]          # final runs use holdout_fraction 0 (no test files)
-  out_dir: null               # null = <out_dir>/reward_env_projection
+  out_dir: /data/nlahaye/NatureNet/Blue_Whale_v1/final/swirl/reward_env_projection_s1/

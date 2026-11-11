@@ -1,0 +1,56 @@
+{
+ "full": [
+  "825_time_series_pd.csv",
+  "826_time_series_pd.csv",
+  "827_time_series_pd.csv",
+  "831_time_series_pd.csv",
+  "835_time_series_pd.csv",
+  "841_time_series_pd.csv",
+  "845_time_series_pd.csv",
+  "847_time_series_pd.csv",
+  "1385_time_series_pd.csv",
+  "4176_time_series_pd.csv",
+  "5648_time_series_pd.csv",
+  "5670_time_series_pd.csv",
+  "5679_time_series_pd.csv",
+  "5800_time_series_pd.csv",
+  "5803_time_series_pd.csv",
+  "5840_time_series_pd.csv",
+  "5910_time_series_pd.csv",
+  "5921_time_series_pd.csv",
+  "10826_time_series_pd.csv",
+  "10830_time_series_pd.csv",
+  "10831_time_series_pd.csv",
+  "10840_time_series_pd.csv",
+  "23031_time_series_pd.csv"
+ ],
+ "males": [
+  "826_time_series_pd.csv",
+  "827_time_series_pd.csv",
+  "841_time_series_pd.csv",
+  "5648_time_series_pd.csv",
+  "5670_time_series_pd.csv",
+  "5800_time_series_pd.csv",
+  "5803_time_series_pd.csv",
+  "5921_time_series_pd.csv",
+  "10826_time_series_pd.csv",
+  "10840_time_series_pd.csv",
+  "23031_time_series_pd.csv"
+ ],
+ "females": [
+  "831_time_series_pd.csv",
+  "835_time_series_pd.csv",
+  "845_time_series_pd.csv",
+  "4176_time_series_pd.csv",
+  "5910_time_series_pd.csv"
+ ],
+ "unknown": [
+  "825_time_series_pd.csv",
+  "847_time_series_pd.csv",
+  "1385_time_series_pd.csv",
+  "5679_time_series_pd.csv",
+  "5840_time_series_pd.csv",
+  "10830_time_series_pd.csv",
+  "10831_time_series_pd.csv"
+ ]
+}
