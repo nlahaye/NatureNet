@@ -205,6 +205,13 @@ def bearing(lat1, lon1, lat2, lon2):
     return np.arctan2(y, x)
 
 
+def naive_utc(ts):
+    """Any timestamps (strings, tz-aware / naive Timestamps, datetime64) -> tz-naive UTC datetime64[ns] array.
+    (A tz-aware Series .to_numpy() is an object array of Timestamps, which numpy cannot divide by a timedelta64.)"""
+    return pd.DatetimeIndex(pd.to_datetime(pd.Series(np.asarray(ts, dtype=object)), utc=True, format="mixed")) \
+        .tz_convert(None).to_numpy("datetime64[ns]")
+
+
 def kinematics(lat, lon, t, min_step_km=1e-3):
     """
     Per fix i: step_km / dt_h / speed_kmh of the step INTO fix i (NaN at i = 0); turn_angle at fix i =
@@ -217,6 +224,7 @@ def kinematics(lat, lon, t, min_step_km=1e-3):
     turn = np.full(n, np.nan)
     if n >= 2:
         step[1:] = haversine_km(lat[:-1], lon[:-1], lat[1:], lon[1:])
+        t = t if np.asarray(t).dtype.kind == "M" else naive_utc(t)
         dt[1:] = (t[1:] - t[:-1]) / np.timedelta64(1, "h")
     with np.errstate(divide="ignore", invalid="ignore"):
         speed = np.where(dt > 0, step / dt, np.nan)
@@ -355,7 +363,7 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
         n = len(df)
         lat = df["latitude"].to_numpy(dtype=float)
         lon = df["longitude"].to_numpy(dtype=float)
-        ts = pd.to_datetime(df["timestamp"], utc=True, format="mixed").to_numpy()
+        ts = naive_utc(df["timestamp"])  # tz-naive UTC datetime64[ns]
         step, dt, speed, turn = kinematics(lat, lon, ts, min_step)
 
         latent = np.full(n, np.nan)
@@ -373,7 +381,7 @@ def build_track_series(yml_conf, model="linear", order="s1", splits=("train", "t
 
         month = pd.DatetimeIndex(ts).month.to_numpy()
         cols = dict(uid=np.full(n, animal), segment=np.full(n, seg), seg_pos=np.arange(n), split=split,
-                    timestamp=pd.DatetimeIndex(ts).tz_convert(None), dt_h=dt, month=month,
+                    timestamp=pd.DatetimeIndex(ts), dt_h=dt, month=month,
                     month_sin=np.sin(2 * np.pi * (month - 1) / 12), month_cos=np.cos(2 * np.pi * (month - 1) / 12),
                     season=season_of(month), latitude=lat, longitude=lon, env=env, latent=latent, step_km=step,
                     distance_traveled=step, speed_kmh=speed, turn_angle=turn, reward_likelihood=rew)

@@ -56,7 +56,7 @@ plot_gifs: False
 #   env_data_format -y config/environment/sharks_env_format_inputs.yaml, then
 #   movement_preprocess_pipeline -y config/environment/sharks_gather_input.yaml
 plot_inputs: True
-input_keys: [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zooc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]
+input_keys: [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]
 static_layers: {}
 reward_normalize: "none"
 hiavi_plot_series: True

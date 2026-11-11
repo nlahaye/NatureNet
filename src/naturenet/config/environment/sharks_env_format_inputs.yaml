@@ -2,7 +2,7 @@
 #   python -m naturenet.models.feature_rep.env_data_format -y config/environment/sharks_env_format_inputs.yaml
 # Writes <out_dir>/<output_uid><key>.pkl per track key and <out_dir>/<output_uid>hammerhead_v1.pkl (merged).
 # Use the same scene list / dates / mask as the abstract-env (cluster) run, only on the raw cop_env scenes.
-# Channels (C = 29): [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zooc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]
+# Channels (C = 28): [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]
 df_uid: "hammerhead_v1"
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/input_env/"

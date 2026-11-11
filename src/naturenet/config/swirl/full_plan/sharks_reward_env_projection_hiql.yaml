@@ -11,7 +11,7 @@ reward_env_projection:
   class_mapper: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/TODO_class_mapper.pkl"   # TODO: <out_dir><output_uid>_class_mapper.pkl of the ABSTRACT (cluster) env_data_format run
   cluster_scale: 1000         # as in env_data_format (keys = rint(label * cluster_scale))
   profile_index: cluster      # "cluster" = SIT-FUSE label values; "state" = rows already indexed by state id
-  variables: [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zooc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]   # = SIT-FUSE xai.feature_names (cluster_profiles_wide columns)
+  variables: [nppv, o2, ph, dissic, fe, no3, po4, si, phyc, zos, sea_surface_temperature_anomaly, uo, vo, so, thetao, wo, VCMX, VHM0, VHM0_SW1, VHM0_WW, VMDR, VMDR_SW1, VMDR_WW, VMXL, VPED, VTM01_SW1, VTM01_WW, VTPK]   # = SIT-FUSE xai.feature_names (cluster_profiles_wide columns)
   weight_by_use: True         # weight states by how often tracked animals occupy them
   min_state_visits: 1
   alphas: [0.01, 0.1, 1.0, 10.0, 100.0]

@@ -1,7 +1,7 @@
 # Final time-series analysis (intention / mode series vs environment and movement), great hammerheads.
 #   python -m naturenet.models.time_series_analysis.correlation_analysis_shark -y config/time_series/whales_correlation_final.yaml
 # Input: per-animal series exported by plot_swirl_new / plot_hiavi (<plot_dir>/series_<model>_<order>/<uid>_time_series_pd.csv,
-# originals only, __aug copies excluded). Run the plot steps (with plot_inputs: True) first so the 29 input columns exist.
+# originals only, __aug copies excluded). Run the plot steps (with plot_inputs: True) first so the 28 input columns exist.
 # Output: <out_dir>/<second_dir>/<slice>/correlation_results.csv + plots.
 main_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v1/final/
 second_dir: [swirl/plots/series_linear_s1, hiql/plots/series_hiavi_s1]   # sharks: S-1 only
@@ -17,7 +17,7 @@ categorical: []                           # latent, env, season are categorical 
 drop_columns: [seasaon]
 min_rows: 4
 missing_files: warn
-top_n: 40                     # 29 inputs -> more candidate pairs
+top_n: 40                     # 28 inputs -> more candidate pairs
 
 rolling_window: 20
 max_lag: 8
