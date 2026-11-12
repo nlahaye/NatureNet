@@ -52,7 +52,10 @@ bathymetry:
   isobaths: [200, 1000]
 
 ship_density:
-  - {name: log_ship_density, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global.tif}
+  # shipdensity_global.tif is min-max normalised from counts (0-1). If the original max count is known,
+  # use {scale: <max count>, transform: log1p} to recover the World Bank units; otherwise log10 + eps.
+  - {name: log_ship_density, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global.tif,
+     transform: log10, eps: 1.0e-12}
   # optional World Bank layers (same units):
   # - {name: log_ship_density_fishing, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/ShipDensity_Fishing.tif}
   # - {name: log_ship_density_commercial, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/ShipDensity_Commercial.tif}
