@@ -20,7 +20,8 @@ import numpy as np
 import pandas as pd
 
 from naturenet.models.irl.run_hiavi_kfold import prepare_hiavi_data
-from naturenet.models.irl.run_hiavi_multiagent import _to_days, original_mask, read_conf, step_metadata
+from naturenet.models.irl.run_hiavi_multiagent import (_to_days, original_mask, read_conf, resolve_window,
+                                                       step_metadata)
 
 
 def report(conf):
@@ -36,7 +37,7 @@ def report(conf):
     med = float(np.nanmedian(dt_h[orig])) if orig.any() else float(np.nanmedian(dt_h))
     counts = np.bincount(s[orig[:, None] & valid], minlength=S)
     top5 = float(np.sort(counts)[::-1][:5].sum() / max(counts.sum(), 1))
-    w = (conf.get("multiagent") or {}).get("window")
+    w = resolve_window((conf.get("multiagent") or {}).get("window"))
     lo, hi = (float(_to_days([w[0]])[0]), float(_to_days([w[1]])[0]) + 1.0) if w else (-np.inf, np.inf)
     rows = []
     for an in sorted(set(pc.animal[orig])):

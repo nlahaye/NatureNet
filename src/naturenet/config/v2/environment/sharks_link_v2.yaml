@@ -1,0 +1,11 @@
+# Step 0 of the v2 downstream run: reuse the v1 movement preprocessing (tracks, segments, actions, grids, folds)
+# so v2 differs from v1 only in the environment. Movement-only files are symlinked, folds are copied.
+#   python -m naturenet.environment.link_movement_run -y config/v2/environment/sharks_link_v2.yaml
+src_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"
+dst_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
+df_run_uid: "hammerhead_v1"           # kept, so every v2 config can use the same df_run_uid
+# env-derived files are never linked (they are rewritten for v2)
+exclude: ["*_states_abstract_env.pkl", "*_trans_prob_abstract_env.npz", "*_total_count_abstract_env.pkl",
+          "*_points_abstract_env.pkl", "*_states_input.pkl", "*_states_input_channels.json"]
+copy_dirs: ["folds"]          # copied (not linked) -> identical CV splits, v1 folder untouched
+dry_run: False

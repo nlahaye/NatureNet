@@ -19,6 +19,7 @@ Replaces the counter-based matching in the old plot_swirl_new.run_plots / plot_t
   from the exported CSVs, plots, correlation, exploit / explore and reward projection). Fixes inside the
   calendar that have no env data (land / nodata -> the absorbing state) are kept. The fits are unchanged.
       env_window: {start_time: "2023-11-01", n_days: 345}      # or {scene_dates_file: ..., n_days: ...}
+                                                               # or {scene_index_csv: <cmems_env index>}
                                                                # nearest_days: 0 (same as env_data_format)
 """
 import os
@@ -314,6 +315,21 @@ def env_window_bounds(yml_conf):
     w = yml_conf.get("env_window")
     if not w:
         return None
+    if w.get("scene_index_csv"):
+        # cmems_env scene index (t, date, path, complete): window = first .. last usable scene day. Days missing
+        # inside it stay in the series (absorbing state), as with the single start_time + n_days window.
+        idx = pd.read_csv(w["scene_index_csv"])
+        if w.get("complete_scenes_only", True) and "complete" in idx.columns:
+            idx = idx[idx["complete"].map(lambda v: v is True or str(v).strip().lower() in ("true", "1", "yes"))]
+        if not len(idx):
+            raise ValueError(f"no usable scenes in {w['scene_index_csv']}")
+        days = [_naive_day(d) for d in idx["date"]]
+        if w.get("start_time") is not None:
+            days = [d for d in days if d >= _naive_day(w["start_time"])]
+        if w.get("end_time") is not None:
+            days = [d for d in days if d <= _naive_day(w["end_time"])]
+        near = pd.Timedelta(days=int(w.get("nearest_days", 0)))
+        return min(days) - near, max(days) + pd.Timedelta(days=1) + near
     n_days = int(w["n_days"])
     if w.get("scene_dates_file"):
         import json

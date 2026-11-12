@@ -1,0 +1,111 @@
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/sharks_hiql_scales.yaml;
+# only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
+# Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# Phase C (great hammerheads), HIQL emission: decision scales on HIQL / HIAVI at K = 3 (same data / folds as Phase B).
+# N1 (order 1, all layers off) = HIAVI K = 3 (Phase B: -1.929; report gains with and without fold 3); N2 / N3 back off deep contexts to their parent.
+# Nothing to precompute (no ARHMM init). Reward-side options (reward_param, reward_l2, reward_tol, init) are ignored.
+#   python -m naturenet.models.irl.run_swirl_scales_kfold -y v2/swirl/sharks_hiql_scales.yaml --check
+#   python -m naturenet.models.irl.run_swirl_scales_kfold -y v2/swirl/sharks_hiql_scales.yaml [--fold k] [--variant ...]
+#   python -m naturenet.models.irl.plot_swirl_scales      -y v2/swirl/sharks_hiql_scales.yaml
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v1_*_actions.pkl"
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
+df_run_uid: "hammerhead_v1"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/folds/"     # one fold file for ARHMM, SWIRL, NN-SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+# SWIRL decision-scale variants (swirl_scales / run_swirl_scales_kfold). Same data, folds, per-fold T and ARHMM
+# init as run_swirl_kfold; every toggle defaults to off (order 1 + all off = SWIRL S-1).
+#   python -m naturenet.models.irl.run_swirl_scales_kfold -y swirl_scales.yaml --check      # segment / context report
+#   python -m naturenet.models.irl.run_swirl_scales_kfold -y swirl_scales.yaml [--fold 0]
+#   python -m naturenet.models.irl.plot_swirl_scales      -y swirl_scales.yaml
+# ARHMM init: run run_swirl_kfold with run_arhmm: True on this YAML first (or scales.init: sticky).
+
+seed: 12345
+n_hidden_init: 3            # unused for HIQL (no ARHMM init)
+n_hidden: 3                 # HIQL K (Phase B)
+emission_dim: 1
+latent_state_dim: 1
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/scales/"
+run_uid: "HIQL_SCALES"   # separate from the SWIRL scales run (the runner refuses to mix)
+
+
+
+# Durations and regimes need long sequences: max_duration <= T / 2 and several regime switches per sequence.
+# All variants in one sweep share seq_len, so their LLs are comparable. Run --check before choosing.
+
+folds_to_run: null
+holdout_fraction: 0.2
+
+epochs: 50                  # stage 1 (no temperature)
+epochs_2: 30                # stage 2 (temps_final)
+em_tol: 1.0e-5
+temps_final: null            # unused for HIQL (no temperatures)
+run_arhmm: False
+run_swirl_init: False
+run_swirl_final: False
+run_s2: False
+epochs_init: 50
+epochs_init_2: 30
+overwrite: False
+
+# kinematics: {enabled: True, step_feature: "speed_kmh", min_dt_h: 0.5}   # optional; LL = comparable LL
+
+
+# --- HIQL / HIAVI settings (= Phase B sharks_hiavi_kfold.yaml) ---
+hiavi_discount: 0.9         # IAVI rewards after the fit
+hiavi_restarts: 10          # random HIAVI inits per fold (N1 and every non-warm-started variant); best TRAIN LL
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5      # -> scales.hiql.pseudocount
+hiavi_max_iters: 200        # EM iterations per fit
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+
+scales:
+  emission: "hiql"          # HIQL / HIAVI policies per context (swirl | hiql)
+  hiql: {backoff: 5.0}      # Dirichlet back-off of deep contexts to their parent (inf = order 1); other keys <- hiavi_*
+  hiql_tol: 1.0e-7          # relative EM tol on the total training LL
+  hiql_iavi: True           # IAVI rewards on the context MDP after the fit (sc_iavi_r / sc_iavi_q)
+  init: "arhmm"             # Phase B ARHMM init (fails loudly if the symlinks are missing)
+  warm_start: True          # order N starts from the fitted order N-1 with the same latent layers (stage 2 only)
+  warm_epochs: 30
+  reward_param: "additive"  # S-1 reward + ridge-penalised history increments ("free" = S-2 layout: do not use)
+  reward_l2: 1.0            # Gaussian prior on depth-k increments, precision ~ 2 * reward_l2 * (k - 1) (per step)
+  context_min_count: 5      # prune k-grams (k >= 2) seen < 5 times in the training animals
+  context_source: "train"   # train | all
+  context_t_support: False  # keep False (True + free + order 2 reproduces S-2)
+  reward_optimizer: "auto"  # BFGS up to 3000 reward parameters, else L-BFGS-B
+  reward_tol: null          # null -> 1e-4 at order 1 (matches SWIRL), 1e-8 at order > 1 (deep contexts need it)
+
+  # Settings used when a layer is "on" in the grid (a dict in the grid / variants overrides them).
+  defaults:
+    switch_history: {kind: "lags+decay", lags: 2, decay_steps: [3, 10], window: 10}
+    durations: {hazard: "logistic", max_duration: 12, hazard_features: False, smooth: 1.0, l2: 1.0}
+    hierarchy: {n_regimes: 2, sticky: 0.95, prior: 0.0, init_noise: 0.5}
+
+  # Stage A (nested layers at order 1) and the order sweep on the baseline. Order N = context depth:
+  # reward on N-grams, action choice depends on the last N-1 states (N = 2 is S-2: transition reward only).
+  grid:
+    order: [1, 2, 3]          # add 4 only if N3 is N* (within 1 SE of the best)
+    switch_history: ["off"]
+    durations: ["off"]
+    hierarchy: ["off"]
+  variants:
+    - {switch_history: "on"}
+    - {durations: "on"}
+    # - {durations: {hazard: "nonparametric", smooth: 5.0}}     # only if the logistic hazard is kept (shape check)
+    - {hierarchy: "on"}
+    - {switch_history: "on", durations: "on"}
+    # - {switch_history: "on", durations: "on", hierarchy: "on"}   # only if >= 2 single layers are kept
+  # Stage B (after A): add the best latent configuration crossed with order, e.g.
+  #   - {order: 2, durations: "on"}
+  #   - {order: 3, durations: "on"}

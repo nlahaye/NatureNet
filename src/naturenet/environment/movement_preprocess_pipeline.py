@@ -231,6 +231,23 @@ def gen_grid_point_paths(yml_conf):
             pickle.dump(paths, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
+def env_bounds(yml_conf):
+    """(env_lon_bounds, env_lat_bounds): explicit config values win; otherwise grid.lon_bounds / lat_bounds of
+    env_meta_json (naturenet.environment.cmems_env output; its scenes are north-up, so env_lat_ascending stays
+    False). (None, None) = movement-grid extent."""
+    lon_b, lat_b = yml_conf.get("env_lon_bounds"), yml_conf.get("env_lat_bounds")
+    meta = yml_conf.get("env_meta_json")
+    if meta and (lon_b is None or lat_b is None):
+        import json
+        with open(meta) as f:
+            g = json.load(f)["grid"]
+        if not g.get("north_up", True) and not yml_conf.get("env_lat_ascending", False):
+            print(f"WARNING: {meta} says north_up False but env_lat_ascending is False")
+        lon_b = g["lon_bounds"] if lon_b is None else lon_b
+        lat_b = g["lat_bounds"] if lat_b is None else lat_b
+    return lon_b, lat_b
+
+
 def _env_grid_for(abstract_maps, grid, yml_conf):
     """
     Grid used to index the env maps. If the env map matches the movement grid, use it.
@@ -245,8 +262,7 @@ def _env_grid_for(abstract_maps, grid, yml_conf):
             break
     if shp is None or tuple(shp) == (grid.lat_tiles, grid.lon_tiles):
         return None
-    lon_b = yml_conf.get("env_lon_bounds")
-    lat_b = yml_conf.get("env_lat_bounds")
+    lon_b, lat_b = env_bounds(yml_conf)
     env_grid = grid_from_shape(grid, shp[0], shp[1], lon_bounds=lon_b, lat_bounds=lat_b)
     print(f"Env map shape {tuple(shp)} != movement grid {(grid.lat_tiles, grid.lon_tiles)}; indexing env with "
           f"res {env_grid.grid_res_lon_deg:.5f} x {env_grid.grid_res_lat_deg:.5f} deg over the "
@@ -281,7 +297,12 @@ def reprocess_env_stats_abstract(yml_conf):
     with open(os.path.join(df_dir, df_uid + '_dfs.pkl'), "rb") as f:
         movement_dfs = pd.read_pickle(f)
 
-    with open(os.path.join(out_dir, "final_env_maps_" + run_uid + ".pkl"), "rb") as f: #TODO - _simple* vs not simple
+    # Merged env maps written by env_data_format: <env_maps_dir>/<env_maps_uid><run_uid>.pkl
+    # (env_maps_dir defaults to out_dir, env_maps_uid to "final_env_maps_" = env_data_format output_uid).
+    env_maps = yml_conf.get("env_maps_file") or os.path.join(yml_conf.get("env_maps_dir", out_dir),
+                                                            yml_conf.get("env_maps_uid", "final_env_maps_") + run_uid + ".pkl")
+    print("Reading env maps", env_maps)
+    with open(env_maps, "rb") as f:
         abstract_grid = pickle.load(f)
 
     n_clusters = yml_conf["n_clusters"]

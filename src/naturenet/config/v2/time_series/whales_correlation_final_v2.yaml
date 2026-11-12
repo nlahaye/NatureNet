@@ -1,0 +1,79 @@
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/time_series/whales_correlation_final.yaml;
+# only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
+# Final time-series analysis (intention / mode series vs environment and movement), blue whales.
+#   python -m naturenet.models.time_series_analysis.correlation_analysis_shark -y config/v2/time_series/whales_correlation_final_v2.yaml
+# Input: per-animal series exported by plot_swirl_new / plot_hiavi (<plot_dir>/series_<model>_<order>/<uid>_time_series_pd.csv,
+# originals only, __aug copies excluded). Run the plot steps (with plot_inputs: True) first so the T..CHL columns exist.
+# Output: <out_dir>/<second_dir>/<slice>/correlation_results.csv + plots.
+main_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/final/
+second_dir: [swirl/plots/series_linear_s1, swirl/plots/series_linear_s2, hiql/plots/series_hiavi_s1]
+keys: [full, males, females, unknown]   # sex from gen_sex in Bmu_2017CA.augmented.csv (23 animals; the old slices missed 825 and 5800)
+out_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/final/time_series/
+data_slices:
+  full:
+    - 825_time_series_pd.csv
+    - 826_time_series_pd.csv
+    - 827_time_series_pd.csv
+    - 831_time_series_pd.csv
+    - 835_time_series_pd.csv
+    - 841_time_series_pd.csv
+    - 845_time_series_pd.csv
+    - 847_time_series_pd.csv
+    - 1385_time_series_pd.csv
+    - 4176_time_series_pd.csv
+    - 5648_time_series_pd.csv
+    - 5670_time_series_pd.csv
+    - 5679_time_series_pd.csv
+    - 5800_time_series_pd.csv
+    - 5803_time_series_pd.csv
+    - 5840_time_series_pd.csv
+    - 5910_time_series_pd.csv
+    - 5921_time_series_pd.csv
+    - 10826_time_series_pd.csv
+    - 10830_time_series_pd.csv
+    - 10831_time_series_pd.csv
+    - 10840_time_series_pd.csv
+    - 23031_time_series_pd.csv
+  males:
+    - 826_time_series_pd.csv
+    - 827_time_series_pd.csv
+    - 841_time_series_pd.csv
+    - 5648_time_series_pd.csv
+    - 5670_time_series_pd.csv
+    - 5800_time_series_pd.csv
+    - 5803_time_series_pd.csv
+    - 5921_time_series_pd.csv
+    - 10826_time_series_pd.csv
+    - 10840_time_series_pd.csv
+    - 23031_time_series_pd.csv
+  females:
+    - 831_time_series_pd.csv
+    - 835_time_series_pd.csv
+    - 845_time_series_pd.csv
+    - 4176_time_series_pd.csv
+    - 5910_time_series_pd.csv
+  unknown:
+    - 825_time_series_pd.csv
+    - 847_time_series_pd.csv
+    - 1385_time_series_pd.csv
+    - 5679_time_series_pd.csv
+    - 5840_time_series_pd.csv
+    - 10830_time_series_pd.csv
+    - 10831_time_series_pd.csv
+
+# Pairs with a reward or latent column only (latent vs inputs / kinematics, reward vs inputs)
+pair_filter: [reward, latent]
+parent_child: {}
+exclude: []                               # uid, segment, seg_pos, time, lat/lon are dropped already
+categorical: []                           # latent, env, season are categorical by default
+drop_columns: [seasaon]
+min_rows: 4
+missing_files: warn
+top_n: 24
+
+rolling_window: 20
+max_lag: 8
+significance_level: 0.05
+min_correlation: 0.3
+min_len: 8
+n_bins: 8

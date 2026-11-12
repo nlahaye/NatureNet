@@ -1,0 +1,11 @@
+# Optional (legacy output): scene file names along the tracks, env_maps_fnames_whale<key>.pkl.
+#   python -m naturenet.models.misc.gather_whale_env_input_fnames -y config/v2/environment/whales_env_fnames_v2.yaml
+df_uid: "SWIRL_WHALE_v1"
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/env_fnames/"
+output_uid: "env_maps_fnames_whale"
+scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv"
+scene_file_template: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/cop_env_whales_t{i}.zarr"
+store_paths: True
+sit_fuse_output: False
+nearest_scene_days: 0

@@ -1,0 +1,11 @@
+# Fill the values that are only known after SIT-FUSE + env_data_format into every v2 config.
+#   python -m naturenet.environment.sync_v2_configs patch -y config/v2/environment/whales_sync_v2.yaml
+# Rerun after any re-clustering. Paths are relative to the naturenet package dir unless absolute.
+env_meta_json: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_env_meta.json"
+class_mapper: "/data/nlahaye/NatureNet/Blue_Whale_v2/env_clusters/final_env_maps__class_mapper.pkl"
+invalid_state: "absorbing"    # n_states = K + 1
+sample_config: "config/v2/environment/whales_sample_inputs_v2.yaml"   # input_channels_request -> input_channels
+files:
+  - "config/v2/environment/whales_abstract_env_v2.yaml"
+  - "config/v2/environment/whales_sample_inputs_v2.yaml"
+  - "config/v2/swirl/whales_*.yaml"
