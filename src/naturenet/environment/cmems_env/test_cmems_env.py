@@ -302,6 +302,42 @@ def test_run_blocks_stall_and_heartbeat():
         lg.removeHandler(h)
 
 
+def test_service_selection():
+    import sys
+    import types
+    from naturenet.environment.cmems_env import sources
+
+    class ServiceNotAvailable(Exception):
+        pass
+    calls = []
+
+    def fake_open(**kw):
+        calls.append(kw.get("service"))
+        if kw.get("dataset_id") == "single" and kw.get("service"):
+            raise ServiceNotAvailable("no geo-series")
+        return kw["dataset_id"]
+    old = sys.modules.get("copernicusmarine")
+    sys.modules["copernicusmarine"] = types.SimpleNamespace(open_dataset=fake_open)
+    try:
+        assert sources.open_lazy("phy", [0, 1, 0, 1], 0, service="arco-geo-series") == "phy"
+        assert sources.open_lazy("phy", [0, 1, 0, 1], 0, service="auto") == "phy"
+        assert sources.open_lazy("single", [0, 1, 0, 1], 0, service="arco-geo-series") == "single"
+        assert calls == ["arco-geo-series", None, "arco-geo-series", None], calls
+    finally:
+        if old is None:
+            del sys.modules["copernicusmarine"]
+        else:
+            sys.modules["copernicusmarine"] = old
+    seen = []
+    op = lambda dsid, *a, **k: seen.append(k.get("service"))
+    sources.Source(dict(name="a", datasets=["x"]), [0, 1, 0, 1], 0, opener=op).dataset("x")
+    sources.Source(dict(name="b", datasets=["x"], service="auto"), [0, 1, 0, 1], 0, opener=op).dataset("x")
+    srcs = pipeline.make_sources(dict(grid=dict(bbox=[0, 1, 0, 1]), pull=dict(service="arco-time-series"),
+                                      sources=[dict(name="c", datasets=["x"])]), opener=op)
+    srcs[0].dataset("x")
+    assert seen == ["arco-geo-series", None, "arco-time-series"], seen
+
+
 def test_http_timeouts():
     import botocore.config
     from naturenet.environment.cmems_env import sources

@@ -92,15 +92,22 @@ def open_lazy(dataset_id, bbox, margin, variables=None, depth_range=None, retrie
         args["variables"] = list(variables)
     if depth_range is not None:
         args["minimum_depth"], args["maximum_depth"] = depth_range
-    args.update(kw)
-    for k in range(retries):
+    args.update({k: v for k, v in kw.items() if not (k == "service" and v in (None, "auto"))})
+    k = 0
+    while True:
         try:
             return cm.open_dataset(**args)
         except Exception as e:  # network / auth / transient
-            if k == retries - 1:
+            if args.get("service") and "Service" in type(e).__name__:
+                # dataset without the forced ARCO layout (e.g. a single-service product) -> toolbox choice
+                log.warning("open_dataset(%s): service %s not available (%s); using the toolbox default",
+                            dataset_id, args.pop("service"), type(e).__name__)
+                continue
+            k += 1
+            if k >= retries:
                 raise
-            log.warning("open_dataset(%s) failed (%s); retry %d", dataset_id, e, k + 1)
-            time.sleep(5 * (k + 1))
+            log.warning("open_dataset(%s) failed (%s); retry %d", dataset_id, e, k)
+            time.sleep(5 * k)
 
 
 class Source:
@@ -110,8 +117,13 @@ class Source:
     reanalysis, then the interim/NRT continuation).
     """
 
-    def __init__(self, cfg, bbox, margin, opener=open_lazy):
+    def __init__(self, cfg, bbox, margin, opener=open_lazy, service="arco-geo-series"):
         self.cfg = cfg
+        # ARCO layout. The toolbox picks by chunk count over the requested subset; with no time bounds that is the
+        # whole record, which favours arco-time-series (e.g. GLORYS: 2081 days x 16 x 16 cells per chunk), so every
+        # short pull block would download multi-year chunks. arco-geo-series is 1 day x 512 x 2048 cells.
+        # Per source `service:` overrides pull.service; "auto" (or null) leaves the choice to the toolbox.
+        self.service = cfg.get("service", service)
         self.name = cfg["name"]
         self.datasets = cfg["datasets"] if isinstance(cfg["datasets"], list) else [cfg["datasets"]]
         self.bbox, self.margin, self.opener = bbox, float(cfg.get("margin_deg", margin)), opener
@@ -135,8 +147,10 @@ class Source:
         if dsid not in self._ds:
             want = self.cfg.get("variables", "all")
             vars_ = None if want == "all" else list(want)
+            kw = {} if self.service in (None, "auto") else dict(service=self.service)
             self._ds[dsid] = self.opener(dsid, self.bbox, self.margin, variables=vars_,
-                                         depth_range=self._depth_range())
+                                         depth_range=self._depth_range(), **kw)
+            log.info("[%s] opened %s (service %s)", self.name, dsid, kw.get("service", "toolbox default"))
         return self._ds[dsid]
 
     def resolve(self):
