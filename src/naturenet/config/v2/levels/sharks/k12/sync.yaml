@@ -1,0 +1,13 @@
+# Environment level k12: n_states = K_level + 1 in this level's configs only.
+#   python -m naturenet.environment.sync_v2_configs patch -y config/v2/levels/sharks/k12/sync.yaml
+env_meta_json: /data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_env_meta.json
+class_mapper: /data/nlahaye/NatureNet/Hammerhead_Out_v2/levels/k12/env_clusters/final_env_maps__class_mapper.pkl
+invalid_state: absorbing
+sample_config: config/v2/environment/sharks_sample_inputs_v2.yaml
+files:
+- config/v2/levels/sharks/k12/abstract_env.yaml
+- config/v2/levels/sharks/k12/hiavi_kfold.yaml
+- config/v2/levels/sharks/k12/iavi_kfold.yaml
+- config/v2/levels/sharks/k12/swirl_kfold.yaml
+- config/v2/levels/sharks/k12/hiql_final.yaml
+- config/v2/levels/sharks/k12/reward_env_projection_hiql.yaml

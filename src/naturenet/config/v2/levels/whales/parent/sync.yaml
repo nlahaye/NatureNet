@@ -1,0 +1,13 @@
+# Environment level parent: n_states = K_level + 1 in this level's configs only.
+#   python -m naturenet.environment.sync_v2_configs patch -y config/v2/levels/whales/parent/sync.yaml
+env_meta_json: /data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_env_meta.json
+class_mapper: /data/nlahaye/NatureNet/Blue_Whale_v2/levels/parent/env_clusters/final_env_maps__class_mapper.pkl
+invalid_state: absorbing
+sample_config: config/v2/environment/whales_sample_inputs_v2.yaml
+files:
+- config/v2/levels/whales/parent/abstract_env.yaml
+- config/v2/levels/whales/parent/hiavi_kfold.yaml
+- config/v2/levels/whales/parent/iavi_kfold.yaml
+- config/v2/levels/whales/parent/swirl_kfold.yaml
+- config/v2/levels/whales/parent/hiql_final.yaml
+- config/v2/levels/whales/parent/reward_env_projection_hiql.yaml

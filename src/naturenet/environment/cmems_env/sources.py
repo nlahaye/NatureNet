@@ -30,6 +30,11 @@ def configure_http(pc=None):
                            at least 10, at most 128)
     pull.zarr_concurrency  concurrent chunk requests per zarr read (zarr >= 3 'async.concurrency';
                            default 4, zarr's own default is 10)
+    pull.read_timeout      seconds without data before an S3 read fails (default 60, botocore's default)
+    pull.connect_timeout   seconds to open an S3 connection (default 20; botocore's default is 60)
+                           copernicusmarine retries each request up to 10 times (adaptive mode), so a dead
+                           socket can take about 10 x (read_timeout + backoff) to surface; pull.block_timeout
+                           bounds a whole block on top of this.
     Returns the pool size used.
     """
     pc = pc or {}
@@ -50,12 +55,17 @@ def configure_http(pc=None):
         # copernicusmarine builds Config(signature_version=..., retries=...) without max_pool_connections,
         # so the class default applies to every client it creates from now on.
         botocore.config.Config.OPTION_DEFAULTS["max_pool_connections"] = n
+        # Same mechanism for the socket timeouts (copernicusmarine does not pass them either).
+        rt, ct = float(pc.get("read_timeout", 60)), float(pc.get("connect_timeout", 20))
+        botocore.config.Config.OPTION_DEFAULTS["read_timeout"] = rt
+        botocore.config.Config.OPTION_DEFAULTS["connect_timeout"] = ct
     except ImportError:
-        pass
+        rt = ct = None
     global _HTTP
-    if _HTTP != (n, zc):
-        log.info("S3 connection pool %d per dataset, zarr concurrency %d", n, zc)
-        _HTTP = (n, zc)
+    if _HTTP != (n, zc, rt, ct):
+        log.info("S3 connection pool %d per dataset, zarr concurrency %d, read/connect timeout %s/%s s",
+                 n, zc, rt, ct)
+        _HTTP = (n, zc, rt, ct)
     return n
 
 LON_NAMES = ("longitude", "lon", "x")

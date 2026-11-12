@@ -1,0 +1,44 @@
+# Multi-scale SIT-FUSE environment levels for the sharks (fine = heir baseline in config/v2/environment + config/v2/swirl).
+#   python -m naturenet.environment.make_level_configs -y config/v2/levels/sharks_levels_v2.yaml [--dry_run]
+# -> config/v2/levels/sharks/<level>/{link, env_format, abstract_env, sync, <runs>}.yaml + ll_comparison_levels.yaml
+# Choose the coarse K values from <SIT-FUSE out>/hierarchy/cut_summary.csv (sit_fuse cluster_hierarchy build) and
+# regenerate. Every coarse k must be one of the hierarchy ks.
+out_config_dir: config/v2/levels/sharks        # relative to the naturenet package dir
+base_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"          # v2 fine run (movement files are symlinked from here)
+levels_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/levels/"
+df_run_uid: "hammerhead_v1"
+output_uid: "final_env_maps_"
+hierarchy_json: "/data/nlahaye/output/Learnergy/COP_SHARK_V2/hierarchy/cluster_hierarchy.json"
+sitfuse_out_dir: "/data/nlahaye/output/Learnergy/COP_SHARK_V2/"
+num_child: 5                  # SIT-FUSE cluster.heir.num_classes
+label_input: fine             # parent ids = fine // num_child; "parent" reads the no_heir rasters instead
+unmapped_parent: error
+levels:
+  - {name: parent, level: parent}
+  - {name: k30, level: coarse, k: 30}
+  - {name: k20, level: coarse, k: 20}
+  - {name: k12, level: coarse, k: 12}
+templates:
+  env_format: config/v2/environment/sharks_env_format_clusters_v2.yaml
+  abstract_env: config/v2/environment/sharks_abstract_env_v2.yaml
+  sync: config/v2/environment/sharks_sync_v2.yaml
+runs:                         # generated for every level; which ones to run: see the commands document (step 16)
+  hiavi_kfold: config/v2/swirl/sharks_hiavi_kfold.yaml            # HIQL K sweep (every level)
+  iavi_kfold: config/v2/swirl/sharks_iavi_kfold.yaml              # IAVI K = 1 (every level)
+  swirl_kfold: config/v2/swirl/sharks_swirl_kfold_pc1T_t1.yaml   # SWIRL S-1 / S-2: best one or two levels only
+  hiql_final: config/v2/swirl/sharks_hiql_final.yaml              # final fit: chosen level(s) only
+  reward_env_projection_hiql: config/v2/swirl/sharks_reward_env_projection_hiql.yaml
+overrides:
+  hiavi_kfold: {run_hiavi_final: False}   # level sweep = CV only; holdout fit via hiql_final at the chosen level
+ll_comparison:
+  out_prefix: "hammerhead_v2_levels"
+  title: "Hammerhead K-fold log-likelihood by environment level"
+  reference: hiavi            # fine-level HIQL
+  fine:                       # yaml relative to out_config_dir
+    - {name: hiavi, label: "HIQL fine", yaml: "../../swirl/sharks_hiavi_kfold.yaml", color: "#000000"}
+    - {name: hiavi, alias: iavi, label: "IAVI fine (K=1)", yaml: "../../swirl/sharks_iavi_kfold.yaml", color: "#555555"}
+    - {name: swirl_s1, label: "SWIRL S-1 fine", yaml: "../../swirl/sharks_swirl_kfold_pc1T_t1.yaml", color: "#aaaaaa"}
+  per_level:                  # {lv} = level name; run = generated config
+    - {name: hiavi, alias: "hiql_{lv}", label: "HIQL {lv}", run: hiavi_kfold}
+    - {name: hiavi, alias: "iavi_{lv}", label: "IAVI {lv} (K=1)", run: iavi_kfold}
+    - {name: swirl_s1, alias: "swirl_s1_{lv}", label: "SWIRL S-1 {lv}", run: swirl_kfold}

@@ -209,6 +209,7 @@ def test_end_to_end():
     fake = FakeCM(pd.Timestamp("2019-12-20"), pd.Timestamp("2020-01-20"))
     pipeline.cmd_static(cfg, opener=fake)
     pipeline.cmd_pull(cfg, opener=fake)
+    assert pipeline.cmd_pull.summary["ok"] > 0 and pipeline.pull_pending(cfg) == {}
     # resume: nothing left to fetch
     caches = pipeline.cmd_pull(cfg, opener=lambda *a, **k: (_ for _ in ()).throw(AssertionError("refetch")) if a[0] != "phy" and a[0] != "wav" else fake(*a, **k))
     meta = pipeline.cmd_assemble(cfg)
@@ -243,7 +244,72 @@ def test_end_to_end():
     assert os.path.exists(os.path.join(cfg["out_dir"], "test_water_mask.tif"))
     sh = sc[ch.index("log_ship_density")]
     assert sh[mask].max() > 0
+    from naturenet.environment.cmems_env import store
+    dn = store.open_array(os.path.join(cfg["work_dir"], "cache", "glorys.done.zarr"), mode="r+")
+    dn[0:2] = 0                                          # as left by a stalled or failed block
+    assert pipeline.pull_pending(cfg) == {"glorys": 2}
     shutil.rmtree(d)
+
+
+def test_run_blocks_stall_and_heartbeat():
+    import logging
+    import threading
+    import time
+    gate = threading.Event()
+    done = []
+
+    def run(t):
+        if t == "hang":
+            gate.wait(10)                                # a dead socket that never returns in time
+        if t == "bad":
+            raise IOError("boom")
+        time.sleep(0.05)
+        done.append(t)
+        return t
+
+    recs = []
+    h = logging.Handler()
+    h.emit = lambda r: recs.append(r.getMessage())
+    lg = logging.getLogger("cmems_env")
+    lg.addHandler(h)
+    lg.setLevel(logging.INFO)
+    try:
+        tasks = ["a", "hang", "b", "bad", "c", "d", "e"]
+        t0 = time.monotonic()
+        sm = pipeline.run_blocks(tasks, run, str, workers=2, heartbeat=0.2, block_timeout=0.6, max_stalled=2,
+                                 poll=0.05)
+        assert time.monotonic() - t0 < 5
+        assert sm == dict(ok=5, failed=1, stalled=["hang"], not_started=0), sm
+        assert sorted(done) == ["a", "b", "c", "d", "e"]
+        assert any("block stalled" in m and "hang" in m for m in recs)
+        assert any(m.startswith("pull heartbeat") and "hang" in m for m in recs)
+        assert any("pull incomplete" in m for m in recs)
+        # every slot stalls -> stop starting new blocks, leave them for the next run
+        gate2 = threading.Event()
+        sm = pipeline.run_blocks(["x", "y", "z"], lambda t: gate2.wait(10), str, workers=1, heartbeat=0,
+                                 block_timeout=0.2, max_stalled=1, poll=0.05)
+        assert sm == dict(ok=0, failed=0, stalled=["x"], not_started=2), sm
+        # a stalled block that finishes before the end is kept
+        gate3 = threading.Event()
+        threading.Timer(0.5, gate3.set).start()
+        q = ["slow"] + [f"q{i}" for i in range(6)]       # the q blocks keep the run going past 0.5 s
+        sm = pipeline.run_blocks(q, lambda t: gate3.wait(10) if t == "slow" else time.sleep(0.15),
+                                 str, workers=2, heartbeat=0, block_timeout=0.3, max_stalled=2, poll=0.05)
+        assert sm == dict(ok=7, failed=0, stalled=[], not_started=0), sm
+        assert any("after stalling" in m for m in recs)
+    finally:
+        gate.set()
+        lg.removeHandler(h)
+
+
+def test_http_timeouts():
+    import botocore.config
+    from naturenet.environment.cmems_env import sources
+    sources.configure_http(dict(read_timeout=45, connect_timeout=15, workers=2, dask_threads=2))
+    c = botocore.config.Config(signature_version=None, retries={"max_attempts": 10, "mode": "adaptive"})
+    assert (c.read_timeout, c.connect_timeout, c.max_pool_connections) == (45, 15, 16)
+    sources.configure_http({})
+    assert botocore.config.Config().read_timeout == 60
 
 
 def test_monthly_prior_and_coverage():

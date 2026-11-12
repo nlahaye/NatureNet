@@ -13,6 +13,9 @@ Stages
   pull     lazy ARCO reads of every source for the needed days, daily means, regrid to
            the target grid in one matmul per block, bit-rounded zstd cache per source
            ({work}/cache/{source}.zarr, (T, V, H, W)); resumable via a `done` flag array
+           (0 pending, 1 pulled, 2 no dataset). Heartbeat log every pull.heartbeat s; a block past
+           pull.block_timeout s is logged as stalled and its slot freed; `pull` and `all` exit with
+           status 3 while days are missing (rerun the same command to resume).
   assemble short-gap temporal fill -> rolling/anomaly features -> push-pull spatial fill
            -> derived features -> static layers -> channel order -> water mask (fill
            value) -> one (C, H, W) float32 zarr per day, plus metadata, scene index,
@@ -23,7 +26,7 @@ import fnmatch
 import json
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -248,20 +251,116 @@ def cmd_pull(cfg, opener=open_lazy, srcs=None):
         done[i0:i1] = 1
         return s.name, i0, i1, dsid
 
+    def label(task):
+        s, dsid, i0, i1 = task
+        pull = caches[s.name][2]
+        return f"{s.name} {pull[i0].date()}..{pull[i1 - 1].date()} ({dsid})"
+
     with dask.config.set(scheduler="threads", num_workers=int(pc.get("dask_threads", 4))):
-        nw = int(pc.get("workers", 4))
-        if nw <= 1:
-            for t in tasks:
-                log.info("pulled %s", run(t))
-        else:
-            with ThreadPoolExecutor(nw) as ex:
-                futs = [ex.submit(run, t) for t in tasks]
-                for f in as_completed(futs):
-                    try:
-                        log.info("pulled %s", f.result())
-                    except Exception as e:  # keep going; rerun resumes failed blocks
-                        log.error("block failed: %s", e)
+        nw = max(int(pc.get("workers", 4)), 1)
+        summary = run_blocks(tasks, run, label, workers=nw,
+                             heartbeat=float(pc.get("heartbeat", 300)),
+                             block_timeout=float(pc.get("block_timeout", 3600)),
+                             max_stalled=int(pc.get("max_stalled") or nw))
+    cmd_pull.summary = summary
     return caches
+
+
+def run_blocks(tasks, run, label, workers=4, heartbeat=300.0, block_timeout=3600.0, max_stalled=4, poll=1.0):
+    """Run pull blocks on daemon threads with a heartbeat log and a wall-clock limit per block.
+
+    A block running longer than block_timeout seconds is logged as stalled and its worker slot is freed. Python
+    cannot stop the thread, so it keeps running in the background. If it finishes later, its result is kept
+    (the done flag is set only after the data are written). New blocks stop starting once max_stalled blocks have
+    stalled. The rest stay pending for the next run. block_timeout <= 0 disables the limit and heartbeat <= 0
+    disables the heartbeat. Returns dict(ok, failed, stalled, not_started).
+    """
+    import queue
+    import threading
+    import time
+    results = queue.Queue()
+    todo = list(tasks)[::-1]
+    active, stalled = {}, {}             # id -> (task, start time)
+    n_total, n_ok, n_fail = len(todo), 0, 0
+    t_start = last_hb = time.monotonic()
+
+    def worker(tid, task):
+        try:
+            results.put((tid, run(task), None))
+        except BaseException as e:      # noqa: BLE001  reported by the scheduler; rerun resumes the block
+            results.put((tid, None, e))
+
+    def finish(tid, res, err):
+        nonlocal n_ok, n_fail
+        late = tid in stalled
+        task, t0 = (stalled.pop(tid) if late else active.pop(tid))
+        dt = time.monotonic() - t0
+        if err is not None:
+            n_fail += 1
+            log.error("block failed after %.0f s: %s: %s", dt, label(task), err)
+        else:
+            n_ok += 1
+            log.info("pulled %s in %.0f s%s", res, dt, " (after stalling)" if late else "")
+
+    nid, halted = 0, False
+    while todo or active:
+        while todo and len(active) < workers and len(stalled) < max_stalled:
+            task = todo.pop()
+            active[nid] = (task, time.monotonic())
+            threading.Thread(target=worker, args=(nid, task), daemon=True, name=f"pull-{nid}").start()
+            nid += 1
+        if not active:                   # every slot lost to stalled blocks
+            break
+        try:
+            finish(*results.get(timeout=poll))
+            while True:
+                finish(*results.get_nowait())
+        except queue.Empty:
+            pass
+        now = time.monotonic()
+        if block_timeout > 0:
+            for tid in [t for t, (_, t0) in active.items() if now - t0 > block_timeout]:
+                stalled[tid] = active.pop(tid)
+                log.error("block stalled (> %.0f s, slot freed; still running in the background): %s",
+                          block_timeout, label(stalled[tid][0]))
+            if len(stalled) >= max_stalled and todo and not halted:
+                halted = True
+                log.error("%d stalled blocks: no new blocks are started; %d left for the next run",
+                          len(stalled), len(todo))
+        if heartbeat > 0 and now - last_hb >= heartbeat:
+            last_hb = now
+            run_s = "; ".join(f"{label(t)} {now - t0:.0f} s" for t, t0 in active.values()) or "-"
+            log.info("pull heartbeat %.0f min: %d/%d blocks pulled, %d failed, %d stalled, %d queued | running: %s",
+                     (now - t_start) / 60, n_ok, n_total, n_fail, len(stalled), len(todo), run_s)
+    # collect stalled blocks that finished while the last ones were running
+    try:
+        while True:
+            finish(*results.get_nowait())
+    except queue.Empty:
+        pass
+    summary = dict(ok=n_ok, failed=n_fail, stalled=[label(t) for t, _ in stalled.values()], not_started=len(todo))
+    if n_fail or stalled or todo:
+        log.error("pull incomplete: %d/%d blocks pulled, %d failed, %d stalled, %d not started. Rerun the same "
+                  "command to resume (finished blocks are kept).", n_ok, n_total, n_fail, len(stalled), len(todo))
+    else:
+        log.info("pull complete: %d blocks", n_ok)
+    return summary
+
+
+def pull_pending(cfg):
+    """Pull days still without a done flag, per enabled source ({name: n_days}; empty when the cache is complete)."""
+    out = {}
+    for s in cfg["sources"]:
+        if not s.get("enabled", True):
+            continue
+        dp = os.path.join(cfg["work_dir"], "cache", f"{s['name']}.done.zarr")
+        if not os.path.exists(dp):
+            out[s["name"]] = -1
+            continue
+        n = int((np.asarray(store.open_array(dp)[...]) == 0).sum())
+        if n:
+            out[s["name"]] = n
+    return out
 
 
 # ------------------------------------------------------------------ assemble
@@ -488,12 +587,25 @@ def main(argv=None):
         cmd_static(cfg)
     elif a.stage == "pull":
         cmd_pull(cfg)
+        _exit_if_pending(cfg, "pull")
     elif a.stage == "assemble":
         cmd_assemble(cfg)
     else:
         cmd_static(cfg)
         cmd_pull(cfg)
+        if not cfg.get("pull", {}).get("assemble_with_gaps", False):
+            _exit_if_pending(cfg, "all (assemble skipped)")
         cmd_assemble(cfg)
+
+
+def _exit_if_pending(cfg, what):
+    """Exit with status 3 while pull blocks are missing. Daemon threads of stalled blocks end with the process."""
+    pend = pull_pending(cfg)
+    if pend:
+        log.error("%s: pull days still missing per source %s. Rerun to resume; pull.assemble_with_gaps: true "
+                  "assembles anyway (missing days are then filled or flagged incomplete).", what, pend)
+        logging.shutdown()
+        os._exit(3)
 
 
 if __name__ == "__main__":
