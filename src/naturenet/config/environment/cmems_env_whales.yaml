@@ -1,0 +1,161 @@
+# Copernicus Marine -> SIT-FUSE environment scenes (whales).
+# python -m naturenet.environment.cmems_env.pipeline all --config config/environment/cmems_env_whales.yaml
+tag: whales
+out_dir: /data/nlahaye/NatureNet_Env/Copernicus/v2/whales
+work_dir: /data/nlahaye/NatureNet_Env/Copernicus/v2/whales/work
+
+grid:
+  bbox: [-126.0, -110.0, 22.0, 40.0]   # lon_min, lon_max, lat_min, lat_max (matches movement env_lon/lat_bounds)
+  res: 0.08333333333333333                # 1/12 deg (GLORYS native)
+
+time:
+  start: 2017-07-10    # t = days since start (matches the existing whale env window); or auto
+  end: auto
+  pad_days: 1
+  write_days: track    # track = only days with fixes (+/- pad); all = every day in [start, end]
+  tracks:
+    - {path: /data/nlahaye/NatureNet/Bmu_2017CA.augmented.csv, time_col: timestamp, lon_col: longitude, lat_col: latitude}
+
+pull:
+  workers: 4           # concurrent (source, block) reads
+  dask_threads: 4      # chunk fetch threads per read
+  margin_deg: 0.5      # read margin so edge cells interpolate from real data
+  keepbits: 12         # cache bit-rounding (rel. err <= 1.2e-4); scenes stay lossless
+  min_support: 0.25
+  clevel: 5
+
+mask:
+  path: /data/nlahaye/remoteSensing/watermask_2025.whale.2.tif
+  water_value: 1
+  offraster_is_water: false
+  supersample: 4
+  margin_cells: 24
+  ocean_connected: true
+  min_water_frac: 0.0  # cell is water if any sub-cell is water
+  coast_buffer_km: 5.0 # relax the land boundary by this distance
+
+bathymetry:
+  path: null            # GEBCO subset for this bbox if available (elevation, m); null -> CMEMS deptho
+  cmems_static: cmems_mod_glo_phy_my_0.083deg_static
+  isobaths: [200, 1000]
+
+ship_density:
+  - {name: log_ship_density, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global.tif}
+  # optional World Bank layers (same units):
+  # - {name: log_ship_density_fishing, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/ShipDensity_Fishing.tif}
+  # - {name: log_ship_density_commercial, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/ShipDensity_Commercial.tif}
+
+fill:
+  max_temporal_gap: 3  # days; longer gaps are filled spatially (push-pull)
+  smooth_iters: 4
+  max_missing_frac: 0.999  # channel-day treated as missing (scene incomplete) at/above this
+  allow_incomplete: false
+
+channels:
+  order: null          # null = sources, then features, then static; or a list of names/globs
+  drop: [water_frac]
+
+output:
+  prefix: cop_env_whales
+  fill_value: -999999.0
+  valid_min: -8000.0
+  train_every_days: 7  # files_train subsample in the SIT-FUSE data block
+  assemble_block_days: 8
+  write_threads: 2
+  clevel: 5
+  write_mask_tif: true
+
+sources:
+  # --- physics reanalysis (GLORYS12, 1/12 deg, daily) ---
+  - name: glorys
+    datasets: [cmems_mod_glo_phy_my_0.083deg_P1D-m]
+    variables: all
+    exclude: [siconc, sithick, usi, vsi]
+    depths: {thetao: [0, 50, 100, 200, 500], so: [0, 100, 200], uo: [0, 100], vo: [0, 100]}
+    block_days: 16
+  # --- biogeochemistry reanalysis (1/4 deg, daily) ---
+  - name: bgc
+    datasets: [cmems_mod_glo_bgc_my_0.25deg_P1D-m]
+    variables: all
+    depths: {default: [0], chl: [0, 50, 100], o2: [0, 100, 200], no3: [0, 100], nppv: [0], po4: [0], si: [0]}
+    rename: {chl: chl_model}
+    block_days: 32
+  # --- monthly-only BGC fields, forward-filled to days (set enabled: false to skip) ---
+  - name: bgc_monthly
+    datasets: [cmems_mod_glo_bgc_my_0.25deg_P1M-m]
+    variables: [fe, ph, phyc, spco2]
+    depths: {default: [0]}
+    temporal: prior
+    block_days: 64
+  # --- micronekton / zooplankton (LMTL, 1/12 deg, daily) ---
+  - name: lmtl
+    datasets: [cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i]
+    variables: all
+    block_days: 16
+  # --- waves reanalysis (0.2 deg, 3-hourly -> daily; directions as sin/cos) ---
+  - name: waves
+    datasets: [cmems_mod_glo_wav_my_0.2deg_PT3H-i]
+    variables: all
+    circular: [VMDR, VMDR_SW1, VMDR_SW2, VMDR_WW]
+    block_days: 16
+  # --- OSTIA L4 SST (0.05 deg) ---
+  - name: sst
+    datasets: [METOFFICE-GLO-SST-L4-REP-OBS-SST, METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2]
+    variables: [analysed_sst]
+    transforms: {analysed_sst: {offset: -273.15}}
+    rename: {analysed_sst: sst}
+    block_days: 16
+  # --- ocean colour L4 gap-free (4 km) ---
+  - name: chl
+    datasets: [cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D, cmems_obs-oc_glo_bgc-plankton_nrt_l4-gapfree-multi-4km_P1D]
+    variables: [CHL]
+    block_days: 8
+  - name: transp
+    datasets: [cmems_obs-oc_glo_bgc-transp_my_l4-gapfree-multi-4km_P1D, cmems_obs-oc_glo_bgc-transp_nrt_l4-gapfree-multi-4km_P1D]
+    variables: [KD490, ZSD]
+    block_days: 8
+  # --- altimetry L4 (1/8 deg) ---
+  - name: ssh
+    datasets: [cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D, cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D]
+    variables: [adt, sla, ugos, vgos, ugosa, vgosa]
+    block_days: 32
+  # --- scatterometer L4 winds/stress (1/8 deg, hourly -> daily) ---
+  - name: wind
+    datasets: [cmems_obs-wind_glo_phy_my_l4_0.125deg_PT1H, cmems_obs-wind_glo_phy_nrt_l4_0.125deg_PT1H]
+    variables: [eastward_wind, northward_wind, eastward_stress, northward_stress, stress_curl, wind_curl, stress_divergence, wind_divergence, air_density]
+    block_days: 4
+  # --- multi-observation surface salinity/density ---
+  - name: sss
+    datasets: [cmems_obs-mob_glo_phy-sss_my_multi_P1D, cmems_obs-mob_glo_phy-sss_nrt_multi_P1D]
+    variables: [sos, dos]
+    block_days: 32
+  # --- multi-observation total (geostrophic + Ekman) surface currents ---
+  - name: cur_obs
+    datasets: [cmems_obs-mob_glo_phy-cur_my_0.25deg_P1D-m, cmems_obs-mob_glo_phy-cur_nrt_0.25deg_P1D-m]
+    variables: [uo, vo, ue, ve]
+    depths: {default: [0]}
+    rename: {uo: uo_obs, vo: vo_obs}
+    block_days: 32
+
+# derived features (computed after gap fill; entries with missing inputs are skipped)
+features:
+  - {op: log10, var: CHL}
+  - {op: log10, var: chl_model_0m}
+  - {op: log10, var: KD490}
+  - {op: log10, var: npp, floor: 1.0e-3}
+  - {op: log10, var: zooc, floor: 1.0e-4}
+  - {op: grad_mag, var: sst}                      # thermal fronts, degC/km
+  - {op: grad_mag, var: log10_CHL}                # chlorophyll fronts
+  - {op: grad_mag, var: sos}                      # salinity fronts
+  - {op: grad_mag, var: adt}                      # jets / eddy edges
+  - {op: speed, u: uo_0m, v: vo_0m, name: cur_speed_0m}
+  - {op: speed, u: eastward_wind, v: northward_wind, name: wind_speed}
+  - {op: vorticity, u: ugos, v: vgos, name: rossby_geo}
+  - {op: okubo_weiss, u: ugos, v: vgos, name: okubo_weiss_geo}
+  - {op: eke, u: ugosa, v: vgosa}
+  - {op: ekman_pump, curl: stress_curl}           # m/day, + = upwelling
+  - {op: diff, a: thetao_0m, b: thetao_100m, name: strat_0_100m}
+  - {op: diff, a: thetao_0m, b: bottomT, name: sst_minus_bottomT}
+  - {op: rolling_mean, var: CHL, days: 8}
+  - {op: rolling_mean, var: CHL, days: 30}
+  - {op: anomaly, var: sst, days: 30}
