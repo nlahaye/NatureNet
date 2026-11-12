@@ -16,4 +16,6 @@ mask_path: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_water_mask.t
 land_value: 0
 land_fill: -1
 sit_fuse_output: True
-cluster_scale: 1000
+cluster_scale: 1000          # id = rint(value * 1000)
+zero_label_valid: True      # id 0 is a real cluster (SIT-FUSE no data is negative); v1 dropped it
+cluster_level: fine         # fine (heir) baseline; parent / coarse levels: config/v2/levels/

@@ -50,7 +50,7 @@ def state_profiles(profiles, n_states, mapper=None, scale=1000, index="cluster",
     index = "state":   profiles.cluster already holds NatureNet state ids.
     """
     df = profiles.copy()
-    skip = {"cluster", "n", "frac", "state"}
+    skip = {"cluster", "cluster_id", "n", "frac", "state"}
     variables = list(variables) if variables else [c for c in df.columns
                                                    if c not in skip and np.issubdtype(df[c].dtype, np.number)]
     P = np.full((n_states, len(variables)), np.nan)

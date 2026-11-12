@@ -15,6 +15,17 @@ Only the scenes some fix uses are loaded. Other keys: df_uid, df_dir, out_dir, o
 strict_scene_coverage, mask_path / land_value / land_fill, scene_fill_value (scene nodata -> land_fill),
 input_channels + env_meta_json (raw-scene channel subset), store_paths (write file names, not arrays),
 sit_fuse_output (relabel cluster ids and write <output_uid>_class_mapper.pkl), cluster_scale.
+
+Cluster ids: id = rint(raster value * cluster_scale) (SIT-FUSE rasters store id / 1000). zero_label_valid: True keeps
+id 0 (a real cluster; SIT-FUSE no data is negative); the legacy default False treats it as invalid like before.
+Environment levels (sit_fuse_output: True; SIT-FUSE sit_fuse.postprocessing.cluster_hierarchy):
+  cluster_level: fine      heir ids as before (default)
+                 parent    first-stage cluster = fine // num_child (label_input: fine), or the no_heir rasters as
+                           they are (label_input: parent, scene_file_template -> <scene>.no_heir.clust.data_*)
+                 coarse    parent -> agglomerated cluster from hierarchy_json cut level_k
+  num_child (5 = SIT-FUSE cluster.heir.num_classes), label_input (fine | parent), hierarchy_json, level_k,
+  unmapped_parent (error | invalid). The class mapper keys are the level ids; <output_uid>_level.json records
+  the level settings. Use one out_dir / output_uid per level.
 """
 import argparse
 import glob
@@ -384,27 +395,90 @@ def gen_scene_list(yml_conf):
 # Cluster relabelling
 # ---------------------------------------------------------------------------
 
-def _quantise(arr, scale):
+def _quantise(arr, scale, zero_valid=False):
+    """Raster values -> int64 ids, -1 = invalid (NaN, negative, and 0 unless zero_valid)."""
     arr = np.asarray(arr, dtype=np.float64)
     q = np.full(arr.shape, -1, dtype=np.int64)
-    valid = np.isfinite(arr) & (arr > 0.0)
+    valid = np.isfinite(arr) & ((arr >= 0.0) if zero_valid else (arr > 0.0))
     q[valid] = np.rint(arr[valid] * scale).astype(np.int64)
-    q[valid & (q <= 0)] = -1
+    q[valid & ((q < 0) if zero_valid else (q <= 0))] = -1
     return q
 
 
+LEVELS = ("fine", "parent", "coarse")
+
+
+def level_spec(yml_conf):
+    """Level settings from the config (None = legacy fine ids). Loads the coarse map from hierarchy_json."""
+    lv = yml_conf.get("cluster_level", "fine") or "fine"
+    if lv not in LEVELS:
+        raise ValueError(f"cluster_level must be one of {LEVELS}, got {lv}")
+    spec = dict(level=lv, num_child=int(yml_conf.get("num_child", 5)), label_input=yml_conf.get("label_input", "fine"),
+                scale=yml_conf.get("cluster_scale", 1000), zero_valid=bool(yml_conf.get("zero_label_valid", False)),
+                unmapped=yml_conf.get("unmapped_parent", "error"), level_k=None, hierarchy_json=None, keys=None)
+    if spec["label_input"] not in ("fine", "parent"):
+        raise ValueError("label_input must be fine | parent")
+    if lv == "fine" and spec["label_input"] != "fine":
+        raise ValueError("cluster_level fine needs fine (heir) rasters (label_input: fine)")
+    if lv == "coarse":
+        spec["hierarchy_json"], spec["level_k"] = yml_conf["hierarchy_json"], int(yml_conf["level_k"])
+        with open(spec["hierarchy_json"]) as f:
+            h = json.load(f)
+        cut = h["cuts"].get(str(spec["level_k"]))
+        if cut is None:
+            raise ValueError(f"{spec['hierarchy_json']}: no cut K = {spec['level_k']} (have {sorted(map(int, h['cuts']))})")
+        for k in ("num_child", "label_scale"):
+            if k in h and float(h[k]) != float(spec["num_child" if k == "num_child" else "scale"]):
+                raise ValueError(f"hierarchy {k} = {h[k]} differs from this config")
+        m = {int(p): int(c) for p, c in cut.items()}
+        spec["keys"] = np.array(sorted(m), dtype=np.int64)
+        spec["vals"] = np.array([m[k] for k in spec["keys"]], dtype=np.int64)
+    return spec
+
+
+def level_ids(arr, spec):
+    """Raster -> int64 ids at the configured level, -1 = invalid."""
+    q = _quantise(arr, spec["scale"], spec["zero_valid"])
+    if spec["level"] == "fine":
+        return q
+    par = q if spec["label_input"] == "parent" else np.where(q >= 0, q // spec["num_child"], -1)
+    if spec["level"] == "parent":
+        return par
+    out = np.full(par.shape, -1, dtype=np.int64)
+    v = par >= 0
+    keys = spec["keys"]
+    j = np.clip(np.searchsorted(keys, par[v]), 0, len(keys) - 1)
+    hit = keys[j] == par[v]
+    if not hit.all() and spec["unmapped"] == "error":
+        bad = np.unique(par[v][~hit])
+        raise ValueError(f"{len(bad)} parent clusters not in {spec['hierarchy_json']}, e.g. {bad[:10].tolist()} "
+                         "(rebuild the hierarchy over every scene, or unmapped_parent: invalid)")
+    res = np.full(j.shape, -1, dtype=np.int64)
+    res[hit] = spec["vals"][j[hit]]
+    out[v] = res
+    return out
+
+
+def _spec(scale_or_spec):
+    if isinstance(scale_or_spec, dict):
+        return scale_or_spec
+    return dict(level="fine", scale=scale_or_spec, zero_valid=False)
+
+
 def build_class_mapper(scenes, scale=1000):
-    """Valid (> 0) quantised cluster ids -> 0..K-1. Invalid (<= 0, land, nodata) -> -1."""
-    lst = np.unique(np.concatenate([np.unique(_quantise(s, scale)) for s in scenes]))
-    keys = lst[lst > 0]
+    """Valid quantised (level) ids -> 0..K-1. Invalid (land, nodata, unmapped) -> -1.
+    scale: cluster_scale (legacy fine ids, id 0 invalid) or a level_spec dict."""
+    spec = _spec(scale)
+    lst = np.unique(np.concatenate([np.unique(level_ids(s, spec)) for s in scenes]))
+    keys = lst[lst >= 0]
     return keys
 
 
 def remap_clusters(arr, keys, scale=1000):
     """Vectorised remap (no chained in-place relabelling). Returns int16 with -1 for invalid."""
-    q = _quantise(arr, scale)
+    q = level_ids(arr, _spec(scale))
     out = np.full(q.shape, -1, dtype=np.int16)
-    valid = q > 0
+    valid = q >= 0
     idx = np.searchsorted(keys, q[valid])
     idx_c = np.clip(idx, 0, len(keys) - 1)
     unknown = keys[idx_c] != q[valid]
@@ -419,18 +493,25 @@ def compress_clusters(yml_conf):
     df_dir = yml_conf["df_dir"]
     out_dir = yml_conf["out_dir"]
     output_uid = yml_conf["output_uid"]
-    scale = yml_conf.get("cluster_scale", 1000)
+    scale = level_spec(yml_conf)
 
     # Mapper over every scene of the calendar (not only the tracked days), one scene in memory at a time.
     keys = np.zeros(0, dtype=np.int64)
     for t, fname in sorted(scene_files(yml_conf).items()):
         keys = np.union1d(keys, build_class_mapper([_load_scene(fname)[0]], scale))
+    if len(keys) > np.iinfo(np.int16).max:
+        raise ValueError(f"{len(keys)} clusters do not fit the int16 state maps")
     mapper = {float(k): i for i, k in enumerate(keys)}
     mapper[-1.0] = -1
-    print("MAPPER: K =", len(keys), "valid clusters (set n_clusters >= K; -1 = invalid)")
+    print(f"MAPPER ({scale['level']}): K =", len(keys), "valid clusters (set n_clusters >= K; -1 = invalid)")
     pprint(mapper)
     with open(os.path.join(out_dir, output_uid + "_class_mapper.pkl"), "wb") as f:
         pickle.dump(mapper, f, protocol=pickle.HIGHEST_PROTOCOL)
+    info = {k: scale[k] for k in ("level", "num_child", "label_input", "scale", "zero_valid", "level_k",
+                                  "hierarchy_json", "unmapped")}
+    info.update(n_clusters=int(len(keys)), level_ids=[int(k) for k in keys])
+    with open(os.path.join(out_dir, output_uid + "_level.json"), "w") as f:
+        json.dump(info, f, indent=1)
 
     with open(os.path.join(df_dir, df_uid + "_dfs.pkl"), "rb") as f:
         movement_dfs = pd.read_pickle(f)
@@ -497,6 +578,9 @@ def merge_compressed_maps(yml_conf):
 
 def run(yml_conf):
     """Full step: match tracks to scenes, (sit_fuse_output) relabel cluster ids 0..K-1, merge per-key pickles."""
+    if (yml_conf.get("cluster_level") or "fine") != "fine" and not yml_conf.get("sit_fuse_output", False):
+        raise ValueError("cluster_level parent / coarse needs sit_fuse_output: True")
+    level_spec(yml_conf)             # fail early on a bad level / hierarchy before matching tracks
     gen_scene_list(yml_conf)
     if yml_conf.get("sit_fuse_output", False) and not yml_conf.get("store_paths", False):
         compress_clusters(yml_conf)
