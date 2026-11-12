@@ -3,8 +3,8 @@
 #   python -m naturenet.environment.merge_whale_years --inputs ... --out <movement_csv>   (one time)
 #   python -m naturenet.environment.movement_preprocess_pipeline -y config/v2/environment/whales_movement_preprocess_v2.yaml
 # -> /data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517{_dfs.pkl, _dfs_params.json, _<key>_actions.pkl, _<key>_grid.pkl, ...}
-# uids are unchanged. A uid in both years is one animal: one key, with segments split at the 2016 gap
-# (max_gap_days), and one CV fold.
+# uids are year-prefixed (2015_825, 2017_825__aug3), so the same tag id in two years gives two animals
+# (two keys, folds assigned independently). orig_uid and year keep the input values.
 
 movement_csv: "/data/nlahaye/NatureNet/Blue_Whale_In/Bmu_2015_2017CA.augmented.land_jittered.csv"
 

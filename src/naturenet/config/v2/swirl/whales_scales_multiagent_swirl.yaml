@@ -20,7 +20,7 @@ require_full_trans_prob: True
 seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
 segment_policy: "variable"
 min_seq_len: 10
-n_folds: 5                  # 39 animals (2015 + 2017) -> 7-8 per test fold (folds group by base id, so __aug copies stay together)
+n_folds: 5                  # 44 animals (2015 + 2017, <year>_<uid>) -> 8-9 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
 # --- end shared data block ---
@@ -76,10 +76,11 @@ multiagent:
     # step 3: durations with partner-driven hazards (beta; alpha too when K > 2)
     - {name: S3_N1_dur, step: 3, order: 1, durations: on}
     - {name: S3_N2_dur_R2, step: 3, order: 2, durations: on, hierarchy: on}
-  # animals: null -> all 39 animals (2015 + 2017; partners only within a year). heldout_animals below are the
-  # 2017 analysis; 825 (4 d in 2017) and 5800 (8 d) only act as partners. Add 2015 ids to test 2015 as well.
-  # SWIRL backend: the 10 best-connected held-out animals keep runtime manageable (all 39 animals still act as partners)
-  heldout_animals: ["10826", "847", "1385", "835", "845", "4176", "10831", "841", "5840", "5910"]
+  # animals: null -> all 44 animals (2015 + 2017; ids are <year>_<uid>, partners only within a year).
+  # heldout_animals below are the 2017 analysis; 2017_825 (4 d) and 2017_5800 (8 d) only act as partners.
+  # Add 2015_<uid> ids to test 2015 as well; a bare "825" would match both 2015_825 and 2017_825.
+  # SWIRL backend: the 10 best-connected held-out animals keep runtime manageable (all 44 animals still act as partners)
+  heldout_animals: ["2017_10826", "2017_847", "2017_1385", "2017_835", "2017_845", "2017_4176", "2017_10831", "2017_841", "2017_5840", "2017_5910"]
   max_aug: 2                  # originals + __aug1..2 per whale (10 copies -> 11x data and 121x kernel pairs)
   window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv", split_gap_days: 30}
   # time-shift null calendar: one season per tracking year (scene days split at gaps > 30 d -> 2015, 2017);

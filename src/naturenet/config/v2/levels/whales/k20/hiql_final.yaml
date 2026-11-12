@@ -20,7 +20,7 @@ require_full_trans_prob: True
 seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
 segment_policy: "variable"
 min_seq_len: 10
-n_folds: 5                  # 39 animals (2015 + 2017) -> 7-8 per test fold (folds group by base id, so __aug copies stay together)
+n_folds: 5                  # 44 animals (2015 + 2017, <year>_<uid>) -> 8-9 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
 # --- end shared data block ---

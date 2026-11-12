@@ -43,7 +43,9 @@ def _date_axis(ax):
 
 
 def _short(an):
-    return str(an).split("_")[-1]
+    """'<df_run_uid>_825' -> '825'; year-prefixed ids keep the year: '<df_run_uid>_2015_825' -> '2015_825'."""
+    p = str(an).split("_")
+    return "_".join(p[-2:]) if len(p) >= 2 and p[-2].isdigit() and 1980 <= int(p[-2]) <= 2100 else p[-1]
 
 
 def plot_concurrency(d, conf, path, final=None):

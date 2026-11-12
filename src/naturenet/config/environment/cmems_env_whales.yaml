@@ -15,7 +15,7 @@ time:
   write_days: track    # track = only days with fixes (+/- pad); all = every day in [start, end]
                        # (track: 2016 has no fixes, so its days are neither pulled nor written)
   tracks:
-    # 2015 + 2017 tracks, merged once with environment/merge_whale_years.py (uids unchanged)
+    # 2015 + 2017 tracks, merged once with environment/merge_whale_years.py (uids <year>_<uid>)
     - {path: /data/nlahaye/NatureNet/Blue_Whale_In/Bmu_2015_2017CA.augmented.land_jittered.csv, time_col: timestamp, lon_col: longitude, lat_col: latitude}
 
 pull:

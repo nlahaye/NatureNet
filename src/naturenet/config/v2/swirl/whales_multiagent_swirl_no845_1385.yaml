@@ -17,7 +17,7 @@ require_full_trans_prob: True
 seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
 segment_policy: "variable"
 min_seq_len: 10
-n_folds: 5                  # 39 animals (2015 + 2017) -> 7-8 per test fold (folds group by base id, so __aug copies stay together)
+n_folds: 5                  # 44 animals (2015 + 2017, <year>_<uid>) -> 8-9 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
 # --- end shared data block ---
@@ -50,10 +50,11 @@ multiagent:
     epochs: 50                # stage 1 (S-1 EM) = Phase B / C S-1 schedule (was 30)
     epochs_2: 30              # stage 2 (EM with temps_final) = Phase B / C (was 20)
     coupled_iters: 10         # EM iterations per mean-field outer iteration (n_outer)
-  # animals: 845 and 1385 dropped from the data (so they also stop acting as partners; 1385 in both years)
+  # animals: 845 and 1385 dropped from the data (2017 tags; they also stop acting as partners). 2015_1385 is kept
   # 19 held-out whales (21 minus 845 and 1385)
-  heldout_animals: ["10826", "847", "835", "4176", "10831", "841", "5840", "5910", "5803", "827", "826", "831", "5921", "10840", "5648", "5670", "5679", "10830", "23031"]
-  animals: ["10826", "10830", "10831", "10840", "23031", "4176", "5648", "5670", "5679", "5800", "5803", "5840", "5910", "5921", "825", "826", "827", "831", "835", "841", "847", "838", "840", "849", "4177", "5640", "5650", "5678", "5700", "5701", "5726", "5736", "5823", "5838", "5841", "10839", "23033"]   # 37 of 39 animals (2017 list + 2015-only ids)
+  heldout_animals: ["2017_10826", "2017_847", "2017_835", "2017_4176", "2017_10831", "2017_841", "2017_5840", "2017_5910", "2017_5803", "2017_827", "2017_826", "2017_831", "2017_5921", "2017_10840", "2017_5648", "2017_5670", "2017_5679", "2017_10830", "2017_23031"]
+  animals: ["2017_10826", "2017_10830", "2017_10831", "2017_10840", "2017_23031", "2017_4176", "2017_5648", "2017_5670", "2017_5679", "2017_5800", "2017_5803", "2017_5840", "2017_5910", "2017_5921", "2017_825", "2017_826", "2017_827", "2017_831", "2017_835", "2017_841", "2017_847",
+            "2015_825", "2015_831", "2015_838", "2015_840", "2015_849", "2015_1385", "2015_4177", "2015_5640", "2015_5650", "2015_5678", "2015_5700", "2015_5701", "2015_5726", "2015_5736", "2015_5823", "2015_5838", "2015_5840", "2015_5841", "2015_10839", "2015_23031", "2015_23033"]   # 42 of 44 animals (2017 without 845 / 1385, all 2015)
   max_aug: 2                  # originals + __aug1..2 per whale (10 copies -> 11x data and 121x kernel pairs)
   window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv", split_gap_days: 30}
   # time-shift null calendar: one season per tracking year (scene days split at gaps > 30 d -> 2015, 2017);
