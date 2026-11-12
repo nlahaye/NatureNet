@@ -120,8 +120,11 @@ def _runs(idx_days, max_len):
 
 
 def make_sources(cfg, opener=open_lazy):
-    margin = float(cfg.get("pull", {}).get("margin_deg", 0.5))
-    return [Source(s, cfg["grid"]["bbox"], margin, opener=opener) for s in cfg["sources"] if s.get("enabled", True)]
+    pc = cfg.get("pull", {})
+    margin = float(pc.get("margin_deg", 0.5))
+    service = pc.get("service", "arco-geo-series")
+    return [Source(s, cfg["grid"]["bbox"], margin, opener=opener, service=service)
+            for s in cfg["sources"] if s.get("enabled", True)]
 
 
 # ------------------------------------------------------------------ resolve

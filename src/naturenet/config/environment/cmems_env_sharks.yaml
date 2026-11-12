@@ -20,6 +20,8 @@ pull:
   workers: 4           # concurrent (source, block) reads
   dask_threads: 4      # chunk fetch threads per read
   zarr_concurrency: 4  # concurrent chunk requests per zarr read (zarr >= 3)
+  service: arco-geo-series   # ARCO layout (1-day chunks). auto = toolbox choice, which picks arco-time-series
+                             # (multi-year chunks) when no dates are given; per source `service:` overrides
   http_pool: null      # S3 connections per dataset; null = workers * dask_threads * zarr_concurrency (10..128)
   read_timeout: 60     # s without data before an S3 read fails (each request is retried up to 10 times)
   connect_timeout: 20  # s to open an S3 connection
