@@ -1,0 +1,109 @@
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/sharks_swirl_final.yaml;
+# only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
+# Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# Final single-animal SWIRL fit (sharks, S-1 at K = 3) for maps, time series and reward projection.
+#   python -m naturenet.models.irl.run_swirl               -y v2/swirl/sharks_swirl_final.yaml
+#   python -m naturenet.models.irl.plot_swirl_new          -y v2/swirl/sharks_swirl_final.yaml
+#   python -m naturenet.models.irl.reward_env_projection   -y v2/swirl/sharks_swirl_final.yaml -p v2/swirl/sharks_reward_env_projection.yaml --n_hidden 3
+# Same data block and training settings as the Phase B CV (seq_len 60, variable, min_seq_len 10). One seed (12345);
+# the CV already gives the uncertainty. Check n_states / actions against the Phase B YAML you ran.
+# --- shared data block (identical to the Phase B / C shark configs -> same sequences) ---
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v1_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
+df_run_uid: "hammerhead_v1" # step times / positions from <df_dir>/<df_run_uid>_dfs.pkl
+per_fold_trans_prob: True   # T from the training animals of each fold
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5                  # unused by the multi-agent runner (leave-one-animal-out), kept identical
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/folds/"
+# --- end shared data block ---
+
+
+seed: 12345                 # base seed; get_stats* runs use seed + run index
+n_hidden_init: 3
+n_hidden: 3   # Phase B best S-1 K
+emission_dim: 1
+latent_state_dim: 1
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/final/swirl/"
+run_uid: "SHARK_SWIRL_FINAL"
+
+# One entry per animal key: <df_run_uid>_<key>_actions.pkl / <df_run_uid>_<key>_states_abstract_env.pkl
+# (written by reprocess_env_stats_abstract). Lists, not single strings.
+# groups: ["183623"]        # optional animal id per file (default: parsed from the actions file name)
+
+# Global T, only used when per_fold_trans_prob is False
+
+# Sequences
+
+# Folds (shared by ARHMM and SWIRL, saved as <out_dir>/folds_<n>_seed<fold_seed>.json)
+
+# Final run (run_swirl.py): hold out animals
+holdout_fraction: 0.0   # train on every animal (test LLs come from the CV); 0.2 = holdout check
+# holdout_groups: ["183623"]
+
+# Training
+epochs_init: 50
+epochs_init_2: 30
+epochs: 50
+epochs_2: 30
+em_tol: null                # e.g. 1.0e-5 relative LL change for early stopping (null = fixed epochs)
+# --- Speed (see CHANGES_SPEED.md). Exact options first, then the ones that trade accuracy for time. ---
+s2_structured_vi: True      # exact: S-2 value iteration on T (S,A,S) + gather instead of the dense (S*M,A,S*M) new_T
+                            #   (M^2 less VI compute, no dense S-2 tensor on host/GPU). False = previous dense path.
+mstep_suff_stats: True      # exact: M-step objectives from per-E-step counts (independent of N and T)
+mstep_emit_method: "auto"   # BFGS for <= mstep_emit_bfgs_max_params rewards (S-1, as before), else L-BFGS-B (S-2).
+                            #   scipy BFGS's dense inverse Hessian costs ~1 s / iteration at K*S*M ~ 3000. "BFGS" = old.
+mstep_emit_bfgs_max_params: 1000
+mstep_emit_iters: 1000      # max optimizer iterations per M-step (generalised EM: 100-200 is usually enough because
+mstep_trans_iters: 1000     #   each M-step warm-starts from the previous one; 1000 = original)
+max_train_seqs: null        # e.g. 400: per-fold representative subsample (per-animal share + length quantiles,
+max_test_seqs: null         #   fixed per fold across K / runs). null = all sequences.
+temps_init: null            # default all 1
+temps_final: 1.0
+use_init_reward: False      # warm-start final rewards from the *_init1 reward
+run_s2: False   # S-2 at K = 5 for whales (Table 1); sharks: S-1 only
+s2_max_dense_entries: 2.0e+8
+cache_fold_inputs: True
+s2_index_emissions: True     # S-2 emissions from int indices (x*M+slot) instead of dense (N,T,S*M) one-hots; same LLs,
+                             # far less GPU memory. False = previous dense one-hots
+overwrite: False            # False = skip folds whose outputs exist (resume)
+
+# get_stats* loops (K in [min_latent, max_latent] inclusive)
+
+run_arhmm: True
+arhmm_pseudo_count: 1.0   # = the Phase B pc1T run
+arhmm_pseudo_support: "T"   # = the Phase B pc1T run
+arhmm_pseudo_floor: 1.0e-5   # = the Phase B pc1T run
+run_swirl_init: True
+run_swirl_final: True
+arhmm_epochs: 100
+
+# Plots / time series (plot_swirl_new) and reward projection (reward_env_projection) read the final files
+swirl_model: "linear"
+swirl_orders: ["s1"]
+splits: ["train"]           # holdout_fraction 0: no test files
+lon_bounds: [-100, -60]     # = v2 env grid
+lat_bounds: [20, 40]
+plot_trajs: True
+plot_gifs: False            # True + envs pickle for reward / env GIFs
+# input_keys = input_channels of the v2 sample step; needs <df_dir>/hammerhead_v1_<key>_states_input.pkl from
+#   python -m naturenet.environment.sample_env_inputs -y config/v2/environment/sharks_sample_inputs_v2.yaml
+# Post-hoc analyses only (series export, plots, correlation, exploit / explore, reward projection): fixes outside
+# the environmental scene calendar are dropped. Fixes inside it with no env data (land / nodata) keep the
+# absorbing state. Fits / LLs are unchanged (still trained with invalid_state: absorbing). Same calendar as
+# config/v2/environment/sharks_sample_inputs_v2.yaml (scene_index_csv / nearest_scene_days).
+env_window:
+  scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_scene_index.csv"   # first .. last complete v2 scene day
+  nearest_days: 0
+plot_inputs: True
+input_keys: ["__run_sync_v2_configs__"]   # synced: = input_channels of the sample_inputs_v2 step
+reward_normalize: "global"
+plot_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/final/swirl/plots/"
+# envs: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/envs.pkl"
+# env_lon_bounds / env_lat_bounds: extent of the env maps, if different from the track bounds

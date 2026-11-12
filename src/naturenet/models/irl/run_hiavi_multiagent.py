@@ -174,8 +174,25 @@ def original_mask(pc):
     return np.array([re.search(r"__aug\d+", k) is None for k in pc.key])
 
 
+def resolve_window(w):
+    """multiagent.window -> (first_day, last_day) date strings (inclusive), or None.
+    Accepts [start, end] or {scene_index_csv: <cmems_env index>, complete_scenes_only: True} (first .. last usable
+    scene day, so the time-shift null calendar follows the environment without hardcoded dates)."""
+    if not w:
+        return None
+    if isinstance(w, dict):
+        idx = pd.read_csv(w["scene_index_csv"])
+        if w.get("complete_scenes_only", True) and "complete" in idx.columns:
+            idx = idx[idx["complete"].map(lambda v: v is True or str(v).strip().lower() in ("true", "1", "yes"))]
+        if not len(idx):
+            raise ValueError(f"no usable scenes in {w['scene_index_csv']}")
+        d = pd.to_datetime(idx["date"])
+        return str(d.min().date()), str(d.max().date())
+    return w[0], w[1]
+
+
 def window_days(conf, pc):
-    w = conf.get("window")
+    w = resolve_window(conf.get("window"))
     if w:
         return float(_to_days([w[0]])[0]), float(_to_days([w[1]])[0]) + 1.0
     return float(np.nanmin(pc.times)), float(np.nanmax(pc.times)) + 1.0

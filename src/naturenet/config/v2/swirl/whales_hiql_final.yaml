@@ -1,0 +1,67 @@
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/whales_hiql_final.yaml;
+# only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
+# Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# Final single-animal HIQL (HIAVI) fit (whales, K = 3) for maps, time series and reward projection.
+#   python -m naturenet.models.irl.run_hiavi_kfold        -y v2/swirl/whales_hiql_final.yaml --holdout
+#   python -m naturenet.models.irl.plot_hiavi             -y v2/swirl/whales_hiql_final.yaml
+#   python -m naturenet.models.irl.reward_env_projection  -y v2/swirl/whales_hiql_final.yaml -p v2/swirl/whales_reward_env_projection.yaml --n_hidden 3   (set model: hiavi in the -p file)
+# Same data block and HIAVI settings as the Phase B CV. Check n_states / actions against the Phase B YAML you ran.
+# --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+df_run_uid: "SWIRL_WHALE_v1"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+
+
+seed: 12345                 # base seed; get_stats_hiavi runs use seed + run index
+n_hidden_init: 3
+n_hidden: 3
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/final/hiql/"
+run_uid: "WHALE_HIQL_FINAL"
+
+holdout_fraction: 0.0   # train on every animal
+overwrite: False
+
+hiavi_discount: 0.9
+hiavi_restarts: 10          # best restart by TRAIN LL
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"        # s = states[:, 1:-1], comparable to SWIRL
+run_hiavi_kfold: False
+run_hiavi_final: True
+
+
+lon_bounds: [-126, -110]     # = v2 env grid
+lat_bounds: [22, 40]
+splits: ["train"]
+plot_trajs: True
+plot_gifs: False
+# input_keys = input_channels of the v2 sample step; needs <df_dir>/SWIRL_WHALE_v1_<key>_states_input.pkl from
+#   python -m naturenet.environment.sample_env_inputs -y config/v2/environment/whales_sample_inputs_v2.yaml
+# Post-hoc analyses only: fixes outside the v2 scene calendar are dropped (fits unchanged).
+env_window:
+  scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv"   # first .. last complete v2 scene day
+  nearest_days: 0
+plot_inputs: True
+input_keys: ["__run_sync_v2_configs__"]   # synced: = input_channels of the sample_inputs_v2 step
+static_layers: {}
+reward_normalize: "none"
+hiavi_plot_series: True
+hiavi_cv_plot: False   # CV curves come from the Phase B dir / plot_ll_comparison
+plot_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/final/hiql/plots/"

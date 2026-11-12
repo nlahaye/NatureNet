@@ -1,3 +1,21 @@
+"""
+Match movement fixes to daily environment scenes (SIT-FUSE cluster maps or raw scenes) and write
+<out_dir>/<output_uid><key>.pkl per track plus the merged <out_dir><output_uid><df_uid>.pkl.
+
+    python -m naturenet.models.feature_rep.env_data_format -y config/v2/environment/sharks_env_format_clusters_v2.yaml
+
+Scene calendar (no hardcoded dates):
+  scene_index_csv: cmems_env <tag>_scene_index.csv (t, date, path, complete); gaps allowed, incomplete rows
+                   skipped unless complete_scenes_only: False. Preferred for the v2 scenes.
+  or scene_dates_file (JSON {"i": date}) + n_days, or start_time + n_days (legacy, contiguous days).
+  scene_window: {start, end} optional inclusive restriction.
+Scene files: scene_file_template with {i} = t (wildcards allowed, one match per t) or glob_start / glob_end.
+  allow_missing_scenes: True drops calendar days without a file (e.g. no SIT-FUSE output) instead of failing.
+Only the scenes some fix uses are loaded. Other keys: df_uid, df_dir, out_dir, output_uid, nearest_scene_days,
+strict_scene_coverage, mask_path / land_value / land_fill, scene_fill_value (scene nodata -> land_fill),
+input_channels + env_meta_json (raw-scene channel subset), store_paths (write file names, not arrays),
+sit_fuse_output (relabel cluster ids and write <output_uid>_class_mapper.pkl), cluster_scale.
+"""
 import argparse
 import glob
 import json
@@ -23,28 +41,55 @@ AUG_RE = re.compile(r"__aug\d+")
 # Scene discovery / loading
 # ---------------------------------------------------------------------------
 
-def _scene_file(yml_conf, i):
+def _scene_file(yml_conf, i, required=True):
     """
-    Exactly one file for day index i.
+    Exactly one file for day index i (None if missing and not required).
 
-    Preferred: ``scene_file_template`` with an ``{i}`` placeholder (exact name).
+    Preferred: ``scene_file_template`` with an ``{i}`` placeholder. Shell wildcards in the formatted name are
+    expanded (e.g. SIT-FUSE output names ".../cop_env_sharks_t{i}.zarr.clust.data_*clusters.no_geo.tif", where *
+    is the per-run cluster count); more than one match raises.
     Fallback: glob_start + i + glob_end, excluding matches where i is directly preceded or followed by
-    another digit (so "t1*" no longer matches t10, t11, ...). Raises unless exactly one file remains.
+    another digit (so "t1*" no longer matches t10, t11, ...).
     """
     tmpl = yml_conf.get("scene_file_template")
     if tmpl:
         fname = tmpl.format(i=i)
+        if glob.has_magic(fname):
+            hits = sorted(glob.glob(fname))
+            if len(hits) > 1:
+                raise ValueError(f"Day {i}: {fname} matches {len(hits)} files: {hits[:5]}")
+            fname = hits[0] if hits else fname
         if not os.path.exists(fname):
-            raise FileNotFoundError(fname)
+            if required:
+                raise FileNotFoundError(fname)
+            return None
         return fname
     gs, ge, si = yml_conf["glob_start"], yml_conf["glob_end"], str(i)
     cands = set(glob.glob(gs + si + ge))
     cands -= set(glob.glob(gs + si + "[0-9]" + ge))
     cands -= set(glob.glob(gs + "[0-9]" + si + ge))
     cands = sorted(cands)
+    if not cands and not required:
+        return None
     if len(cands) != 1:
         raise ValueError(f"Day {i}: expected exactly one scene file for {gs + si + ge}, found {cands}")
     return cands[0]
+
+
+def _channel_index(yml_conf):
+    """Channel positions for input_channels (names, resolved with env_meta_json["channels"]), or None = all."""
+    names = yml_conf.get("input_channels")
+    if not names:
+        return None
+    meta = yml_conf.get("env_meta_json")
+    if not meta:
+        raise ValueError("input_channels needs env_meta_json (channel order of the scenes)")
+    with open(meta) as f:
+        chans = list(json.load(f)["channels"])
+    bad = [n for n in names if n not in chans]
+    if bad:
+        raise ValueError(f"input_channels not in {meta}: {bad}")
+    return [chans.index(n) for n in names]
 
 
 def _load_scene(fname):
@@ -82,6 +127,60 @@ def _naive_day(x):
     if ts.tzinfo is not None:
         ts = ts.tz_convert("UTC").tz_localize(None)
     return ts.normalize()
+
+
+def _is_true(v):
+    return v is True or (isinstance(v, (int, np.integer, np.bool_)) and bool(v)) or \
+        str(v).strip().lower() in ("true", "1", "yes")
+
+
+def scene_calendar(yml_conf):
+    """
+    [(t, date)] of the scenes to use, t = the scene file index ({i} in scene_file_template).
+
+    scene_index_csv (written by naturenet.environment.cmems_env: columns t, date, path, complete) gives the
+    scene days directly, with gaps allowed; rows with complete == False are skipped unless
+    complete_scenes_only: False. Otherwise scene_dates_file / start_time + n_days as before.
+    Optional scene_window: {start: <date>, end: <date>} (inclusive) restricts either calendar.
+    """
+    csv = yml_conf.get("scene_index_csv")
+    if csv:
+        df = pd.read_csv(csv)
+        if yml_conf.get("complete_scenes_only", True) and "complete" in df.columns:
+            df = df[df["complete"].map(_is_true)]
+        cal = [(int(t), _naive_day(d)) for t, d in zip(df["t"], df["date"])]
+    else:
+        cal = list(enumerate(_scene_times(yml_conf)))
+    w = yml_conf.get("scene_window") or {}
+    if w.get("start") is not None:
+        cal = [c for c in cal if c[1] >= _naive_day(w["start"])]
+    if w.get("end") is not None:
+        cal = [c for c in cal if c[1] <= _naive_day(w["end"])]
+    if not cal:
+        raise ValueError("Empty scene calendar (check scene_index_csv / start_time / n_days / scene_window)")
+    days = [d for _, d in cal]
+    if len(set(days)) != len(days):
+        raise ValueError("Scene calendar has more than one scene for the same day")
+    return cal
+
+
+def scene_files(yml_conf, cal=None):
+    """{t: file} for the calendar. Missing files raise unless allow_missing_scenes: True (then they are
+    dropped with a warning, e.g. scenes SIT-FUSE did not run inference on)."""
+    cal = scene_calendar(yml_conf) if cal is None else cal
+    allow = yml_conf.get("allow_missing_scenes", False)
+    files, missing = {}, []
+    for t, _ in cal:
+        f = _scene_file(yml_conf, t, required=not allow)
+        if f is None:
+            missing.append(t)
+        else:
+            files[t] = f
+    if missing:
+        print(f"WARNING: {len(missing)}/{len(cal)} scene files missing (allow_missing_scenes), e.g. t={missing[:10]}")
+    if not files:
+        raise ValueError("No scene files found")
+    return files
 
 
 def coverage_report(movement_dfs, times, nearest_days=0, strict=True):
@@ -134,21 +233,31 @@ def _land_fill(yml_conf):
     return np.nan if (v is None or (isinstance(v, str) and v.lower() == "nan")) else float(v)
 
 
-def _load_scenes(yml_conf, apply_mask=True):
+def _load_scenes(yml_conf, files, apply_mask=True):
+    """{t: scene} for the given {t: file}, loaded one at a time (only the scenes the tracks use).
+    store_paths: True keeps the file names instead of the arrays (no loading, no mask)."""
+    if yml_conf.get("store_paths", False):
+        return dict(files)
     fill = _land_fill(yml_conf)
-    mask_ds = gdal.Open(yml_conf["mask_path"])
-    initial_water_mask = mask_ds.ReadAsArray()
-    land_value = yml_conf["land_value"]
-    resized_water_mask = None
+    chan = _channel_index(yml_conf)
+    land_value = yml_conf.get("land_value", 0)
+    mask_ds, initial_water_mask = None, None
+    if apply_mask and yml_conf.get("mask_path"):
+        mask_ds = gdal.Open(yml_conf["mask_path"])
+        initial_water_mask = mask_ds.ReadAsArray()
     land = None
 
-    scenes = []
-    for i in range(yml_conf["n_days"]):
-        fname = _scene_file(yml_conf, i)
+    scenes = {}
+    for t in sorted(files):
+        fname = files[t]
         dat, gt = _load_scene(fname)
-        if apply_mask:
+        if chan is not None:
+            if dat.ndim != 3:
+                raise ValueError(f"input_channels given but {fname} has shape {dat.shape}")
+            dat = dat[chan]
+        if mask_ds is not None:
             hw = dat.shape[-2:]
-            if resized_water_mask is None:
+            if land is None:
                 print("SHAPING WATER MASK", dat.shape)
                 _check_geotransform(mask_ds.GetGeoTransform(), initial_water_mask.shape, gt, hw)
                 # Nearest neighbour keeps the mask categorical (cubic created non-integer coast values).
@@ -163,8 +272,11 @@ def _load_scenes(yml_conf, apply_mask=True):
                 dat[:, land] = fill
             else:
                 dat[land] = fill
-        print("SCENE", i, "LOADED", fname)
-        scenes.append(dat)
+        nodata = yml_conf.get("scene_fill_value")   # e.g. -999999 in cmems_env scenes -> land_fill
+        if nodata is not None and np.issubdtype(dat.dtype, np.floating):
+            dat[dat == float(nodata)] = fill
+        print("SCENE", t, "LOADED", fname)
+        scenes[t] = dat
     return scenes
 
 
@@ -189,12 +301,12 @@ def _segments_match(segs_a, segs_b):
     return True
 
 
-def _match_track(segments, scenes, date_to_idx, nearest_days, sorted_dates):
-    """Per segment, list (len = n fixes) of the scene for that fix's date, or None if out of range."""
+def _match_track(segments, date_to_idx, nearest_days, sorted_dates):
+    """Per segment, list (len = n fixes) of the scene index t for that fix's date, or None if out of range."""
     out, n_missing = [], 0
     for seg in segments:
         dates = _fix_dates(seg)
-        maps = []
+        idxs = []
         for dt in dates:
             idx = date_to_idx.get(dt)
             if idx is None and nearest_days > 0 and len(sorted_dates):
@@ -208,10 +320,8 @@ def _match_track(segments, scenes, date_to_idx, nearest_days, sorted_dates):
                 idx = None if best is None else best[1]
             if idx is None:
                 n_missing += 1
-                maps.append(None)
-            else:
-                maps.append(scenes[idx])
-        out.append(maps)
+            idxs.append(idx)
+        out.append(idxs)
     return out, n_missing
 
 
@@ -224,17 +334,25 @@ def gen_scene_list(yml_conf):
     df_dir = yml_conf["df_dir"]
     out_dir = yml_conf["out_dir"]
     output_uid = yml_conf["output_uid"]  # "final_env_maps_"
+    if yml_conf.get("store_paths", False) and yml_conf.get("sit_fuse_output", False):
+        raise ValueError("store_paths: True writes file names; cluster compression needs sit_fuse_output: False")
     nearest_days = int(yml_conf.get("nearest_scene_days", 0))
 
-    times = _scene_times(yml_conf)
-    with open(os.path.join(df_dir, df_uid + "_dfs.pkl"), "rb") as f:
-        coverage_report(pd.read_pickle(f), times, nearest_days, strict=yml_conf.get("strict_scene_coverage", True))
-    scenes = _load_scenes(yml_conf)
-    date_to_idx = {t: i for i, t in enumerate(times)}
-    sorted_dates = sorted(date_to_idx)
-
+    files = scene_files(yml_conf)
+    cal = [(t, d) for t, d in scene_calendar(yml_conf) if t in files]
     with open(os.path.join(df_dir, df_uid + "_dfs.pkl"), "rb") as f:
         movement_dfs = pd.read_pickle(f)
+    coverage_report(movement_dfs, [d for _, d in cal], nearest_days,
+                    strict=yml_conf.get("strict_scene_coverage", True))
+    date_to_idx = {d: t for t, d in cal}
+    sorted_dates = sorted(date_to_idx)
+
+    # Match first, then load only the scenes some fix uses.
+    matches = {uid: _match_track(movement_dfs[uid], date_to_idx, nearest_days, sorted_dates)
+               for uid in movement_dfs}
+    needed = {t for m, _ in matches.values() for seg in m for t in seg if t is not None}
+    print(f"{len(needed)}/{len(cal)} scenes used by the tracks")
+    scenes = _load_scenes(yml_conf, {t: files[t] for t in needed})
 
     for uid in movement_dfs:
         pkl_file = _pkl_path(out_dir, output_uid, uid)
@@ -250,7 +368,8 @@ def gen_scene_list(yml_conf):
             print(f"{uid}: segmentation differs from {orig}; processing separately")
 
         print("Matching movement tracks to scenes for track", uid)
-        scenes_per_uid, n_missing = _match_track(movement_dfs[uid], scenes, date_to_idx, nearest_days, sorted_dates)
+        idxs, n_missing = matches[uid]
+        scenes_per_uid = [[None if t is None else scenes[t] for t in seg] for seg in idxs]
         n_fix = sum(len(s) for s in movement_dfs[uid])
         if n_missing:
             print(f"WARNING: {uid}: {n_missing}/{n_fix} fixes fall outside the scene dates; env map set to None")
@@ -302,9 +421,10 @@ def compress_clusters(yml_conf):
     output_uid = yml_conf["output_uid"]
     scale = yml_conf.get("cluster_scale", 1000)
 
-    scenes = _load_scenes(yml_conf, apply_mask=False)
-    keys = build_class_mapper(scenes, scale)
-    del scenes
+    # Mapper over every scene of the calendar (not only the tracked days), one scene in memory at a time.
+    keys = np.zeros(0, dtype=np.int64)
+    for t, fname in sorted(scene_files(yml_conf).items()):
+        keys = np.union1d(keys, build_class_mapper([_load_scene(fname)[0]], scale))
     mapper = {float(k): i for i, k in enumerate(keys)}
     mapper[-1.0] = -1
     print("MAPPER: K =", len(keys), "valid clusters (set n_clusters >= K; -1 = invalid)")
@@ -375,16 +495,22 @@ def merge_compressed_maps(yml_conf):
         pickle.dump(final_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-y", "--yaml", help="YAML file for fusion info.")
-    args = parser.parse_args()
-
-    yml_conf = read_yaml(args.yaml)
-
+def run(yml_conf):
+    """Full step: match tracks to scenes, (sit_fuse_output) relabel cluster ids 0..K-1, merge per-key pickles."""
     gen_scene_list(yml_conf)
-
-    if yml_conf["sit_fuse_output"]:
+    if yml_conf.get("sit_fuse_output", False) and not yml_conf.get("store_paths", False):
         compress_clusters(yml_conf)
-
     merge_compressed_maps(yml_conf)
+
+
+def main(argv=None, defaults=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-y", "--yaml", required=True, help="env_data_format YAML")
+    args = parser.parse_args(argv)
+    conf = dict(defaults or {})
+    conf.update(read_yaml(args.yaml))
+    run(conf)
+
+
+if __name__ == "__main__":
+    main()

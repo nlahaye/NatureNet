@@ -1,0 +1,118 @@
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/whales_scales_multiagent_swirl.yaml;
+# only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
+# Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# Phase D2b (whales): multi-agent SWIRL decision scales at K = 5 (copy of whales_scales_multiagent.yaml).
+# Multi-agent SWIRL has no S-2 backend; swirl_scales N2 (additive, order 2) is the Phase C winner and the S-2 analogue.
+#   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/whales_scales_multiagent_swirl.yaml --variant S1_N1 S1_N2 --skip_null
+#   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/whales_scales_multiagent_swirl.yaml --variant <passing>
+#   python -m naturenet.models.irl.plot_scales_multiagent -y v2/swirl/whales_scales_multiagent_swirl.yaml --K 5
+# Unlike Phase C, N2 is not warm-started from N1 here: both start from the ARHMM init with the same schedule, so
+# S1_N2 - S1_N1 (independent models) is also an equal-iteration check of the Phase C N2 gain.
+# Run the nulls only for variant / kernel pairs that pass (i) pooled gain > 0 and (ii) > half of animals improved.
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+df_run_uid: "SWIRL_WHALE_v1"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+
+seed: 12345
+n_hidden: 5                  # = Ks (cosmetic; Ks sets K)
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/multiagent_scales/"
+run_uid: "WHALE_SCALES_MA_SWIRL"
+
+
+
+hiavi_discount: 0.9
+hiavi_restarts: 10
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"
+
+multiagent:
+  scales_backends: ["swirl_scales"]
+  swirl:                      # SWIRL-scales init / schedule (as swirl_multiagent)
+    init: "arhmm"
+    arhmm_epochs: 50
+    restarts: 2
+    epochs: 50                # = Phase B / C S-1 schedule (was 30)
+    epochs_2: 30              # (was 20)
+    coupled_iters: 10
+    ctx_source: independent   # partner context from own-evidence posteriors (mean_field: coupled, echo-prone)
+  scales_defaults:            # shared by every variant; "on" toggles take these blocks
+    reward_l2: 1.0
+    reward_tol: null          # 1e-4 at order 1, 1e-8 above
+    context_min_count: 5      # = Phase C (k-grams seen >= 5 times in the training animals; was 3)
+    switch_history: {kind: "lags+decay", lags: 2, decay_steps: [3, 10], window: 10}   # = Phase C (was lags only)
+    durations: {max_duration: 12, hazard: "logistic", hazard_features: False, smooth: 1.0, l2: 1.0}   # = Phase C (l2 was 0.01)
+    hierarchy: {n_regimes: 2, sticky: 0.95, init_noise: 0.5}
+    hiql: {backoff: 5.0}      # HIQL: Dirichlet back-off of deep contexts to their parent (inf = order 1)
+    coupling: {fit_alpha: True, fit_beta: True, beta0: 0.0, tol: 1.0e-8}
+    coupled_iters: 10
+    ctx_source: independent   # partner context from own-evidence posteriors (mean_field: coupled, echo-prone)
+  scales_variants:
+    # step 1: order N + switching history, destination coupling (alpha)
+    - {name: S1_N1, step: 1, order: 1}
+    - {name: S1_N2, step: 1, order: 2}                       # Phase C N* (history / durations / regimes were null)
+    - {name: S1_N2_hist, step: 1, order: 2, switch_history: on}
+    - {name: S1_N3_hist, step: 1, order: 3, switch_history: on}
+    # step 2: per-animal regimes, shared alpha
+    - {name: S2_N1_R2, step: 2, order: 1, hierarchy: on}
+    - {name: S2_N2_R2, step: 2, order: 2, switch_history: on, hierarchy: on}
+    # step 3: durations with partner-driven hazards (beta; alpha too when K > 2)
+    - {name: S3_N1_dur, step: 3, order: 1, durations: on}
+    - {name: S3_N2_dur_R2, step: 3, order: 2, durations: on, hierarchy: on}
+  # animals: null -> all 23 tags (all inside the window); 825 (4 d) and 5800 (8 d) only act as partners
+  # SWIRL backend: the 10 best-connected held-out animals keep runtime manageable (all 23 tags still act as partners)
+  heldout_animals: ["10826", "847", "1385", "835", "845", "4176", "10831", "841", "5840", "5910"]
+  max_aug: 2                  # originals + __aug1..2 per whale (10 copies -> 11x data and 121x kernel pairs)
+  window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv"}   # time-shift null calendar = first .. last complete v2 scene day
+  Ks: [5]                                            # Phase C N* at K = 5
+  variants:
+    temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
+    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 20.0, max_km: 75.0}   # local (1215 pair-days < 20 km)
+    proximity_wide: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 50.0, max_km: 150.0}  # = hammerhead kernel
+  n_outer: 5                  # mean-field outer iterations (context <-> posteriors)
+  alpha0: 0.1                 # initial coupling
+  n_null: 20                  # time-shift replicates (swirl_scales cost)
+  null_variants: ["temporal", "proximity"]
+  null_min_shift_days: 20     # U(20, 135) d in the 155-d window (track spans 3-150 d)
+  n_null_sync: 500            # replicates for the synchrony index (no refit; cheap)
+  sync_variant: "temporal"
+  eval_include_aug: False     # score held-out ORIGINAL tracks only (copies are not independent data)
+  min_context_steps: 30       # warn if < 2 animals reach this many steps with partner context
+  # dfs_pkl: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_v1_dfs.pkl"
+
+
+# SWIRL keys (as in init_test_swirl.yaml)
+emission_dim: 1
+latent_state_dim: 1
+temps_final: 1.0              # all intentions at temperature 1 in stage 2, for every K (the default
+                              # [0.01, 1, ...] collapsed K=2 to one intention without kinematics in the synthetic test)
+em_tol: null
+
+# Kinematics: whale Argos steps are error-dominated at short dt (median apparent speed 6.3 km/h at 0.5-1 h vs
+# 1.7 km/h at 6-24 h). Run the action-only test first; enable kinematics on SSM-regularised tracks
+# (aniMotum / crawl, 4-6 h step, step_feature step_km), or as a sensitivity with min_dt_h 3 (45% of steps kept).
+kinematics:
+  enabled: False
+  step_feature: "speed_kmh"
+  step_dist: "gamma"
+  zero_km: 0.05
+  min_dt_h: 3.0
+  max_speed_kmh: 15.0
+  label_margin: 0.5

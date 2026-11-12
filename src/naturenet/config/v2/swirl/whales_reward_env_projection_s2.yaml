@@ -1,0 +1,25 @@
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/whales_reward_env_projection_s2.yaml;
+# only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
+# Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# Reward-to-environment projection and use vs availability (Phase E, interpretability).
+#   python -m naturenet.models.irl.reward_env_projection -y v2/swirl/whales_swirl_final.yaml   (or *_hiql_final.yaml with model: hiavi) \
+#       -p v2/swirl/whales_reward_env_projection_s2.yaml --n_hidden 5
+# The run yml supplies out_dir / run_uid / seed / actions / df files; this file only adds the block below.
+reward_env_projection:
+  model: linear               # linear | nn | hiavi (final-run reward files from swirl_track_series.SWIRL_FILES)
+  order: s2                   # S-2 (state reward = mean over valid predecessors)
+  tag: ""                     # "" = final run; "_KF_k" = fold k
+  fold_tags: []               # e.g. ["_KF_0", "_KF_1", "_KF_2", "_KF_3", "_KF_4"] -> coefficient stability across folds
+  profiles_csv: "/data/nlahaye/output/Learnergy/COP_WHALE_V2/xai/interpret/cluster_profiles_wide.csv"   # <SIT-FUSE output.out_dir>/xai/interpret (cluster_interpret)
+  class_mapper: "/data/nlahaye/NatureNet/Blue_Whale_v2/env_clusters/final_env_maps__class_mapper.pkl"   # env_data_format (clusters) mapper
+  cluster_scale: 1000         # as in env_data_format (keys = rint(label * cluster_scale))
+  profile_index: cluster      # "cluster" = SIT-FUSE label values; "state" = rows already indexed by state id
+  variables: ["__run_sync_v2_configs__"]   # synced: subset of SIT-FUSE xai.feature_names (cluster_profiles_wide columns)
+  weight_by_use: True         # weight states by how often tracked animals occupy them
+  min_state_visits: 1
+  alphas: [0.01, 0.1, 1.0, 10.0, 100.0]
+  n_boot: 500                 # bootstrap over states (coefficient CIs)
+  n_bins: 5                   # quantile bins for partial dependence
+  n_boot_animals: 500         # bootstrap over animals (use vs availability CIs)
+  splits: [train]          # final runs use holdout_fraction 0 (no test files)
+  out_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/final/swirl/reward_env_projection_s2/

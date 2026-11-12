@@ -1,0 +1,51 @@
+# Raw v2 inputs at each fix -> /data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v1_<key>_states_input.pkl (plots, series export, correlation).
+#   python -m naturenet.environment.sample_env_inputs -y config/v2/environment/sharks_sample_inputs_v2.yaml
+# Replaces env_data_format (raw scenes) + movement_preprocess_pipeline gather_input: reads each scene day once.
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
+df_run_uid: "hammerhead_v1"
+scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_scene_index.csv"
+complete_scenes_only: True
+env_meta_json: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_env_meta.json"
+nearest_scene_days: 0
+workers: 4
+uids: null
+# Curated subset for plots / correlation / reward projection (all ~110 channels would swamp the correlation
+# and projection steps). sync_v2_configs resolves these names (shell patterns allowed) against the meta JSON,
+# drops absent ones, and writes the final list here, into input_keys and into reward_env_projection.variables.
+# null = every channel.
+input_channels_request:
+  - sst
+  - sst_anom30d
+  - grad_mag_sst
+  - bottomT
+  - sst_minus_bottomT
+  - strat_0_100m
+  - mlotst
+  - sos
+  - grad_mag_sos
+  - zos
+  - adt
+  - sla
+  - eke
+  - okubo_weiss_geo
+  - rossby_geo
+  - cur_speed_0m
+  - uo_0m
+  - vo_0m
+  - log10_CHL
+  - grad_mag_log10_CHL
+  - CHL_mean30d
+  - log10_KD490
+  - log10_npp
+  - log10_chl_model_0m
+  - o2_0m
+  - no3_0m
+  - VHM0
+  - wind_speed
+  - ekman_pumping
+  - depth_m
+  - slope_deg
+  - dist_coast_km
+  - dist_200m_isobath_km
+  - log_ship_density
+input_channels: null          # written by sync_v2_configs
