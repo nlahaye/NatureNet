@@ -158,7 +158,8 @@ features:
   - {op: log10, var: zooc, floor: 1.0e-4}
   - {op: grad_mag, var: sst}                      # thermal fronts, degC/km
   - {op: grad_mag, var: log10_CHL}                # chlorophyll fronts
-  - {op: grad_mag, var: sos}                      # salinity fronts
+  - {op: grad_mag, var: sos_0m, name: grad_mag_sos}   # salinity fronts (the MOB SSS product has a 1-level depth
+                                                       # axis, so its channels are sos_0m / dos_0m)
   - {op: grad_mag, var: adt}                      # jets / eddy edges
   - {op: speed, u: uo_0m, v: vo_0m, name: cur_speed_0m}
   - {op: speed, u: eastward_wind, v: northward_wind, name: wind_speed}

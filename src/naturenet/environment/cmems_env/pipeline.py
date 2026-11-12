@@ -404,7 +404,11 @@ def cmd_assemble(cfg):
             live_specs.append(sp)
             avail.add(n)
         else:
-            log.warning("feature %s skipped (inputs missing)", sp)
+            miss = [k for k in required_inputs(sp) if k not in avail]
+            hint = {k: sorted(c for c in avail if c.startswith(k + "_"))[:4] for k in miss}
+            hint = {k: v for k, v in hint.items() if v}
+            log.warning("feature %s skipped (inputs missing: %s)%s", sp, miss,
+                        f"; similar channels: {hint}" if hint else "")
     order = channel_order(cfg, raw, feat_names, snames)
     roll_specs = [s for s in live_specs if s["op"] in ROLL_OPS]
     other_specs = [s for s in live_specs if s["op"] not in ROLL_OPS]

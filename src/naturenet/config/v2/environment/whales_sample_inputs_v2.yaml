@@ -19,7 +19,7 @@ input_channels_request:
   - grad_mag_sst
   - strat_0_100m
   - mlotst
-  - sos
+  - sos_0m
   - adt
   - sla
   - eke
