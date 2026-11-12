@@ -27,6 +27,7 @@ def load_run(d, K):
     with open(os.path.join(d, "ma_summary.json")) as f:
         s = json.load(f)
     cv = pd.read_csv(os.path.join(d, "ma_cv.csv"))
+    print(cv["K"])
     return s, cv[cv["K"] == K], s["K"][str(K)]
 
 

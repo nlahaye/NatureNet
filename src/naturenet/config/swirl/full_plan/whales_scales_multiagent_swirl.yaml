@@ -6,7 +6,7 @@
 # Unlike Phase C, N2 is not warm-started from N1 here: both start from the ARHMM init with the same schedule, so
 # S1_N2 - S1_N1 (independent models) is also an equal-iteration check of the Phase C N2 gain.
 # Run the nulls only for variant / kernel pairs that pass (i) pooled gain > 0 and (ii) > half of animals improved.
-n_states: 75                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
+n_states: 99                # TODO: whale abstract-env n_clusters (+1 if invalid_state: absorbing)
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v1/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v1/"

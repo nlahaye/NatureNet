@@ -166,16 +166,31 @@ def build_bathymetry(cfg, grid, cmems_static=None):
 
 
 def build_ship_density(layers, grid):
-    """World Bank/IMF AIS density rasters (counts of hourly AIS positions, 2015-2021).
+    """Ship-density rasters (World Bank/IMF AIS: counts of hourly AIS positions, 2015-2021).
 
-    Counts are summed per target cell, divided by cell area, and log1p-transformed
-    (the raw counts span ~8 orders of magnitude; min-max scaling would flatten them).
+    Raster values are summed per target cell and divided by cell area (km^2). Per layer:
+      scale      multiply raster values first (default 1). For a raster min-max normalised
+                 from counts with min 0, set this to the original max count to recover counts.
+      transform  log1p (default; right for counts), log10 (log10(density + eps); use for a
+                 normalised raster when the original max is unknown, as it only shifts by a
+                 constant under rescaling), or none.
+      eps        log10 offset (default 1e-12; keep it below the smallest non-zero density).
     """
     out = {}
     area = grid.cell_area_km2()
     for lay in layers:
+        scale = float(lay.get("scale", 1.0))
         s = aggregate_raster(lay["path"], grid, band=int(lay.get("band", 1)),
-                             func=lambda x: np.clip(x, 0, None), stats=("sum",), offraster=0.0)["sum"]
+                             func=lambda x: np.clip(x, 0, None) * scale, stats=("sum",), offraster=0.0)["sum"]
         dens = np.nan_to_num(s, nan=0.0) / area
-        out[lay.get("name", "ship_density")] = np.log1p(dens).astype(np.float32)
+        tr = str(lay.get("transform", "log1p")).lower()
+        if tr == "log1p":
+            v = np.log1p(dens)
+        elif tr == "log10":
+            v = np.log10(dens + float(lay.get("eps", 1e-12)))
+        elif tr == "none":
+            v = dens
+        else:
+            raise ValueError("ship_density transform must be log1p, log10 or none, got %r" % tr)
+        out[lay.get("name", "ship_density")] = v.astype(np.float32)
     return out
