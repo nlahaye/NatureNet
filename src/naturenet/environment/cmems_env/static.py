@@ -5,10 +5,20 @@ from scipy import ndimage
 from .grid import Grid, aggregate_raster, block_reduce_mean, nearest_distance_km
 
 
-def _ocean_connected(water):
-    """Keep water connected to the raster edge (same rule as environment/build_ocean_mask.py)."""
+def _ocean_connected(water, covered=None):
+    """Keep water connected to the open boundary (same rule as environment/build_ocean_mask.py).
+
+    The open boundary is the array edge plus, when `covered` is given, any cell next to a
+    cell the mask raster does not cover. Without the second part, a mask raster clipped to
+    the study area (with land assumed off-raster) has an all-land margin, so no water
+    touches the edge and the whole domain is removed.
+    """
     lab, _ = ndimage.label(water, structure=np.ones((3, 3), np.uint8))
-    edge = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
+    border = np.zeros(water.shape, bool)
+    border[0], border[-1], border[:, 0], border[:, -1] = True, True, True, True
+    if covered is not None and not covered.all():
+        border |= ndimage.binary_dilation(~covered, structure=np.ones((3, 3), bool))
+    edge = np.unique(lab[border])
     edge = edge[edge > 0]
     return np.isin(lab, edge)
 
@@ -38,15 +48,35 @@ def build_water_mask(cfg, grid):
     big = grid.expand(margin)
     fine = big.supersample(k)
     frac_f = aggregate_raster(cfg["path"], fine, func=lambda x: (x == wv).astype(np.float64),
-                              stats=("mean",), offraster=off)["mean"]
-    water_f = np.nan_to_num(frac_f, nan=off) >= 0.5
+                              stats=("mean",), offraster=np.nan)["mean"]
+    covered = np.isfinite(frac_f)
+    if not covered.any():
+        raise ValueError("water mask %s does not overlap the grid bbox %s (check its extent/CRS)"
+                         % (cfg["path"], (grid.lon_min, grid.lon_max, grid.lat_min, grid.lat_max)))
+    water_raw = np.nan_to_num(frac_f, nan=off) >= 0.5
+    water_f = water_raw
     if cfg.get("ocean_connected", True):
-        water_f = _ocean_connected(water_f)
+        water_f = _ocean_connected(water_raw, covered)
     # inner region (target grid) on the fine grid
     i0, j0 = margin * k, margin * k
     inner = water_f[i0:i0 + grid.ny * k, j0:j0 + grid.nx * k]
     frac = block_reduce_mean(inner.astype(np.float32), k)
     water = frac > float(cfg.get("min_water_frac", 0.0))
+    if not water.any():
+        try:
+            import rasterio
+            with rasterio.open(cfg["path"]) as src:
+                rinfo = "raster nodata=%r bounds=%s crs=%s" % (src.nodata, tuple(src.bounds), src.crs)
+        except Exception as e:  # pragma: no cover
+            rinfo = "raster info unavailable (%s)" % e
+        raw = block_reduce_mean(water_raw[i0:i0 + grid.ny * k, j0:j0 + grid.nx * k].astype(np.float32), k)
+        raise ValueError(
+            "water mask is empty on the grid: %d cells are water before the ocean-connected step "
+            "(%d after), raster covers %.1f%% of the grid. Check mask.water_value (now %r), "
+            "mask.offraster_is_water, or set mask.ocean_connected: false. %s"
+            % (int((raw > 0).sum()), int((frac > 0).sum()),
+               100.0 * float(block_reduce_mean(covered[i0:i0 + grid.ny * k, j0:j0 + grid.nx * k]
+                                               .astype(np.float32), k).mean()), wv, rinfo))
     buf_km = float(cfg.get("coast_buffer_km", 0.0))
     if buf_km > 0:
         ry = buf_km / grid.dy_km()

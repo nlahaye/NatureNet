@@ -387,6 +387,10 @@ def cmd_assemble(cfg):
     fillv = float(oc.get("fill_value", -999999.0))
     write, _, halo, t0 = plan_days(cfg)
     snames, sarr, mask = load_static(cfg)
+    if not mask.any():
+        raise ValueError("the water mask in %s is empty, so every scene would be all fill; "
+                         "rerun the static stage (it now reports why the mask is empty)"
+                         % os.path.join(cfg["work_dir"], "mask.zarr"))
     caches = {}
     for s in cfg["sources"]:
         if not s.get("enabled", True):
