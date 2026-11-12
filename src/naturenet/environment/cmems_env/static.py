@@ -23,6 +23,26 @@ def _ocean_connected(water, covered=None):
     return np.isin(lab, edge)
 
 
+def _seed_connected(water, grid, seeds, path=""):
+    """Keep water connected to known open-ocean points (lon, lat) instead of the edge.
+
+    Use this when the domain edge or a corner is land, or the raster is clipped to the
+    study area. A seed that falls on land raises an error, which also catches an inverted mask.
+    """
+    lab, _ = ndimage.label(water, structure=np.ones((3, 3), np.uint8))
+    keep = []
+    for lon, lat in seeds:
+        i = int(np.floor((grid.lat_max - lat) / grid.res))
+        j = int(np.floor((lon - grid.lon_min) / grid.res))
+        if not (0 <= i < grid.ny and 0 <= j < grid.nx):
+            raise ValueError("ocean seed (%g, %g) is outside the grid" % (lon, lat))
+        if lab[i, j] == 0:
+            raise ValueError("ocean seed (%g, %g) is not water in %s: check the seed, "
+                             "mask.water_value, or whether the mask is inverted" % (lon, lat, path))
+        keep.append(lab[i, j])
+    return np.isin(lab, keep)
+
+
 def _disk(ry, rx):
     ry, rx = max(int(np.ceil(ry)), 0), max(int(np.ceil(rx)), 0)
     y, x = np.ogrid[-ry:ry + 1, -rx:rx + 1]
@@ -35,7 +55,9 @@ def build_water_mask(cfg, grid):
     Uses the same raster and `water_value` convention as the land-jitter step
     (environment/jitter_bad_points.py WaterMask). Steps:
       1. stream the mask onto a k-times finer grid (with a margin, for distance to coast);
-      2. optionally keep only ocean-connected water (drops lakes);
+      2. optionally keep only ocean-connected water (drops lakes): water connected to
+         `ocean_seeds` ([[lon, lat], ...] known open-ocean points) if given, otherwise
+         water connected to the domain edge or to the raster's own boundary;
       3. a target cell is water if its water fraction > `min_water_frac` (default 0: any water);
       4. relax the coastline by dilating water by `coast_buffer_km`, so coastal fixes and
          partially-wet cells keep valid (interpolated) values instead of fill.
@@ -55,7 +77,10 @@ def build_water_mask(cfg, grid):
                          % (cfg["path"], (grid.lon_min, grid.lon_max, grid.lat_min, grid.lat_max)))
     water_raw = np.nan_to_num(frac_f, nan=off) >= 0.5
     water_f = water_raw
-    if cfg.get("ocean_connected", True):
+    seeds = cfg.get("ocean_seeds")  # optional [[lon, lat], ...] known open-ocean points
+    if seeds:
+        water_f = _seed_connected(water_raw, fine, seeds, cfg["path"])
+    elif cfg.get("ocean_connected", True):
         water_f = _ocean_connected(water_raw, covered)
     # inner region (target grid) on the fine grid
     i0, j0 = margin * k, margin * k

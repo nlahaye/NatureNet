@@ -41,6 +41,8 @@ mask:
   supersample: 4
   margin_cells: 24
   ocean_connected: true
+  # known open-ocean points; water connected to them is kept (the SW corner is land here)
+  ocean_seeds: [[-61.0, 39.0], [-61.0, 21.0], [-90.0, 25.0]]   # NE Atlantic, SE Atlantic, central Gulf
   min_water_frac: 0.0  # cell is water if any sub-cell is water
   coast_buffer_km: 5.0 # relax the land boundary by this distance
 
