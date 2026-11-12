@@ -21,6 +21,12 @@ pull:
   dask_threads: 4      # chunk fetch threads per read
   zarr_concurrency: 4  # concurrent chunk requests per zarr read (zarr >= 3)
   http_pool: null      # S3 connections per dataset; null = workers * dask_threads * zarr_concurrency (10..128)
+  read_timeout: 60     # s without data before an S3 read fails (each request is retried up to 10 times)
+  connect_timeout: 20  # s to open an S3 connection
+  heartbeat: 300       # s between progress lines (running blocks and their age); 0 = off
+  block_timeout: 3600  # s per block before it is logged as stalled and its slot freed; 0 = no limit
+  max_stalled: null    # stop starting new blocks after this many stalls (null = workers); rerun resumes
+  assemble_with_gaps: false   # stage all: skip assemble while pull days are missing (exit status 3)
   margin_deg: 0.5      # read margin so edge cells interpolate from real data
   keepbits: 12         # cache bit-rounding (rel. err <= 1.2e-4); scenes stay lossless
   min_support: 0.25
