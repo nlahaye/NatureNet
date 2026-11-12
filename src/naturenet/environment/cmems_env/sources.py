@@ -13,6 +13,51 @@ import pandas as pd
 
 log = logging.getLogger("cmems_env")
 
+
+_HTTP = None
+
+
+def configure_http(pc=None):
+    """Size the S3 connection pool of the Copernicus Marine toolbox to the pull concurrency.
+
+    copernicusmarine (2.x) opens one boto3 client per dataset with botocore's default pool of 10
+    connections, while one pull block issues up to workers x dask_threads x zarr_concurrency chunk
+    requests through that client. Extra connections are then closed after each request ("Connection
+    pool is full, discarding connection: s3.waw3-1.cloudferro.com") and every later request pays a new
+    TLS handshake. Must run before the first dataset read (clients are created lazily, on the first get).
+
+    pull.http_pool         pool size per client (default: workers * dask_threads * zarr_concurrency,
+                           at least 10, at most 128)
+    pull.zarr_concurrency  concurrent chunk requests per zarr read (zarr >= 3 'async.concurrency';
+                           default 4, zarr's own default is 10)
+    Returns the pool size used.
+    """
+    pc = pc or {}
+    zc = int(pc.get("zarr_concurrency", 4))
+    try:
+        import zarr
+        if not zarr.__version__.startswith("2"):
+            zarr.config.set({"async.concurrency": zc})
+    except ImportError:
+        pass
+    n = pc.get("http_pool")
+    if n is None:
+        n = int(pc.get("workers", 4)) * int(pc.get("dask_threads", 4)) * zc
+        n = min(max(n, 10), 128)
+    n = int(n)
+    try:
+        import botocore.config
+        # copernicusmarine builds Config(signature_version=..., retries=...) without max_pool_connections,
+        # so the class default applies to every client it creates from now on.
+        botocore.config.Config.OPTION_DEFAULTS["max_pool_connections"] = n
+    except ImportError:
+        pass
+    global _HTTP
+    if _HTTP != (n, zc):
+        log.info("S3 connection pool %d per dataset, zarr concurrency %d", n, zc)
+        _HTTP = (n, zc)
+    return n
+
 LON_NAMES = ("longitude", "lon", "x")
 LAT_NAMES = ("latitude", "lat", "y")
 DEPTH_NAMES = ("depth", "elevation", "deptht")

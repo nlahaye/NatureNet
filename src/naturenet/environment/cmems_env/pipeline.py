@@ -33,7 +33,7 @@ from . import store
 from .features import compute_features, default_name, required_inputs
 from .fill import missing_fraction, pushpull_fill, temporal_fill
 from .grid import Grid, Regridder
-from .sources import Source, discover, open_lazy
+from .sources import Source, configure_http, discover, open_lazy
 from .static import build_bathymetry, build_ship_density, build_water_mask
 
 log = logging.getLogger("cmems_env")
@@ -194,6 +194,7 @@ def cmd_pull(cfg, opener=open_lazy, srcs=None):
     import dask
     grid = make_grid(cfg)
     pc = cfg.get("pull", {})
+    configure_http(pc)
     write, _, halo, _ = plan_days(cfg)
     if srcs is None:
         srcs, _ = cmd_resolve(cfg, opener)
@@ -474,6 +475,7 @@ def main(argv=None):
     cfg = load_config(a.config)
     if a.workers:
         cfg.setdefault("pull", {})["workers"] = a.workers
+    configure_http(cfg.get("pull", {}))   # before any dataset is opened
     if a.stage == "discover":
         w, p, _, _ = plan_days(cfg)
         out = os.path.join(cfg["out_dir"], f"{cfg['tag']}_cmems_catalogue.csv")

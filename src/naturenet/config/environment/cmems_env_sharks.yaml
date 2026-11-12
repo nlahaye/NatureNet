@@ -19,6 +19,8 @@ time:
 pull:
   workers: 4           # concurrent (source, block) reads
   dask_threads: 4      # chunk fetch threads per read
+  zarr_concurrency: 4  # concurrent chunk requests per zarr read (zarr >= 3)
+  http_pool: null      # S3 connections per dataset; null = workers * dask_threads * zarr_concurrency (10..128)
   margin_deg: 0.5      # read margin so edge cells interpolate from real data
   keepbits: 12         # cache bit-rounding (rel. err <= 1.2e-4); scenes stay lossless
   min_support: 0.25
