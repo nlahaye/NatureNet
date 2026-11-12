@@ -423,7 +423,7 @@ def generate_input_feature_states(yml_conf):
         movement_dfs = pd.read_pickle(f)
 
     for key in movement_dfs.keys():
-        if uids is not None and key not in uids:
+        if (uids is not None and key not in uids) or "__aug" in key:
             continue
         fname = _feature_pkl(feature_dir, feature_uid, key)
         with open(fname, "rb") as f:
