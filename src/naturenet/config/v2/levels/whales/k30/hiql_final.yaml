@@ -10,17 +10,17 @@
 # Same data block and HIAVI settings as the Phase B CV. Check n_states / actions against the Phase B YAML you ran.
 # --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
 n_states: null   # synced by naturenet.environment.sync_v2_configs (level K + 1 absorbing)
-actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/k30/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/k30/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/k30/"
-df_run_uid: "SWIRL_WHALE_v1"
+df_run_uid: "SWIRL_WHALE_1517"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
 seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
 segment_policy: "variable"
 min_seq_len: 10
-n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
+n_folds: 5                  # 39 animals (2015 + 2017) -> 7-8 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
 # --- end shared data block ---
@@ -54,7 +54,7 @@ lat_bounds: [22, 40]
 splits: ["train"]
 plot_trajs: True
 plot_gifs: False
-# input_keys = input_channels of the v2 sample step; needs <df_dir>/SWIRL_WHALE_v1_<key>_states_input.pkl from
+# input_keys = input_channels of the v2 sample step; needs <df_dir>/SWIRL_WHALE_1517_<key>_states_input.pkl from
 #   python -m naturenet.environment.sample_env_inputs -y config/v2/environment/whales_sample_inputs_v2.yaml
 # Post-hoc analyses only: fixes outside the v2 scene calendar are dropped (fits unchanged).
 env_window:

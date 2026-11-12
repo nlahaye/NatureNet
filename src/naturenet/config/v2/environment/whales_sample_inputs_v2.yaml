@@ -1,8 +1,8 @@
-# Raw v2 inputs at each fix -> /data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_v1_<key>_states_input.pkl (plots, series export, correlation).
+# Raw v2 inputs at each fix -> /data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_<key>_states_input.pkl (plots, series export, correlation).
 #   python -m naturenet.environment.sample_env_inputs -y config/v2/environment/whales_sample_inputs_v2.yaml
 # Replaces env_data_format (raw scenes) + movement_preprocess_pipeline gather_input: reads each scene day once.
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
-df_run_uid: "SWIRL_WHALE_v1"
+df_run_uid: "SWIRL_WHALE_1517"
 scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv"
 complete_scenes_only: True
 env_meta_json: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_env_meta.json"

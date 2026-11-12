@@ -174,10 +174,15 @@ def original_mask(pc):
     return np.array([re.search(r"__aug\d+", k) is None for k in pc.key])
 
 
-def resolve_window(w):
-    """multiagent.window -> (first_day, last_day) date strings (inclusive), or None.
-    Accepts [start, end] or {scene_index_csv: <cmems_env index>, complete_scenes_only: True} (first .. last usable
-    scene day, so the time-shift null calendar follows the environment without hardcoded dates)."""
+def resolve_windows(w):
+    """
+    multiagent.window -> list of (first_day, last_day) date strings (inclusive), or None. Accepts
+      [start, end]                       one window
+      [[start, end], [start, end], ...]  one window per season (time-shift null stays inside each)
+      {scene_index_csv: <cmems_env index>, complete_scenes_only: True, split_gap_days: null}
+          first .. last usable scene day, so the null calendar follows the environment without hardcoded
+          dates; split_gap_days N splits the scene days at gaps > N days into seasons (multi-year tracks).
+    """
     if not w:
         return None
     if isinstance(w, dict):
@@ -186,20 +191,37 @@ def resolve_window(w):
             idx = idx[idx["complete"].map(lambda v: v is True or str(v).strip().lower() in ("true", "1", "yes"))]
         if not len(idx):
             raise ValueError(f"no usable scenes in {w['scene_index_csv']}")
-        d = pd.to_datetime(idx["date"])
-        return str(d.min().date()), str(d.max().date())
-    return w[0], w[1]
+        d = pd.Series(sorted(pd.to_datetime(idx["date"]).unique()))
+        gap = w.get("split_gap_days")
+        if gap is None:
+            return [(str(d.iloc[0].date()), str(d.iloc[-1].date()))]
+        cut = np.where(d.diff().dt.days.to_numpy()[1:] > float(gap))[0] + 1
+        parts = np.split(np.arange(len(d)), cut)
+        return [(str(d.iloc[p[0]].date()), str(d.iloc[p[-1]].date())) for p in parts]
+    if len(w) and isinstance(w[0], (list, tuple)):
+        return [(str(a), str(b)) for a, b in w]
+    return [(str(w[0]), str(w[1]))]
+
+
+def resolve_window(w):
+    """multiagent.window -> overall (first_day, last_day) date strings (inclusive), or None."""
+    ws = resolve_windows(w)
+    return (min(a for a, _ in ws), max(b for _, b in ws)) if ws else None
 
 
 def window_days(conf, pc):
-    w = resolve_window(conf.get("window"))
-    if w:
-        return float(_to_days([w[0]])[0]), float(_to_days([w[1]])[0]) + 1.0
+    """(t0, t1) in days for one window, or a list of (t0, t1) seasons."""
+    ws = resolve_windows(conf.get("window"))
+    if ws:
+        out = [(float(_to_days([a])[0]), float(_to_days([b])[0]) + 1.0) for a, b in ws]
+        return out[0] if len(out) == 1 else out
     return float(np.nanmin(pc.times)), float(np.nanmax(pc.times)) + 1.0
 
 
 def draw_shifts(animals, rng, window, min_shift):
-    L = window[1] - window[0]
+    """Per-animal shift U(min_shift, L - min_shift); with seasons, L = the shortest season."""
+    wins = [window] if np.ndim(window[0]) == 0 else list(window)
+    L = min(b - a for a, b in wins)
     if L <= 2 * min_shift:
         raise ValueError(f"window ({L:.0f} d) too short for null_min_shift_days={min_shift}")
     return {a: float(rng.uniform(min_shift, L - min_shift)) for a in animals}

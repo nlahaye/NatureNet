@@ -2,7 +2,7 @@
 #   python -m naturenet.environment.link_movement_run -y config/v2/levels/whales/k30/link.yaml
 src_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/
 dst_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/levels/k30/
-df_run_uid: SWIRL_WHALE_v1
+df_run_uid: SWIRL_WHALE_1517
 exclude:
 - '*_states_abstract_env.pkl'
 - '*_trans_prob_abstract_env.npz'

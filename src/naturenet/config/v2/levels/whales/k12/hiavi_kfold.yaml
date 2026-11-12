@@ -9,10 +9,10 @@
 #   python -m naturenet.models.irl.plot_hiavi      -y v2/swirl/whales_hiavi_kfold.yaml
 # --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
 n_states: null   # synced by naturenet.environment.sync_v2_configs (level K + 1 absorbing)
-actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/k12/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/k12/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/k12/"
-df_run_uid: "SWIRL_WHALE_v1"
+df_run_uid: "SWIRL_WHALE_1517"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
@@ -20,7 +20,7 @@ seq_len: 60                 # variable policy: one sequence per valid run, runs 
 segment_policy: "variable"
                             # near-equal pieces; null = no cap), padded + masked (exact LLs). Not for NN-SWIRL.
 min_seq_len: 10
-n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
+n_folds: 5                  # 39 animals (2015 + 2017) -> 7-8 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
 # --- end shared data block ---

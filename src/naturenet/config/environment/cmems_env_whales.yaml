@@ -9,12 +9,14 @@ grid:
   res: 0.08333333333333333                # 1/12 deg (GLORYS native)
 
 time:
-  start: 2017-07-10    # t = days since start (matches the existing whale env window); or auto
+  start: 2015-07-07    # t = days since start = first 2015 fix day (2015 + 2017 tracks); or auto
   end: auto
   pad_days: 1
   write_days: track    # track = only days with fixes (+/- pad); all = every day in [start, end]
+                       # (track: 2016 has no fixes, so its days are neither pulled nor written)
   tracks:
-    - {path: /data/nlahaye/NatureNet/Bmu_2017CA.augmented.csv, time_col: timestamp, lon_col: longitude, lat_col: latitude}
+    # 2015 + 2017 tracks, merged once with environment/merge_whale_years.py (uids unchanged)
+    - {path: /data/nlahaye/NatureNet/Blue_Whale_In/Bmu_2015_2017CA.augmented.land_jittered.csv, time_col: timestamp, lon_col: longitude, lat_col: latitude}
 
 pull:
   workers: 4           # concurrent (source, block) reads
@@ -50,7 +52,7 @@ bathymetry:
   isobaths: [200, 1000]
 
 ship_density:
-  - {name: log_ship_density, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global_norm.tif}
+  - {name: log_ship_density, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global.tif}
   # optional World Bank layers (same units):
   # - {name: log_ship_density_fishing, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/ShipDensity_Fishing.tif}
   # - {name: log_ship_density_commercial, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/ShipDensity_Commercial.tif}

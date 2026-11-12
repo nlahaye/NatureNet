@@ -1,11 +1,11 @@
 # Abstract-state trajectories + transition model on the v2 clusters.
 #   python -m naturenet.environment.movement_preprocess_pipeline -y config/v2/environment/whales_abstract_env_v2.yaml
-# -> /data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_v1_<key>_states_abstract_env.pkl, SWIRL_WHALE_v1_trans_prob_abstract_env.npz, _total_count / _points
+# -> /data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_<key>_states_abstract_env.pkl, SWIRL_WHALE_1517_trans_prob_abstract_env.npz, _total_count / _points
 init_preprocess: False
 gather_input: False
-df_run_uid: "SWIRL_WHALE_v1"
+df_run_uid: "SWIRL_WHALE_1517"
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
-run_uid: "SWIRL_WHALE_v1"              # merged env maps = <env_maps_dir><env_maps_uid><run_uid>.pkl
+run_uid: "SWIRL_WHALE_1517"              # merged env maps = <env_maps_dir><env_maps_uid><run_uid>.pkl
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
 env_maps_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/env_clusters/"
 env_maps_uid: "final_env_maps_"

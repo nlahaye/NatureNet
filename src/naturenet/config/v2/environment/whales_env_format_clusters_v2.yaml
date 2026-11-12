@@ -1,7 +1,7 @@
-# SIT-FUSE v2 cluster maps along the whales tracks -> /data/nlahaye/NatureNet/Blue_Whale_v2/env_clusters/final_env_maps_SWIRL_WHALE_v1.pkl
+# SIT-FUSE v2 cluster maps along the whales tracks -> /data/nlahaye/NatureNet/Blue_Whale_v2/env_clusters/final_env_maps_SWIRL_WHALE_1517.pkl
 #   python -m naturenet.models.feature_rep.env_data_format -y config/v2/environment/whales_env_format_clusters_v2.yaml
 # Writes the class mapper final_env_maps__class_mapper.pkl (K valid clusters -> n_clusters = K, n_states = K + 1).
-df_uid: "SWIRL_WHALE_v1"
+df_uid: "SWIRL_WHALE_1517"
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/env_clusters/"
 output_uid: "final_env_maps_"

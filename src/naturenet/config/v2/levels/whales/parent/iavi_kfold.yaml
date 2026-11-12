@@ -13,10 +13,10 @@
 # With K = 1 the E-step is trivial (EM converges in ~2 iterations), so one restart is enough.
 # --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
 n_states: null   # synced by naturenet.environment.sync_v2_configs (level K + 1 absorbing)
-actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/parent/SWIRL_WHALE_v1_*_actions.pkl"
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/parent/SWIRL_WHALE_1517_*_actions.pkl"
 positions: "auto"
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/levels/parent/"
-df_run_uid: "SWIRL_WHALE_v1"
+df_run_uid: "SWIRL_WHALE_1517"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True

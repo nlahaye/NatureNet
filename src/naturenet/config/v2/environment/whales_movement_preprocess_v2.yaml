@@ -1,0 +1,31 @@
+# Step 3a (whales): movement preprocessing on the merged 2015 + 2017 tracks. It replaces the v1 link
+# (whales_link_v2.yaml), because v1 has 2017 only.
+#   python -m naturenet.environment.merge_whale_years --inputs ... --out <movement_csv>   (one time)
+#   python -m naturenet.environment.movement_preprocess_pipeline -y config/v2/environment/whales_movement_preprocess_v2.yaml
+# -> /data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517{_dfs.pkl, _dfs_params.json, _<key>_actions.pkl, _<key>_grid.pkl, ...}
+# uids are unchanged. A uid in both years is one animal: one key, with segments split at the 2016 gap
+# (max_gap_days), and one CV fold.
+
+movement_csv: "/data/nlahaye/NatureNet/Blue_Whale_In/Bmu_2015_2017CA.augmented.land_jittered.csv"
+
+lon_bounds: [-126.0, -110.0]   # = whale env bbox (cmems_env_whales.yaml); fixes outside are dropped
+lat_bounds: [22.0, 40.0]
+
+# Movement (action) grid. Set it to the SWIRL_WHALE_1517 value if that run used a different one; the env
+# grid is derived from the scene shape (env_meta_json), so it does not need to match the 1/12 deg env.
+grid_res_lon: 0.009000090001
+grid_res_lat: 0.009000090001
+
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+run_uid: "SWIRL_WHALE_1517"
+df_run_uid: "SWIRL_WHALE_1517"
+
+init_preprocess: True
+# Segmentation. No cap, so segment_policy: variable with seq_len 60 / min_seq_len 10 splits long runs in the loader.
+max_gap_days: 2.0
+max_segment_len: null
+min_segment_len: 2
+segment_overlap: True
+
+skip_uids: []

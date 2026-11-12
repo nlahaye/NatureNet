@@ -10,17 +10,17 @@
 # S1_N2 - S1_N1 (independent models) is also an equal-iteration check of the Phase C N2 gain.
 # Run the nulls only for variant / kernel pairs that pass (i) pooled gain > 0 and (ii) > half of animals improved.
 n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
-actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_v1_*_actions.pkl"   # originals + __aug copies
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
-df_run_uid: "SWIRL_WHALE_v1"
+df_run_uid: "SWIRL_WHALE_1517"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True
 seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
 segment_policy: "variable"
 min_seq_len: 10
-n_folds: 5                  # 23 animals -> 4-5 per test fold (folds group by base id, so __aug copies stay together)
+n_folds: 5                  # 39 animals (2015 + 2017) -> 7-8 per test fold (folds group by base id, so __aug copies stay together)
 fold_seed: 0
 folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
 # --- end shared data block ---
@@ -76,11 +76,14 @@ multiagent:
     # step 3: durations with partner-driven hazards (beta; alpha too when K > 2)
     - {name: S3_N1_dur, step: 3, order: 1, durations: on}
     - {name: S3_N2_dur_R2, step: 3, order: 2, durations: on, hierarchy: on}
-  # animals: null -> all 23 tags (all inside the window); 825 (4 d) and 5800 (8 d) only act as partners
-  # SWIRL backend: the 10 best-connected held-out animals keep runtime manageable (all 23 tags still act as partners)
+  # animals: null -> all 39 animals (2015 + 2017; partners only within a year). heldout_animals below are the
+  # 2017 analysis; 825 (4 d in 2017) and 5800 (8 d) only act as partners. Add 2015 ids to test 2015 as well.
+  # SWIRL backend: the 10 best-connected held-out animals keep runtime manageable (all 39 animals still act as partners)
   heldout_animals: ["10826", "847", "1385", "835", "845", "4176", "10831", "841", "5840", "5910"]
   max_aug: 2                  # originals + __aug1..2 per whale (10 copies -> 11x data and 121x kernel pairs)
-  window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv"}   # time-shift null calendar = first .. last complete v2 scene day
+  window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv", split_gap_days: 30}
+  # time-shift null calendar: one season per tracking year (scene days split at gaps > 30 d -> 2015, 2017);
+  # each step is shifted inside its own season, so no track moves into the untracked 2016 gap
   Ks: [5]                                            # Phase C N* at K = 5
   variants:
     temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
@@ -90,12 +93,12 @@ multiagent:
   alpha0: 0.1                 # initial coupling
   n_null: 20                  # time-shift replicates (swirl_scales cost)
   null_variants: ["temporal", "proximity"]
-  null_min_shift_days: 20     # U(20, 135) d in the 155-d window (track spans 3-150 d)
+  null_min_shift_days: 20     # U(20, L - 20) d, L = shortest season (2017: 155 d -> U(20, 135))
   n_null_sync: 500            # replicates for the synchrony index (no refit; cheap)
   sync_variant: "temporal"
   eval_include_aug: False     # score held-out ORIGINAL tracks only (copies are not independent data)
   min_context_steps: 30       # warn if < 2 animals reach this many steps with partner context
-  # dfs_pkl: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_v1_dfs.pkl"
+  # dfs_pkl: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_dfs.pkl"
 
 
 # SWIRL keys (as in init_test_swirl.yaml)

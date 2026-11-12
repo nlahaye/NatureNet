@@ -7,7 +7,9 @@
 # Output: <out_dir>/<second_dir>/<slice>/correlation_results.csv + plots.
 main_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/final/
 second_dir: [swirl/plots/series_linear_s1, swirl/plots/series_linear_s2, hiql/plots/series_hiavi_s1]
-keys: [full, males, females, unknown]   # sex from gen_sex in Bmu_2017CA.augmented.csv (23 animals; the old slices missed 825 and 5800)
+keys: [full, males, females, unknown]   # 39 animals (2015 + 2017), sex = gen_sex_animal in Bmu_2015_2017CA.augmented.land_jittered.csv
+# (merge_whale_years: one sex per uid; 825, 1385, 5840 and 831 take the year where they were sexed;
+#  23031 is Female in 2015 and Male in 2017, so it is in unknown. Regenerate from <out>.summary.json sex_slices.)
 out_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/final/time_series/
 data_slices:
   full:
@@ -16,50 +18,82 @@ data_slices:
     - 827_time_series_pd.csv
     - 831_time_series_pd.csv
     - 835_time_series_pd.csv
+    - 838_time_series_pd.csv
+    - 840_time_series_pd.csv
     - 841_time_series_pd.csv
     - 845_time_series_pd.csv
     - 847_time_series_pd.csv
+    - 849_time_series_pd.csv
     - 1385_time_series_pd.csv
     - 4176_time_series_pd.csv
+    - 4177_time_series_pd.csv
+    - 5640_time_series_pd.csv
     - 5648_time_series_pd.csv
+    - 5650_time_series_pd.csv
     - 5670_time_series_pd.csv
+    - 5678_time_series_pd.csv
     - 5679_time_series_pd.csv
+    - 5700_time_series_pd.csv
+    - 5701_time_series_pd.csv
+    - 5726_time_series_pd.csv
+    - 5736_time_series_pd.csv
     - 5800_time_series_pd.csv
     - 5803_time_series_pd.csv
+    - 5823_time_series_pd.csv
+    - 5838_time_series_pd.csv
     - 5840_time_series_pd.csv
+    - 5841_time_series_pd.csv
     - 5910_time_series_pd.csv
     - 5921_time_series_pd.csv
     - 10826_time_series_pd.csv
     - 10830_time_series_pd.csv
     - 10831_time_series_pd.csv
+    - 10839_time_series_pd.csv
     - 10840_time_series_pd.csv
     - 23031_time_series_pd.csv
+    - 23033_time_series_pd.csv
   males:
     - 826_time_series_pd.csv
     - 827_time_series_pd.csv
     - 841_time_series_pd.csv
+    - 1385_time_series_pd.csv
+    - 4177_time_series_pd.csv
+    - 5640_time_series_pd.csv
     - 5648_time_series_pd.csv
+    - 5650_time_series_pd.csv
     - 5670_time_series_pd.csv
+    - 5678_time_series_pd.csv
     - 5800_time_series_pd.csv
     - 5803_time_series_pd.csv
+    - 5838_time_series_pd.csv
     - 5921_time_series_pd.csv
     - 10826_time_series_pd.csv
     - 10840_time_series_pd.csv
-    - 23031_time_series_pd.csv
+    - 23033_time_series_pd.csv
   females:
+    - 825_time_series_pd.csv
     - 831_time_series_pd.csv
     - 835_time_series_pd.csv
+    - 838_time_series_pd.csv
     - 845_time_series_pd.csv
     - 4176_time_series_pd.csv
+    - 5701_time_series_pd.csv
+    - 5736_time_series_pd.csv
+    - 5840_time_series_pd.csv
+    - 5841_time_series_pd.csv
     - 5910_time_series_pd.csv
   unknown:
-    - 825_time_series_pd.csv
+    - 840_time_series_pd.csv
     - 847_time_series_pd.csv
-    - 1385_time_series_pd.csv
+    - 849_time_series_pd.csv
     - 5679_time_series_pd.csv
-    - 5840_time_series_pd.csv
+    - 5700_time_series_pd.csv
+    - 5726_time_series_pd.csv
+    - 5823_time_series_pd.csv
     - 10830_time_series_pd.csv
     - 10831_time_series_pd.csv
+    - 10839_time_series_pd.csv
+    - 23031_time_series_pd.csv
 
 # Pairs with a reward or latent column only (latent vs inputs / kinematics, reward vs inputs)
 pair_filter: [reward, latent]

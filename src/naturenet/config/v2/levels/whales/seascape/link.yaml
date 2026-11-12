@@ -1,0 +1,12 @@
+# Environment level seascape: movement files from the v2 run (symlinks); folds stay in /data/nlahaye/NatureNet/Blue_Whale_v2/folds/.
+#   python -m naturenet.environment.link_movement_run -y config/v2/levels/whales/seascape/link.yaml
+src_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/
+dst_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/levels/seascape/
+df_run_uid: SWIRL_WHALE_1517
+exclude:
+- '*_states_abstract_env.pkl'
+- '*_trans_prob_abstract_env.npz'
+- '*_total_count_abstract_env.pkl'
+- '*_points_abstract_env.pkl'
+copy_dirs: []
+dry_run: false

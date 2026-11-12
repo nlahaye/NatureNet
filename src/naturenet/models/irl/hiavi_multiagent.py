@@ -142,15 +142,22 @@ class PartnerContext:
             raise ValueError("PartnerContext: non-finite step times")
 
     def shifted_times(self, shifts=None, window=None):
-        """Circularly shift each animal's calendar by shifts[animal] days inside window (t0, t1) (null model)."""
+        """
+        Circularly shift each animal's calendar by shifts[animal] days inside window (t0, t1) (null model).
+        window may also be a list of (t0, t1) seasons (e.g. 2015 and 2017 tracks): each step is shifted
+        inside the season that contains it, so no track is moved into an untracked gap; steps outside every
+        season are left as they are.
+        """
         if not shifts:
             return self.times
-        t0, t1 = window if window is not None else (np.nanmin(self.times), np.nanmax(self.times) + 1e-6)
-        L = t1 - t0
+        wins = _as_windows(window) or [(np.nanmin(self.times), np.nanmax(self.times) + 1e-6)]
         out = self.times.copy()
         for an, dlt in shifts.items():
             m = self.animal == an
-            out[m] = t0 + np.mod(self.times[m] - t0 + float(dlt), L)
+            for t0, t1 in wins:
+                L = t1 - t0
+                mw = m & (self.times >= t0) & (self.times < t1)
+                out[mw] = t0 + np.mod(self.times[mw] - t0 + float(dlt), L)
         return out
 
     def build(self, tgt, src, h_days=1.0, max_dt_days=None, lambda_km=None, max_km=None, times=None):
@@ -386,3 +393,12 @@ def fit_coupled(base_model, T_env, s, a, pc, tr_idx, settings, kern_tr, n_outer=
     w, c = PartnerContext.context(kern_tr, gamma)
     m.finalize(s_tr, a_tr, w, c, kin=k_tr)
     return m, (w, c)
+
+
+def _as_windows(window):
+    """None -> None; (t0, t1) -> [(t0, t1)]; [(t0, t1), ...] -> list of float tuples."""
+    if window is None:
+        return None
+    if len(window) and np.ndim(window[0]) == 0:
+        return [(float(window[0]), float(window[1]))]
+    return [(float(a), float(b)) for a, b in window]
