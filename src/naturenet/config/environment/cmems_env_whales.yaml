@@ -52,7 +52,7 @@ bathymetry:
   isobaths: [200, 1000]
 
 ship_density:
-  - {name: log_ship_density, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global.tif}
+  - {name: log_ship_density, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global_norm.tif}
   # optional World Bank layers (same units):
   # - {name: log_ship_density_fishing, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/ShipDensity_Fishing.tif}
   # - {name: log_ship_density_commercial, path: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/ShipDensity_Commercial.tif}
