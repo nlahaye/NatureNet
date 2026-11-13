@@ -13,7 +13,7 @@ start_time: "2023-11-01"
 # scene_dates_file: "/data/nlahaye/NatureNet_Env/Copernicus/cop_env_shark_dates.json"   # preferred if written by preprocess_copernicus
 nearest_scene_days: 0         # = the abstract run
 strict_scene_coverage: True
-mask_path: "TODO"             # same water mask as the abstract env_data_format run
+mask_path: "/data/nlahaye/remoteSensing/watermask_2025.shark.2.ocean.tif"             # same water mask as the abstract env_data_format run
 land_value: 0                 # TODO: same as the abstract run
 land_fill: nan                # raw features: -1 is a valid value, so land -> NaN
 sit_fuse_output: False        # no cluster compression / class mapper for raw inputs

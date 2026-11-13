@@ -4,7 +4,7 @@
 #   python -m naturenet.models.irl.run_swirl_scales_kfold -y full_plan/sharks_hiql_scales.yaml --check
 #   python -m naturenet.models.irl.run_swirl_scales_kfold -y full_plan/sharks_hiql_scales.yaml [--fold k] [--variant ...]
 #   python -m naturenet.models.irl.plot_swirl_scales      -y full_plan/sharks_hiql_scales.yaml
-n_states: 75                # = n_clusters of the abstract env (n_clusters + 1 if invalid_state: absorbing)
+n_states: 76                # = n_clusters of the abstract env (n_clusters + 1 if invalid_state: absorbing)
 actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/hammerhead_v1_*_actions.pkl"
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v1/"

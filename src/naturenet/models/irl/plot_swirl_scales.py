@@ -208,6 +208,9 @@ def plot_history(conf, tags, n_folds, path):
                 kl.append(got[1]["history_kl"])
         if not sh:
             continue
+        print(sh, kl)
+        if len(sh) == 0 or len(kl) == 0:
+            continue
         sh, kl = np.nanmean(sh, 0), np.nanmean(kl, 0)
         K, N = sh.shape
         bottom = np.zeros(K)
