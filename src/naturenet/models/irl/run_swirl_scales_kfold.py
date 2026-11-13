@@ -52,6 +52,7 @@ from naturenet.models.irl.kinematics import comparable_ll, kin_conf, pooled
 from naturenet.models.irl.swirl_multiagent import sticky_init
 from naturenet.models.irl.hiavi_model import HIAVI
 from naturenet.models.irl.run_hiavi_kfold import _seed, hiavi_settings
+from naturenet.models.irl.parallel import update_csv
 
 from sit_fuse.utils import read_yaml
 
@@ -379,9 +380,13 @@ def _csv_path(yml_conf):
 
 def _write_rows(yml_conf, rows):
     path = _csv_path(yml_conf)
-    new = pd.DataFrame(rows)
-    if os.path.exists(path):
-        old = pd.read_csv(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    update_csv(path, lambda old: _merge_rows(path, old, pd.DataFrame(rows)))   # locked: parallel fold jobs
+    return path
+
+
+def _merge_rows(path, old, new):
+    if old is not None:
         e_old = set(old["emission"].dropna()) if "emission" in old else {"swirl"}
         e_new = set(new["emission"]) if "emission" in new else {"swirl"}
         if e_old and e_old != e_new:
@@ -390,8 +395,7 @@ def _write_rows(yml_conf, rows):
         key = set(zip(new["variant"], new["fold"]))
         old = old[[(v, f) not in key for v, f in zip(old["variant"], old["fold"])]]
         new = pd.concat([old, new], ignore_index=True)
-    new.sort_values(["order", "variant", "fold"]).to_csv(path, index=False)
-    return path
+    return new.sort_values(["order", "variant", "fold"])
 
 
 def run_scales(yml_conf, folds_to_run=None, only=None, check=False):
@@ -437,7 +441,14 @@ def run_scales(yml_conf, folds_to_run=None, only=None, check=False):
                 print(f"  {tag} fold {kf_ind} exists; loading")
                 fitted[tag] = sc.load_scales(f_par, T)
                 continue
-            parent = fitted.get(_parent_tag(cfg))
+            ptag = _parent_tag(cfg)
+            if ptag is not None and ptag not in fitted:       # parent not selected (--variant): use its files
+                _, p_par, _, p_llt = _names(yml_conf, ptag, kf_ind)
+                if os.path.exists(p_par):
+                    fitted[ptag] = sc.load_scales(p_par, T)
+                else:
+                    print(f"  WARNING: parent {ptag} of {tag} (fold {kf_ind}) not fitted: {tag} starts cold")
+            parent = fitted.get(ptag)
             r, tree, row = fit_variant_fold(yml_conf, data, T, tr, te, tag, conf, base, R_start, temps, kin,
                                             kin_null, km0, parent, kf_ind)
             fitted[tag] = (r, tree)

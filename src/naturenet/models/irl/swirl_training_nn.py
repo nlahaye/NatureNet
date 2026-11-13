@@ -29,7 +29,8 @@ from jax.scipy.special import logsumexp as jax_logsumexp
 
 from naturenet.models.irl.swirl_nn_model import reward_table_expand, reward_table_pairs
 
-jax.config.update("jax_enable_x64", True)
+from naturenet.models.irl.jax_precision import configure as _configure_precision
+_configure_precision()   # float64 unless NATURENET_JAX_X64=0 (jax_precision.py)
 
 DEFAULT_DISCOUNT = 0.95
 DEFAULT_VI_ITERS = 100

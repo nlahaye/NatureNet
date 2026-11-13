@@ -58,7 +58,9 @@ from naturenet.models.irl.hiavi_multiagent import (
     hiavi_step_loglik,
 )
 from naturenet.models.irl.kinematics import kin_conf, labels_from_conf, p_exploit
+from naturenet.models.irl.parallel import atomic_to_csv, cpu_map, jobs_from
 from naturenet.models.irl.run_hiavi_kfold import (
+    _fit_restart,
     _seed,
     fold_trans_prob,
     hiavi_kinematics,
@@ -283,10 +285,11 @@ class HiaviBackend:
 
     def fit_independent(self, K, T_env, idx, kf_ind):
         best, best_ll = None, -np.inf
-        for rs in range(int(self.yml_conf.get("hiavi_restarts", 10))):
-            m = HIAVI(K, T_env, seed=_seed(self.yml_conf["seed"], kf_ind, rs), **self.st).fit(
-                self.s[idx], self.a[idx], self._k(idx))
-            ll = m.loglik(self.s[idx], self.a[idx], self._k(idx))
+        fits = cpu_map(_fit_restart, [(K, T_env, _seed(self.yml_conf["seed"], kf_ind, rs), self.st, self.s[idx],
+                                       self.a[idx], self._k(idx))
+                                      for rs in range(int(self.yml_conf.get("hiavi_restarts", 10)))],
+                       jobs_from(self.yml_conf, "hiavi_restart_jobs"))
+        for m, ll in fits:          # same order / rule as the serial loop
             if np.isfinite(ll) and ll > best_ll:
                 best, best_ll = m, ll
         if best is None:
@@ -433,7 +436,100 @@ def make_backend(yml_conf, conf):
     raise ValueError(f"multiagent.backend must be hiavi | swirl | swirl_scales | hiql_scales, got {b}")
 
 
-def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=None, concurrency_only=False):
+# ---------------------------------------------------------------------------
+# Parts (parallel / resumable runs): the observed CV and every time-shift null replicate can run as separate
+# jobs (--part obs | null:<i> | null:<i>-<j>) that write <out_dir>/<ma_subdir>/parts/<fingerprint>/cv_K<K>_*.csv;
+# the default run (no --part) reuses every part file present and computes the rest, then does the full-data fits
+# and the summary as before. Null replicate r always uses the r-th shift draw (drawn first, in order), so parts
+# merge into exactly the rows of a single run. The independent fits per (K, held-out animal) are cached as
+# pickles in the same folder and shared by all parts (they do not depend on the calendar shift).
+# fingerprint = hash of the YAML without multiagent.n_null / n_null_sync (adding replicates keeps the parts).
+# ---------------------------------------------------------------------------
+
+def _fingerprint(yml_conf):
+    import hashlib
+    y = json.loads(json.dumps(yml_conf, sort_keys=True, default=str))
+    m = y.get("multiagent") or {}
+    for k in ("n_null", "n_null_sync"):
+        m.pop(k, None)
+    return hashlib.sha1(json.dumps(y, sort_keys=True).encode()).hexdigest()[:12]
+
+
+class DiskCache(dict):
+    """dict of (K, animal) -> (T_env, model, train LL), mirrored to pickles (atomic writes; shared by parts)."""
+
+    def __init__(self, folder):
+        super().__init__()
+        self.folder = folder
+        os.makedirs(folder, exist_ok=True)
+
+    def _path(self, key):
+        K, an = key
+        return os.path.join(self.folder, f"base_K{int(K)}_{re.sub(r'[^A-Za-z0-9_.-]', '_', str(an))}.pkl")
+
+    def __contains__(self, key):
+        return dict.__contains__(self, key) or os.path.exists(self._path(key))
+
+    def __getitem__(self, key):
+        if not dict.__contains__(self, key):
+            import pickle
+            with open(self._path(key), "rb") as f:
+                dict.__setitem__(self, key, pickle.load(f))
+        return dict.__getitem__(self, key)
+
+    def __setitem__(self, key, value):
+        import pickle
+        dict.__setitem__(self, key, value)
+        path = self._path(key)
+        tmp = f"{path}.tmp{os.getpid()}"
+        try:
+            with open(tmp, "wb") as f:
+                pickle.dump(value, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, path)
+        except Exception as e:  # noqa: BLE001  (unpicklable backend model: keep it in memory only)
+            print(f"WARNING: could not cache the independent fit {key}: {e}")
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
+def parse_part(part, n_null):
+    """None | 'obs' | 'null:<i>' | 'null:<i>-<j>' (inclusive) | 'null:all' -> (do_obs, [null ids])."""
+    if part in (None, "", "all", "merge"):
+        return None
+    if part == "obs":
+        return True, []
+    if part.startswith("null:"):
+        r = part[5:]
+        if r == "all":
+            ids = list(range(n_null))
+        elif "-" in r:
+            a, b = (int(x) for x in r.split("-"))
+            ids = list(range(a, b + 1))
+        else:
+            ids = [int(r)]
+        bad = [i for i in ids if not 0 <= i < n_null]
+        if bad:
+            raise ValueError(f"null replicate ids {bad} outside 0..{n_null - 1} (multiagent.n_null)")
+        return False, ids
+    raise ValueError(f"--part must be obs | null:<i> | null:<i>-<j> | null:all, got {part!r}")
+
+
+def _part_csv(folder, K, null_id):
+    return os.path.join(folder, f"cv_K{int(K)}_obs.csv" if null_id < 0 else f"cv_K{int(K)}_null{int(null_id):04d}.csv")
+
+
+def _cv_part(folder, K, null_id, compute):
+    """Rows of one CV pass: read the part file if present, else compute and write it."""
+    path = _part_csv(folder, K, null_id) if folder else None
+    if path and os.path.exists(path):
+        return pd.read_csv(path).to_dict("records")
+    rows = compute()
+    if path:
+        atomic_to_csv(pd.DataFrame(rows), path, index=False)
+    return rows
+
+
+def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=None, concurrency_only=False, part=None):
     yml_conf = expand_inputs(yml_conf)
     conf = ma_conf(yml_conf)
     if backend is not None:
@@ -462,18 +558,36 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
     null_shifts = [draw_shifts(animals, rng, win, conf["null_min_shift_days"]) for _ in range(int(conf["n_null"]))]
     sync_shifts = [draw_shifts(animals, rng, win, conf["null_min_shift_days"])
                    for _ in range(int(conf["n_null_sync"]))]
+    sel = parse_part(part, len(null_shifts))
+    use_parts = sel is not None or bool(conf.get("parts", False))     # multiagent.parts: True keeps part files
+    folder = (os.path.join(out_dir, "parts", f"{re.sub(r'[^A-Za-z0-9_.-]', '_', str(bk.name))}_{_fingerprint(yml_conf)}")
+              if use_parts else None)
+    nv = {v: variants[v] for v in conf["null_variants"] if v in variants}
+    if sel is not None:             # one piece only (parallel job): write part files and return
+        do_obs, null_ids = sel
+        for K in (Ks or conf["Ks"]):
+            K = int(K)
+            cache = DiskCache(folder)
+            if do_obs:
+                _cv_part(folder, K, -1, lambda: run_cv(bk, conf, pc, K, variants, base_cache=cache, verbose=verbose))
+            for r in null_ids:
+                _cv_part(folder, K, r, lambda: run_cv(bk, conf, pc, K, nv, times=pc.shifted_times(null_shifts[r], win),
+                                                       null_id=r, base_cache=cache, verbose=False))
+                if verbose:
+                    print(f"K={K}: null replicate {r} done")
+        print("wrote parts in", folder)
+        return None
     rows, sync_rows = [], []
     summary = {"model": bk.name, "kinematics": bk.kin is not None, "window_days": win, "animals": animals, "K": {}}
     kin_tables = []
     for K in (Ks or conf["Ks"]):
         K = int(K)
-        cache = {}
-        rows_k = run_cv(bk, conf, pc, K, variants, base_cache=cache, verbose=verbose)
+        cache = DiskCache(folder) if folder else {}
+        rows_k = _cv_part(folder, K, -1, lambda: run_cv(bk, conf, pc, K, variants, base_cache=cache, verbose=verbose))
         if not skip_null:
-            nv = {v: variants[v] for v in conf["null_variants"] if v in variants}
             for r, sh in enumerate(null_shifts):
-                rows_k += run_cv(bk, conf, pc, K, nv, times=pc.shifted_times(sh, win), null_id=r,
-                                 base_cache=cache, verbose=False)
+                rows_k += _cv_part(folder, K, r, lambda: run_cv(bk, conf, pc, K, nv, times=pc.shifted_times(sh, win),
+                                                                null_id=r, base_cache=cache, verbose=False))
                 if verbose:
                     print(f"K={K}: null replicate {r + 1}/{len(null_shifts)} done")
         rows += rows_k
@@ -573,13 +687,16 @@ def cli(default_backend="hiavi"):
     ap.add_argument("--skip_null", action="store_true")
     ap.add_argument("--concurrency_only", action="store_true",
                     help="only write ma_concurrency.csv / ma_pairs.npz (data-sufficiency check, e.g. new species)")
+    ap.add_argument("--part", default=None, help="obs | null:<i> | null:<i>-<j> | null:all: run one piece of the CV "
+                    "(parallel jobs; then run without --part to merge, fit the full data and write the summary)")
     ap.add_argument("--backend", default=None, help="hiavi | swirl | swirl_scales | hiql_scales (default: "
                     "multiagent.backend or " +
                     default_backend + ")")
     args = ap.parse_args()
     conf = read_conf(args.yaml)
     b = args.backend or (conf.get("multiagent") or {}).get("backend") or default_backend
-    run_multiagent(conf, Ks=args.K, skip_null=args.skip_null, backend=b, concurrency_only=args.concurrency_only)
+    run_multiagent(conf, Ks=args.K, skip_null=args.skip_null, backend=b, concurrency_only=args.concurrency_only,
+                   part=args.part)
 
 
 if __name__ == "__main__":

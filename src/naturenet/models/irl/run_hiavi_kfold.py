@@ -18,6 +18,10 @@ Outputs (base = <out_dir>/<run_uid>_<K>_<seed>, tag = _KF_<k> or "" for the fina
   base_hiavi_LL_test<tag>.npz  same for the test animals
   <out_dir>/ll_hiavi.csv       one row per (K, run, fold): K, seed, run_uid, fold, train_ll, test_ll
 
+Speed (results unchanged): hiavi_restart_jobs (default 1; env NATURENET_HIAVI_RESTART_JOBS) runs the restarts in
+parallel processes; max_train_seqs / max_test_seqs (null = all; changes results) subsample each CV fold exactly as
+run_swirl_kfold (same rows for every K and run). ll_hiavi.csv updates are locked (parallel jobs).
+
 Config keys (defaults): hiavi_discount 0.9, hiavi_restarts 10, hiavi_mstep soft (| sample),
 hiavi_pseudocount 0, hiavi_max_iters 200, hiavi_tol 1e-6, hiavi_sticky 0.95, hiavi_iavi_tol 1e-8,
 hiavi_iavi_max_iters 10000, hiavi_align swirl, plus the usual n_states, n_hidden, seed, out_dir, run_uid,
@@ -39,6 +43,7 @@ import sparse
 
 from naturenet.environment.pipeline_checks import check_folds, check_swirl_inputs, check_trans_prob
 from naturenet.models.irl.hiavi_model import HIAVI
+from naturenet.models.irl.parallel import cpu_map, jobs_from, update_csv
 from naturenet.models.irl.kinematics import cached_kinematics, comparable_ll, kin_conf, labels_from_conf, p_exploit, pooled
 from naturenet.models.irl.swirl_data import (
     PAD_ACTION,
@@ -51,6 +56,7 @@ from naturenet.models.irl.swirl_data import (
     holdout_split,
     load_swirl_dataset,
     seq_meta_arrays,
+    subsample_fold,
     trans_prob_from_segments,
 )
 
@@ -159,6 +165,12 @@ def _seed(seed, kf_ind, restart):
 # One fit (K-fold and final runs)
 # ---------------------------------------------------------------------------
 
+def _fit_restart(K, T, seed, st, s, a, kin):
+    """One random restart (module level so cpu_map can run restarts in parallel processes)."""
+    m = HIAVI(K, T, seed=seed, **st).fit(s, a, kin)
+    return m, m.loglik(s, a, kin)
+
+
 def fit_hiavi(yml_conf, data, train_index, test_index, tag, kf_ind=None, verbose=True):
     """Restarts on the train split, best by TRAIN LL; saves model + train / test LL / latent files."""
     K = int(yml_conf["n_hidden"])
@@ -173,9 +185,9 @@ def fit_hiavi(yml_conf, data, train_index, test_index, tag, kf_ind=None, verbose
     kin_null = None if kin is None else pooled(k_tr, st["kinematics"])   # train-only null for the comparable LL
 
     best, restart_ll = None, []
-    for rs in range(n_restarts):
-        m = HIAVI(K, T, seed=_seed(yml_conf["seed"], kf_ind, rs), **st).fit(s[tr], a[tr], k_tr)
-        ll = m.loglik(s[tr], a[tr], k_tr)
+    fits = cpu_map(_fit_restart, [(K, T, _seed(yml_conf["seed"], kf_ind, rs), st, s[tr], a[tr], k_tr)
+                                  for rs in range(n_restarts)], jobs_from(yml_conf, "hiavi_restart_jobs"))
+    for m, ll in fits:              # same order and selection rule as the serial loop
         restart_ll.append(ll)
         if not np.isfinite(ll):
             continue
@@ -233,12 +245,13 @@ def _append_summary(yml_conf, fold, out):
     row = pd.DataFrame([{"K": int(yml_conf["n_hidden"]), "seed": int(yml_conf["seed"]),
                          "run_uid": yml_conf["run_uid"], "fold": fold,
                          "train_ll": out["train_ll"], "test_ll": out["test_ll"]}])
-    if os.path.exists(path):
-        old = pd.read_csv(path)
+    def merge(old):                 # locked: parallel jobs (folds / K / runs) append to the same CSV
+        if old is None:
+            return row
         old = old[~((old["run_uid"] == yml_conf["run_uid"]) & (old["K"] == int(yml_conf["n_hidden"]))
                     & (old["seed"] == int(yml_conf["seed"])) & (old["fold"].astype(str) == str(fold)))]
-        row = pd.concat([old, row], ignore_index=True)
-    row.to_csv(path, index=False)
+        return pd.concat([old, row], ignore_index=True)
+    update_csv(path, merge)
 
 
 def summary_from_files(yml_conf, n_folds=None):
@@ -262,6 +275,7 @@ def run_hiavi_kfold(yml_conf, data=None, folds_to_run=None, write_summary=True):
         if sel is not None and kf_ind not in sel:
             continue
         check_folds(data["groups"], tr, te, name=f"fold {kf_ind}")
+        tr, te = subsample_fold(yml_conf, data, tr, te, kf_ind)     # max_train_seqs / max_test_seqs (null = all)
         tag = "_KF_" + str(kf_ind)
         if os.path.exists(hiavi_names(yml_conf, tag)["ll_test"]) and not yml_conf.get("overwrite", False):
             print("HIAVI fold", kf_ind, "exists; skipping")

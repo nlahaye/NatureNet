@@ -13,7 +13,8 @@ from jax.scipy.special import logsumexp as jax_logsumexp
 import optax
 from typing import NamedTuple
 
-jax.config.update("jax_enable_x64", True)
+from naturenet.models.irl.jax_precision import configure as _configure_precision
+_configure_precision()   # float64 unless NATURENET_JAX_X64=0 (jax_precision.py)
 # jax.config.update("jax_platform_name", "cpu")
 
 

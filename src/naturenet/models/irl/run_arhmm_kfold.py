@@ -17,6 +17,11 @@ logits file or, for older runs, re-fit with the same seed (the existing init fil
 arhmm_pseudo_count (default 1e-5, the previous fixed value) is the Dirichlet pseudo-count of the AR tables;
 arhmm_pseudo_support: "T" applies it only to moves reachable under the fold's T (others get arhmm_pseudo_floor).
 Use a separate run_uid / out_dir per value (finished folds are skipped).
+
+Speed: the ssm fork's sufficient-statistic transition M-step / table lookups (same results) make most of the
+difference; arhmm_estep_jobs (default 1) adds a parallel E-step for single large fits. Opt-in, changes results:
+arhmm_tol_per_step (default 0 = run all arhmm_epochs) stops EM early; max_train_seqs / max_test_seqs subsample each
+fold exactly as run_swirl_kfold does (use a separate run_uid / out_dir).
 """
 
 import numpy as np
@@ -30,7 +35,8 @@ from ssm.observations import ARCategoricalObservations
 
 from sit_fuse.utils import read_yaml
 
-from naturenet.models.irl.swirl_data import align_data, as_list, get_folds, load_swirl_dataset, step_mask
+from naturenet.models.irl.swirl_data import align_data, as_list, get_folds, load_swirl_dataset, step_mask, subsample_fold
+from naturenet.models.irl.parallel import jobs_from
 from naturenet.models.irl.kinematics import KinFeatures, KinematicEmissions, cached_kinematics, kin_conf, pooled
 from naturenet.models.irl.arhmm_action_ll import arhmm_action_lls, arhmm_ar_logits
 
@@ -53,10 +59,12 @@ def kin_datas(positions, kin):
 
 
 def fit_arhmm_params(positions, n_hidden_states, n_states, emission_dim=1, latent_state_dim=1, epochs=100,
-                     kin=None, kin_cfg=None, transitions="mlprecurrent", inputs=None, transition_kwargs=None):
+                     kin=None, kin_cfg=None, transitions="mlprecurrent", inputs=None, transition_kwargs=None,
+                     tol_per_step=0.0):
     """
     Fit an ARHMM on (N, T) state sequences; kin (KinFeatures aligned with positions) + kin_cfg -> kinematic
-    ARHMM. Returns (arhmm, list_x, EM LL trace).
+    ARHMM. Returns (arhmm, list_x, EM LL trace). tol_per_step > 0 stops EM once the log-probability changes by
+    less than tol_per_step * (number of steps) between iterations (default 0: all `epochs` iterations).
     """
     M = 0 if inputs is None else int(np.asarray(inputs[0]).shape[1])
     if kin is not None:
@@ -71,8 +79,24 @@ def fit_arhmm_params(positions, n_hidden_states, n_states, emission_dim=1, laten
         list_x = [np.expand_dims(np.array(p), axis=1) for p in positions]
         arhmm_s = ARHMMs(emission_dim, n_hidden_states, latent_state_dim, n_states, M=M, transitions=transitions,
                          transition_kwargs=transition_kwargs, dynamics="arcategorical", single_subspace=True)
-    lls = arhmm_s.initialize(list_x, inputs=inputs, num_init_iters=epochs)
+    kw = {}
+    if tol_per_step and float(tol_per_step) > 0:   # needs the ssm fork with ARHMMs.initialize(tolerance=...)
+        kw["tolerance"] = float(tol_per_step) * float(sum(len(x) for x in list_x))
+    lls = arhmm_s.initialize(list_x, inputs=inputs, num_init_iters=epochs, **kw)
     return arhmm_s, list_x, lls
+
+
+def set_arhmm_speed(yml_conf):
+    """
+    Parallel E-step across sequences (ssm.parallel; identical results): arhmm_estep_jobs (default 1; env
+    NATURENET_ARHMM_ESTEP_JOBS; -1 = all cores). Worth it for single large fits (e.g. final holdout runs); when
+    many ARHMM jobs already share the CPUs (launcher), keep 1.
+    """
+    try:
+        from ssm import hmm_old
+    except ImportError:
+        return
+    hmm_old.ARHMM.estep_n_jobs = jobs_from(yml_conf, "arhmm_estep_jobs")
 
 
 def arhmm_start_params(arhmm_s):
@@ -94,12 +118,14 @@ def _kin_null_split(kin_null, kin, lengths=None):
 
 
 def run_arhmm_internal(seed, emission_dim, n_hidden_states, latent_state_dim, n_states, positions, out_dir, run_uid, kf_ind,
-                       test_positions=None, kin_train=None, kin_test=None, kin_cfg=None, epochs=100, write_init=True):
+                       test_positions=None, kin_train=None, kin_test=None, kin_cfg=None, epochs=100, write_init=True,
+                       tol_per_step=0.0):
     """Fit one fold. write_init False keeps an existing init file (re-fit only to add LLs). Returns the ARHMM."""
 
     os.makedirs(out_dir, exist_ok=True)
     arhmm_s, list_x, lls_arhmm = fit_arhmm_params(positions, n_hidden_states, n_states, emission_dim,
-                                                  latent_state_dim, epochs, kin=kin_train, kin_cfg=kin_cfg)
+                                                  latent_state_dim, epochs, kin=kin_train, kin_cfg=kin_cfg,
+                                                  tol_per_step=tol_per_step)
     init_start = arhmm_s.init_state_distn.initial_state_distn
     logpi0_start = arhmm_s.init_state_distn.log_pi0
     log_Ps_start = arhmm_s.transitions.log_Ps
@@ -230,9 +256,12 @@ def run_arhmm(yml_conf, data=None, folds_to_run=None):
     kcfg = kin_conf(yml_conf)
     kin = None if kcfg is None else cached_kinematics(yml_conf, data, kcfg, offset=1, shape=np.asarray(xs).shape)
 
+    set_arhmm_speed(yml_conf)
     for kf_ind, (train_index, test_index) in enumerate(folds):
         if folds_to_run is not None and kf_ind not in as_list(folds_to_run):
             continue
+        # max_train_seqs / max_test_seqs (null = all): the same rows SWIRL / HIAVI / scales use for this fold
+        train_index, test_index = subsample_fold(yml_conf, data, train_index, test_index, kf_ind)
         f_init = arhmm_fname(out_dir, run_uid, n_hidden, seed, kf_ind)
         f_ll = arhmm_ll_fname(out_dir, run_uid, n_hidden, seed, kf_ind)
         want_act = bool(yml_conf.get("arhmm_action_ll", True))
@@ -259,7 +288,8 @@ def run_arhmm(yml_conf, data=None, folds_to_run=None):
                                      kin_train=None if kin is None else kin[train_index],
                                      kin_test=None if kin is None or not has_te else kin[test_index], kin_cfg=kcfg,
                                      epochs=int(yml_conf.get("arhmm_epochs", 100)),
-                                     write_init=overwrite or not os.path.exists(f_init))
+                                     write_init=overwrite or not os.path.exists(f_init),
+                                     tol_per_step=float(yml_conf.get("arhmm_tol_per_step", 0.0) or 0.0))
         if want_act:
             add_action_lls(yml_conf, data, train_index, test_index if has_te else None, kf_ind, arhmm_s=arhmm_s)
 

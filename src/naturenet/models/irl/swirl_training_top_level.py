@@ -17,7 +17,8 @@ import optax
 from naturenet.models.irl.swirl_training import *
 from naturenet.models.irl.swirl_utils import *
 
-jax.config.update("jax_enable_x64", True)
+from naturenet.models.irl.jax_precision import configure as _configure_precision
+_configure_precision()   # float64 unless NATURENET_JAX_X64=0 (jax_precision.py)
 #jax.config.update("jax_platform_name", "gpu")
 
 

@@ -46,7 +46,8 @@ from naturenet.models.irl.swirl_training_nn import (  # noqa: F401  (re-exported
     vinet_expand,
 )
 
-jax.config.update("jax_enable_x64", True)
+from naturenet.models.irl.jax_precision import configure as _configure_precision
+_configure_precision()   # float64 unless NATURENET_JAX_X64=0 (jax_precision.py)
 
 from tqdm import tqdm
 

@@ -78,7 +78,8 @@ from jax.scipy.special import logsumexp as lse
 from naturenet.models.irl.swirl_training import LOG_EPS, _minimize, sigmoid_jax
 from naturenet.models.irl.swirl_training_top_level import _converged
 
-jax.config.update("jax_enable_x64", True)
+from naturenet.models.irl.jax_precision import configure as _configure_precision
+_configure_precision()   # float64 unless NATURENET_JAX_X64=0 (jax_precision.py)
 
 NEG = -1e30          # masked logits (finite, so 0 * NEG = 0 in the expected log-likelihoods)
 ALPHA_MAX = 1.0 - 1e-6   # as swirl_ext

@@ -27,6 +27,7 @@ import os
 import pandas as pd
 
 from naturenet.models.irl import swirl_scales as sc
+from naturenet.models.irl.parallel import update_csv
 from naturenet.models.irl.run_hiavi_multiagent import expand_inputs, read_conf, run_multiagent
 from naturenet.models.irl.run_swirl_scales_kfold import LATENT_KEYS, _toggle
 
@@ -82,7 +83,9 @@ def summary_rows(summary, backend, name, step, vconf):
     return rows
 
 
-def run_all(yml_conf, backends=None, only=None, Ks=None, skip_null=False):
+def run_all(yml_conf, backends=None, only=None, Ks=None, skip_null=False, part=None):
+    """part (obs | null:<i>[-<j>] | null:all): write only that piece of every selected pair's CV (parallel jobs;
+    see run_hiavi_multiagent); rerun without part to merge and write the summaries."""
     yml_conf = expand_inputs(yml_conf)
     m = yml_conf.get("multiagent") or {}
     backends = list(backends or m.get("scales_backends") or BACKENDS)
@@ -92,20 +95,24 @@ def run_all(yml_conf, backends=None, only=None, Ks=None, skip_null=False):
         variants = [v for v in variants if v[0] in keep]
     print("backends", backends, "variants", [v[0] for v in variants])
     path = os.path.join(yml_conf["out_dir"], "ma_scales_summary.csv")
-    rows = []
     for backend in backends:
         for name, step, vconf in variants:
             print(f"=== {backend} / {name} (step {step}) ===")
             summ = run_multiagent(pair_conf(yml_conf, backend, name, vconf), Ks=Ks, skip_null=skip_null,
-                                  backend=backend)
-            rows += summary_rows(summ, backend, name, step, vconf)
-            new = pd.DataFrame(rows)
-            if os.path.exists(path):                     # keep rows of pairs not re-run
-                old = pd.read_csv(path)
+                                  backend=backend, part=part)
+            if part:
+                continue
+            new = pd.DataFrame(summary_rows(summ, backend, name, step, vconf))
+
+            def merge(old, new=new):                     # keep rows of pairs not re-run (locked: parallel drivers)
+                if old is None:
+                    return new
                 done = set(zip(new["backend"], new["scale_variant"], new["K"]))
                 old = old[[(b, v, k) not in done for b, v, k in zip(old["backend"], old["scale_variant"], old["K"])]]
-                new = pd.concat([old, new], ignore_index=True)
-            new.to_csv(path, index=False)
+                return pd.concat([old, new], ignore_index=True)
+            update_csv(path, merge)
+    if part:
+        return None
     print("wrote", path)
     return pd.read_csv(path)
 
@@ -117,9 +124,11 @@ def main():
     ap.add_argument("--variant", nargs="*", default=None)
     ap.add_argument("--K", type=int, nargs="*", default=None)
     ap.add_argument("--skip_null", action="store_true", help="no time-shift null (run first; nulls are costly)")
+    ap.add_argument("--part", default=None, help="obs | null:<i> | null:<i>-<j> | null:all (see run_hiavi_multiagent)")
     a = ap.parse_args()
-    df = run_all(read_conf(a.yaml), a.backend, a.variant, a.K, a.skip_null)
-    print(df.to_string(index=False))
+    df = run_all(read_conf(a.yaml), a.backend, a.variant, a.K, a.skip_null, a.part)
+    if df is not None:
+        print(df.to_string(index=False))
 
 
 if __name__ == "__main__":

@@ -14,7 +14,8 @@ from functools import partial
 from jax.scipy.special import logsumexp as jax_logsumexp
 import optax
  
-jax.config.update("jax_enable_x64", True)
+from naturenet.models.irl.jax_precision import configure as _configure_precision
+_configure_precision()   # float64 unless NATURENET_JAX_X64=0 (jax_precision.py)
 # Platform is left to JAX (uses the GPU when present, else CPU).
 # jax.config.update("jax_platform_name", "gpu")
 

@@ -153,7 +153,8 @@ class PartnerContext:
         wins = _as_windows(window) or [(np.nanmin(self.times), np.nanmax(self.times) + 1e-6)]
         out = self.times.copy()
         for an, dlt in shifts.items():
-            m = self.animal == an
+            m = np.asarray(self.animal == an)
+            m = m.reshape(m.shape + (1,) * (self.times.ndim - m.ndim))    # (N,) animal ids vs (N, T) step times
             for t0, t1 in wins:
                 L = t1 - t0
                 mw = m & (self.times >= t0) & (self.times < t1)
