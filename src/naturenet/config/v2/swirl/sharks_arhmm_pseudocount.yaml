@@ -15,7 +15,7 @@
 # Compare on the action LL (arhmm_act): same event space and steps as SWIRL S-1 / S-2.
 
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/ll_comparison_pseudocount/"
-out_prefix: "hammerhead_v1_arhmm_pc"
+out_prefix: "hammerhead_v2_arhmm_pc"
 title: "Hammerhead ARHMM pseudo-count (action LL)"
 ci: 0.95
 compare_k: 3

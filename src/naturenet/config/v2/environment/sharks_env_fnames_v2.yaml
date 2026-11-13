@@ -1,6 +1,6 @@
 # Optional (legacy output): scene file names along the tracks, env_maps_fnames_shark<key>.pkl.
 #   python -m naturenet.models.misc.gather_shark_env_input_fnames -y config/v2/environment/sharks_env_fnames_v2.yaml
-df_uid: "hammerhead_v1"
+df_uid: "hammerhead_v2"
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/env_fnames/"
 output_uid: "env_maps_fnames_shark"

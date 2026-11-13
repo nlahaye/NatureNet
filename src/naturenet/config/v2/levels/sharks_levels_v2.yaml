@@ -1,12 +1,13 @@
 # Multi-scale SIT-FUSE environment levels for the sharks (fine = heir baseline in config/v2/environment + config/v2/swirl).
 #   python -m naturenet.environment.make_level_configs -y config/v2/levels/sharks_levels_v2.yaml [--dry_run]
 # -> config/v2/levels/sharks/<level>/{link, env_format, abstract_env, sync, <runs>}.yaml + ll_comparison_levels.yaml
+# The seascape level needs the Seascapes rasters first (naturenet.environment.seascapes all).
 # Choose the coarse K values from <SIT-FUSE out>/hierarchy/cut_summary.csv (sit_fuse cluster_hierarchy build) and
 # regenerate. Every coarse k must be one of the hierarchy ks.
 out_config_dir: config/v2/levels/sharks        # relative to the naturenet package dir
 base_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"          # v2 fine run (movement files are symlinked from here)
 levels_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/levels/"
-df_run_uid: "hammerhead_v1"
+df_run_uid: "hammerhead_v2"
 output_uid: "final_env_maps_"
 hierarchy_json: "/data/nlahaye/output/Learnergy/COP_SHARK_V2/hierarchy/cluster_hierarchy.json"
 sitfuse_out_dir: "/data/nlahaye/output/Learnergy/COP_SHARK_V2/"
@@ -18,6 +19,9 @@ levels:
   - {name: k30, level: coarse, k: 30}
   - {name: k20, level: coarse, k: 20}
   - {name: k12, level: coarse, k: 12}
+  # MBON Seascapes baseline (naturenet.environment.seascapes): a published habitat classification as the state space
+  - {name: seascape, level: categorical, scene_file_template: "/data/nlahaye/NatureNet_Env/Seascapes/v2/sharks/seascape_sharks_t{i}.tif",
+     cluster_scale: 1, zero_label_valid: False, exclude_classes: [], interpret_subdir: interpret_seascape}
 templates:
   env_format: config/v2/environment/sharks_env_format_clusters_v2.yaml
   abstract_env: config/v2/environment/sharks_abstract_env_v2.yaml

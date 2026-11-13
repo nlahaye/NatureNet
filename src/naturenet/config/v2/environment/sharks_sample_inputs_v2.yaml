@@ -1,8 +1,8 @@
-# Raw v2 inputs at each fix -> /data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v1_<key>_states_input.pkl (plots, series export, correlation).
+# Raw v2 inputs at each fix -> /data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_<key>_states_input.pkl (plots, series export, correlation).
 #   python -m naturenet.environment.sample_env_inputs -y config/v2/environment/sharks_sample_inputs_v2.yaml
 # Replaces env_data_format (raw scenes) + movement_preprocess_pipeline gather_input: reads each scene day once.
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
-df_run_uid: "hammerhead_v1"
+df_run_uid: "hammerhead_v2"
 scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_scene_index.csv"
 complete_scenes_only: True
 env_meta_json: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_env_meta.json"

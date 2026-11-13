@@ -5,10 +5,10 @@
 #   python -m naturenet.models.irl.get_stats_hiavi -y v2/swirl/sharks_hiavi_kfold.yaml [--n_hidden K] [--run i] [--fold k]
 # --- shared data block (identical in every full_plan shark config -> comparable LLs, shared folds) ---
 n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
-actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v1_*_actions.pkl"
+actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_*_actions.pkl"
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
-df_run_uid: "hammerhead_v1"
+df_run_uid: "hammerhead_v2"
 per_fold_trans_prob: True
 fill_unobserved: "self_loop"
 require_full_trans_prob: True

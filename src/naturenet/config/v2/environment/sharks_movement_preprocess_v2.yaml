@@ -1,0 +1,31 @@
+# Step 3a (sharks): movement preprocessing on the re-jittered shark tracks. It replaces the v1 link
+# (sharks_link_v2.yaml), because the tracks changed, so the v1 dfs / actions / grids / folds no longer apply.
+#   python -m naturenet.environment.movement_preprocess_pipeline -y config/v2/environment/sharks_movement_preprocess_v2.yaml
+# -> /data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2{_dfs.pkl, _dfs_params.json, _<key>_actions.pkl, _<key>_grid.pkl, ...}
+# Every v2 shark config uses df_run_uid hammerhead_v2.
+
+# new land-jittered tracks (update the file name if the re-jittered CSV was written elsewhere)
+movement_csv: "/data/nlahaye/NatureNet/Hammerhead_In/Argosfilter_filtered_Sphyrna_SPOT_tracks_multiID_2020-03-13_2024-10-08.augmented.land_jittered.csv"
+
+lon_bounds: [-100.0, -60.0]   # = shark env bbox (cmems_env_sharks.yaml); fixes outside are dropped
+lat_bounds: [20.0, 40.0]
+
+# movement (action) grid, as in v1 (hammerhead_movement_preprocess.yaml)
+grid_res_lon: 0.009000090001
+grid_res_lat: 0.009000090001
+
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
+run_uid: "hammerhead_v2"
+df_run_uid: "hammerhead_v2"
+
+init_preprocess: True
+# Segmentation, as for whales. No cap, so segment_policy: variable with seq_len 60 / min_seq_len 10 splits long
+# runs in the loader. (v1 used the default cap of 49 fixes, so seq_len 60 was never reached.)
+# Set max_segment_len: 49 to keep the v1 segmentation.
+max_gap_days: 2.0
+max_segment_len: null
+min_segment_len: 2
+segment_overlap: True
+
+skip_uids: []

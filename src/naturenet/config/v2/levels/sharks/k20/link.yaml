@@ -2,7 +2,7 @@
 #   python -m naturenet.environment.link_movement_run -y config/v2/levels/sharks/k20/link.yaml
 src_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/
 dst_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/levels/k20/
-df_run_uid: hammerhead_v1
+df_run_uid: hammerhead_v2
 exclude:
 - '*_states_abstract_env.pkl'
 - '*_trans_prob_abstract_env.npz'
