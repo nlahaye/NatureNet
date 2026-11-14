@@ -1,0 +1,97 @@
+# Fixed-epoch rerun of whales_swirl_scales.yaml, matched to the Phase B whale S-1 baseline (whales_swirl_kfold.yaml):
+#   em_tol        1e-5 -> null   (no early stopping; the baseline runs fixed epochs 50 / 30)
+#   scales.init   auto -> arhmm  (fail if the init is missing; auto silently falls back to sticky_init, which is
+#                                 what the first whale scales run most likely used: no planned job wrote its ARHMM)
+#   init          the baseline ARHMM (WHALE_SWIRL_BASE run 0, seed 12345, K = 5), linked below, not a new fit
+#   run_arhmm / run_swirl_init / run_swirl_final / run_s2 -> False (no ARHMM or S-1 / S-2 reference refits here)
+#   out_dir       Blue_Whale_v2/scales_fixed/ (the first run in scales/ is kept); run_uid unchanged
+# 1. Link the baseline ARHMM init into the new out_dir:
+#      mkdir -p /data/nlahaye/NatureNet/Blue_Whale_v2/scales_fixed && cd $_
+#      for k in 0 1 2 3 4; do ln -sf ../baselines/WHALE_SWIRL_BASE_loop_0_latent_5_states_5_hidden_12345_seed_arhmm_s_KF_$k.npz \
+#        WHALE_SWIRL_SCALES_5_hidden_12345_seed_arhmm_s_KF_$k.npz; done
+# 2. python -m naturenet.models.irl.run_swirl_scales_kfold -y naturenet/config/v2/swirl/whales_swirl_scales_fixed.yaml --check
+# 3. Launcher: plan_jobs --scales .../whales_swirl_scales_fixed.yaml (NatureNet_v2_retest_commands.md, "Parallel runs")
+# 4. python -m naturenet.models.irl.plot_swirl_scales -y naturenet/config/v2/swirl/whales_swirl_scales_fixed.yaml
+# Check: N1 test LL per fold should be close to the baseline S-1 K = 5 run 0 (-1.859 -1.819 -1.903 -1.818 -1.847).
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/whales_swirl_scales.yaml;
+# only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
+# Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# Full plan, Phase C (whales): decision scales at K* (same data / folds as Phase B).
+#   python -m naturenet.models.irl.run_swirl_kfold        -y v2/swirl/whales_swirl_scales.yaml   # ARHMM init + S-1/S-2 refs
+#   python -m naturenet.models.irl.run_swirl_scales_kfold -y v2/swirl/whales_swirl_scales.yaml --check
+#   python -m naturenet.models.irl.run_swirl_scales_kfold -y v2/swirl/whales_swirl_scales.yaml [--fold k] [--variant ...]
+#   python -m naturenet.models.irl.plot_swirl_scales      -y v2/swirl/whales_swirl_scales.yaml
+# --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+df_run_uid: "SWIRL_WHALE_1517"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5                  # 44 animals (2015 + 2017, <year>_<uid>) -> 8-9 per test fold (folds group by base id, so __aug copies stay together)
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+# Every toggle defaults to off (order 1 + all off = SWIRL S-1). Durations need max_duration <= seq_len / 3 (D = 12).
+
+seed: 12345
+n_hidden_init: 5            # whale K* (S-1 1-SE rule; Phase C run)
+n_hidden: 5                 # whale K* (S-1 1-SE rule; Phase C run)
+emission_dim: 1
+latent_state_dim: 1
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/scales_fixed/"
+run_uid: "WHALE_SWIRL_SCALES"
+
+folds_to_run: null
+holdout_fraction: 0.2
+
+epochs: 50                  # stage 1 (no temperature)
+epochs_2: 30                # stage 2 (temps_final)
+em_tol: null                # fixed epochs (= the Phase B baseline)
+temps_final: 1.0            # = Phase B / the Phase C run
+run_arhmm: False            # baseline ARHMM linked (header step 1)
+run_swirl_init: False       # baseline S-1 / S-2 already exist (Blue_Whale_v2/baselines/)
+run_swirl_final: False
+run_s2: False
+epochs_init: 50
+epochs_init_2: 30
+overwrite: False
+
+# kinematics: {enabled: True, step_feature: "speed_kmh", min_dt_h: 3.0}   # sensitivity only (short-dt Argos error)
+
+scales:
+  init: "arhmm"             # fail if the linked ARHMM is missing (no silent sticky_init)
+  warm_start: True
+  warm_epochs: 30
+  reward_param: "additive"
+  reward_l2: 1.0
+  context_min_count: 5      # prune k-grams (k >= 2) seen < 5 times in the training animals
+  context_source: "train"
+  context_t_support: False
+  reward_optimizer: "auto"
+  reward_tol: null
+
+  defaults:
+    switch_history: {kind: "lags+decay", lags: 2, decay_steps: [3, 10], window: 10}
+    durations: {hazard: "logistic", max_duration: 12, hazard_features: False, smooth: 1.0, l2: 1.0}
+    hierarchy: {n_regimes: 2, sticky: 0.95, prior: 0.0, init_noise: 0.5}
+
+  grid:
+    order: [1, 2, 3]          # drop 3 if --check shows < ~20 steps per deep context; add 4 only if N3 is N*
+    switch_history: ["off"]
+    durations: ["off"]
+    hierarchy: ["off"]
+  variants:
+    - {switch_history: "on"}
+    - {durations: "on"}
+    # - {durations: {hazard: "nonparametric", smooth: 5.0}}     # only if the logistic hazard is kept (shape check)
+    - {hierarchy: "on"}
+    - {switch_history: "on", durations: "on"}
+    # - {switch_history: "on", durations: "on", hierarchy: "on"}   # only if >= 2 single layers are kept
+  # Stage B (after A): best latent configuration crossed with order, e.g.
+  #   - {order: 2, durations: "on"}
