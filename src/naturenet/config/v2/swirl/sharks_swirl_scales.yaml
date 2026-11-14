@@ -38,8 +38,8 @@ folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/folds/"     # one fold fil
 # ARHMM init: run run_swirl_kfold with run_arhmm: True on this YAML first (or scales.init: sticky).
 
 seed: 12345
-n_hidden_init: 3            # = K* from Phase B (edit)
-n_hidden: 3                 # = K* from Phase B (edit)
+n_hidden_init: 3            # v2 S-1 best-fit K
+n_hidden: 3                 # v2 S-1 best-fit K
 emission_dim: 1
 latent_state_dim: 1
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/scales/"

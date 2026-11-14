@@ -1,8 +1,10 @@
 # v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/sharks_hiql_scales.yaml;
 # only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
 # Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
-# Phase C (great hammerheads), HIQL emission: decision scales on HIQL / HIAVI at K = 3 (same data / folds as Phase B).
-# N1 (order 1, all layers off) = HIAVI K = 3 (Phase B: -1.929; report gains with and without fold 3); N2 / N3 back off deep contexts to their parent.
+# Phase C (great hammerheads), HIQL emission: decision scales on HIQL / HIAVI at K = 2 (same data / folds as the baselines).
+# v2 HIQL best-fit K = 1 (= IAVI) has no intentions to switch between, so K = 2 is the smallest K where every layer is
+# defined. The earlier v2 run at K = 3 (run_uid HIQL_SCALES) is kept; this one writes HIQL_SCALES_K2.
+# N1 (order 1, all layers off) = HIAVI K = 2 (check against the v2 baseline); N2 / N3 back off deep contexts to their parent.
 # Nothing to precompute (no ARHMM init). Reward-side options (reward_param, reward_l2, reward_tol, init) are ignored.
 #   python -m naturenet.models.irl.run_swirl_scales_kfold -y v2/swirl/sharks_hiql_scales.yaml --check
 #   python -m naturenet.models.irl.run_swirl_scales_kfold -y v2/swirl/sharks_hiql_scales.yaml [--fold k] [--variant ...]
@@ -31,11 +33,11 @@ folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/folds/"     # one fold fil
 
 seed: 12345
 n_hidden_init: 3            # unused for HIQL (no ARHMM init)
-n_hidden: 3                 # HIQL K (Phase B)
+n_hidden: 2                 # HIQL K (see header)
 emission_dim: 1
 latent_state_dim: 1
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/scales/"
-run_uid: "HIQL_SCALES"   # separate from the SWIRL scales run (the runner refuses to mix)
+run_uid: "HIQL_SCALES_K2"   # separate from the SWIRL scales run (the runner refuses to mix)
 
 
 

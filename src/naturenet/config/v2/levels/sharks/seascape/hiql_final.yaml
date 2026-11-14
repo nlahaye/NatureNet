@@ -3,10 +3,11 @@
 # v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/sharks_hiql_final.yaml;
 # only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
 # Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
-# Final single-animal HIQL (HIAVI) fit (sharks, K = 3) for maps, time series and reward projection.
+# Final single-animal HIQL (HIAVI) fit (sharks, K = 2) for maps, time series and reward projection. v2 HIQL best-fit
+# K = 1 is IAVI (sharks_iavi_final.yaml); K = 2 is the smallest K that shows more than one intention.
 #   python -m naturenet.models.irl.run_hiavi_kfold        -y v2/swirl/sharks_hiql_final.yaml --holdout
 #   python -m naturenet.models.irl.plot_hiavi             -y v2/swirl/sharks_hiql_final.yaml
-#   python -m naturenet.models.irl.reward_env_projection  -y v2/swirl/sharks_hiql_final.yaml -p v2/swirl/sharks_reward_env_projection.yaml --n_hidden 3   (set model: hiavi in the -p file)
+#   python -m naturenet.models.irl.reward_env_projection  -y v2/swirl/sharks_hiql_final.yaml -p v2/swirl/sharks_reward_env_projection.yaml --n_hidden 2   (set model: hiavi in the -p file)
 # Same data block and HIAVI settings as the Phase B CV. Check n_states / actions against the Phase B YAML you ran.
 # --- shared data block (identical to the Phase B / C shark configs -> same sequences) ---
 n_states: null   # synced by naturenet.environment.sync_v2_configs (level K + 1 absorbing)
@@ -27,8 +28,8 @@ folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/folds/"
 
 
 seed: 12345                 # base seed; get_stats_hiavi runs use seed + run index
-n_hidden_init: 3
-n_hidden: 3
+n_hidden_init: 2
+n_hidden: 2
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/levels/seascape/final/hiql/"
 run_uid: "SHARK_HIQL_FINAL_SEASCAPE"   # level run
 

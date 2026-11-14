@@ -16,7 +16,20 @@ import argparse
 
 from sit_fuse.utils import read_yaml
 
-from naturenet.models.irl.swirl_data import align_for_swirl, as_list, get_folds, holdout_split, load_swirl_dataset
+from naturenet.models.irl.swirl_data import align_data, as_list, get_folds, holdout_split, load_swirl_dataset, step_mask
+
+
+def _real_rows(data):
+    """Aligned SWIRL states x per sequence; segment_policy: variable -> object array of the real steps only
+    (the ssm ARHMM takes a list of sequences, as in run_arhmm_kfold)."""
+    xs, _, _ = align_data(data)
+    if not data.get("variable", False):
+        return xs
+    n_real = step_mask(data, offset=1).sum(1)
+    rows = np.empty(len(xs), dtype=object)
+    for i in range(len(xs)):
+        rows[i] = xs[i, :n_real[i]]
+    return rows
 
 
 def arhmm_nn_fname(out_dir, run_uid, n_hidden, seed, kf_ind=None):
@@ -66,8 +79,8 @@ def run_arhmm(yml_conf, data=None, folds_to_run=None):
     """Per-fold ARHMM on the train animals of each shared grouped fold."""
     seed, K, D, L, S, out_dir, run_uid = _conf(yml_conf)
     folds_to_run = folds_to_run if folds_to_run is not None else yml_conf.get("folds_to_run")
-    data = data if data is not None else load_swirl_dataset(yml_conf)
-    xs, _, _ = align_for_swirl(data["states"], data["actions"])
+    data = data if data is not None else load_swirl_dataset(yml_conf, allow_variable=True)
+    xs = _real_rows(data)
     for kf_ind, (train_index, test_index) in enumerate(get_folds(yml_conf, data["groups"])):
         if folds_to_run is not None and kf_ind not in as_list(folds_to_run):
             continue
@@ -86,8 +99,8 @@ def run_arhmm(yml_conf, data=None, folds_to_run=None):
 def run_arhmm_holdout(yml_conf, data=None):
     """ARHMM init for the final NN run (train animals of the holdout split)."""
     seed, K, D, L, S, out_dir, run_uid = _conf(yml_conf)
-    data = data if data is not None else load_swirl_dataset(yml_conf)
-    xs, _, _ = align_for_swirl(data["states"], data["actions"])
+    data = data if data is not None else load_swirl_dataset(yml_conf, allow_variable=True)
+    xs = _real_rows(data)
     train_index, test_index, _ = holdout_split(yml_conf, data["groups"])
     npr.seed(seed)
     run_arhmm_internal(seed, D, K, L, S, xs[train_index], out_dir, run_uid, None,

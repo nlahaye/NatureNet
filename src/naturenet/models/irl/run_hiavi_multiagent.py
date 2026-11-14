@@ -529,6 +529,31 @@ def _cv_part(folder, K, null_id, compute):
     return rows
 
 
+def select_heldout(conc, conf):
+    """Data-driven held-out set from the concurrency report (None = keep heldout_animals / all animals).
+
+    multiagent.heldout_min_context: True -> only animals with >= min_context_steps original steps that have partner
+        context under sync_variant (animals without partners cannot show a coupling gain).
+    multiagent.heldout_top_n: N -> the N animals with the most such steps (ties broken by id; after the filter above).
+    An explicit heldout_animals list takes precedence over both.
+    """
+    if conf.get("heldout_animals"):
+        return None
+    top_n, need = conf.get("heldout_top_n"), bool(conf.get("heldout_min_context", False))
+    if not top_n and not need:
+        return None
+    c = conc[conc["variant"] == conf["sync_variant"]]
+    if need:
+        c = c[c["steps_with_context"] >= int(conf["min_context_steps"])]
+    c = c.sort_values(["steps_with_context", "animal"], ascending=[False, True])
+    if top_n:
+        c = c.head(int(top_n))
+    out = [str(a) for a in c["animal"]]
+    if not out:
+        raise ValueError("heldout_top_n / heldout_min_context selected no animals (see ma_concurrency.csv)")
+    return out
+
+
 def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=None, concurrency_only=False, part=None):
     yml_conf = expand_inputs(yml_conf)
     conf = ma_conf(yml_conf)
@@ -554,14 +579,20 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
               "the multi-agent test has no power on this window")
     if concurrency_only:
         return {"concurrency": conc}
+    sel_h = select_heldout(conc, conf)
+    if sel_h is not None:
+        conf["heldout_animals"] = sel_h
+        print(f"held-out animals from the concurrency report ({len(sel_h)}): {sel_h}")
 
     null_shifts = [draw_shifts(animals, rng, win, conf["null_min_shift_days"]) for _ in range(int(conf["n_null"]))]
     sync_shifts = [draw_shifts(animals, rng, win, conf["null_min_shift_days"])
                    for _ in range(int(conf["n_null_sync"]))]
     sel = parse_part(part, len(null_shifts))
-    use_parts = sel is not None or bool(conf.get("parts", False))     # multiagent.parts: True keeps part files
-    folder = (os.path.join(out_dir, "parts", f"{re.sub(r'[^A-Za-z0-9_.-]', '_', str(bk.name))}_{_fingerprint(yml_conf)}")
-              if use_parts else None)
+    folder = os.path.join(out_dir, "parts", f"{re.sub(r'[^A-Za-z0-9_.-]', '_', str(bk.name))}_{_fingerprint(yml_conf)}")
+    # part files are written by --part jobs (or multiagent.parts: True) and REUSED by the merge run whenever the
+    # folder exists (it used to be ignored without multiagent.parts, so the merge recomputed every part serially)
+    use_parts = sel is not None or bool(conf.get("parts", False)) or os.path.isdir(folder)
+    folder = folder if use_parts else None
     nv = {v: variants[v] for v in conf["null_variants"] if v in variants}
     if sel is not None:             # one piece only (parallel job): write part files and return
         do_obs, null_ids = sel

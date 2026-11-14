@@ -15,6 +15,8 @@ V6  coupled HIAVI: forward_backward_tv / loglik / decode padded == per sequence,
 V7  decision scales, every toggle on (SWIRL and HIQL emissions, coupling): padded == per sequence, EM invariant
 V8  fixed-length data through the variable code paths == the old results (mask all True)
 V9  scripts that need fixed lengths reject segment_policy: variable
+V10 NN-SWIRL (S-1 and S-2): padded batch == every sequence scored alone (LL, Viterbi paths), EM invariant to the
+    padded content, per-step LL normalised by the real steps
 """
 import numpy as np
 import jax.numpy as jnp
@@ -426,6 +428,77 @@ def test_v9_fixed_only_scripts_reject_variable():
         assert "segment_policy: variable" in str(err)
     else:
         raise AssertionError("variable data must be rejected without allow_variable")
+
+
+# ---------------------------------------------------------------------------
+# V10  NN-SWIRL
+# ---------------------------------------------------------------------------
+
+def _nn_inputs(x, xp, a, S):
+    import jax
+    xoh = jax.nn.one_hot(jnp.asarray(x), S, dtype=jnp.float64)[:, :, None, :]
+    return xoh, {"s1": jnp.asarray(x, dtype=jnp.int32), "s2": jnp.asarray(x * S + xp, dtype=jnp.int32)}, \
+        jnp.asarray(a, dtype=jnp.int32)
+
+
+def _nn_setup(S=8, K=2, seed=0):
+    import jax
+    from naturenet.models.irl.swirl_nn_model import create_train_state
+    T = rand_mdp(S, 9, seed)
+    seqs = rollout_var(T, LENS, seed + 1)
+    rng = np.random.default_rng(seed)
+    logpi0 = jnp.log(jnp.ones(K) / K)
+    log_Ps = jnp.log(0.8 * jnp.eye(K) + 0.2 / K)
+    Rs = jnp.asarray(rng.normal(scale=0.3, size=(S, 1, K)))
+    R_state = create_train_state(jax.random.PRNGKey(seed), 5e-3, S, K, 8, 9)
+    return jnp.asarray(T), seqs, logpi0, log_Ps, Rs, R_state
+
+
+def test_v10_nn_swirl_padded_equals_per_sequence():
+    from naturenet.models.irl.swirl_training_nn import loglik_and_paths, policy_logits_state
+    from naturenet.models.irl.swirl_training_top_level_nn import learnt_LL_nn
+    S = 8
+    T, seqs, logpi0, log_Ps, Rs, R_state = _nn_setup(S)
+    rows, acts, lens = pad(seqs)
+    x, xp, a = aligned(rows, acts, lens)
+    xoh, xe, aj = _nn_inputs(x, xp, a, S)
+    for mode in ("s1", "s2"):
+        logpi = policy_logits_state(R_state, T, 0.95, mode, 50)
+        lls, paths = loglik_and_paths(logpi0, log_Ps, Rs, logpi, xoh, xe[mode], aj)
+        tot = 0.0
+        for i, (st, ac) in enumerate(seqs):
+            x1, xp1, a1 = align_for_swirl(st[None], ac[None])
+            xo1, xe1, a1j = _nn_inputs(x1, xp1, a1, S)
+            l1, p1 = loglik_and_paths(logpi0, log_Ps, Rs, logpi, xo1, xe1[mode], a1j)
+            n = x1.shape[1]
+            assert abs(float(lls[i]) - float(l1[0])) < TOL, (mode, i, float(lls[i]), float(l1[0]))
+            assert np.array_equal(np.asarray(paths[i, :n]), np.asarray(p1[0])), (mode, i)
+            assert np.all(np.asarray(paths[i, n:]) == -1)
+            tot += float(l1[0])
+        LL, _ = learnt_LL_nn(logpi0, log_Ps, Rs, R_state, T, xoh, xe[mode], aj, mode, 0.95, 50)
+        assert abs(LL - tot / int((a >= 0).sum())) < TOL
+
+
+def test_v10b_nn_swirl_em_ignores_padding():
+    from naturenet.models.irl.swirl_training_top_level_nn import em_train_nn
+    S = 8
+    T, seqs, logpi0, log_Ps, Rs, R_state = _nn_setup(S)
+    outs = []
+    for garbage in (None, 11):
+        rows, acts, lens = pad(seqs, garbage=garbage)
+        x, xp, a = aligned(rows, acts, lens)
+        if garbage is not None:     # garbage (valid) states on padded steps: only the mask may hide them
+            g = np.random.default_rng(garbage)
+            m = a < 0
+            x, xp = x.copy(), xp.copy()
+            x[m], xp[m] = g.integers(S, size=m.sum()), g.integers(S, size=m.sum())
+        xoh, xe, aj = _nn_inputs(x, xp, a, S)
+        outs.append(em_train_nn(logpi0, log_Ps, Rs, R_state, T, xoh, xe["s2"], aj, "s2", iters=2, emit_iters=20,
+                                vi_iters=30, trans_iters=20, verbose=False))
+    (p0a, lPa, Rsa, Sa, LLa), (p0b, lPb, Rsb, Sb, LLb) = outs
+    assert np.allclose(LLa, LLb, atol=1e-6), (LLa, LLb)
+    assert np.allclose(np.asarray(p0a), np.asarray(p0b), atol=1e-6)
+    assert np.allclose(np.asarray(lPa), np.asarray(lPb), atol=1e-5)
 
 
 if __name__ == "__main__":

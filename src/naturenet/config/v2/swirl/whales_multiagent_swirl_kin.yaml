@@ -1,8 +1,9 @@
 # v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/whales_multiagent_swirl_kin.yaml;
 # only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
 # Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
-# Step 2: kinematic sensitivity - step / turn emissions in BOTH the independent and coupled SWIRL fits.
-# Copy of whales_multiagent_swirl.yaml (SWIRL S-1, K = 5); run from src/ with C=naturenet/config/swirl/full_plan:
+# Kinematic variant - step / turn emissions in BOTH the independent and coupled SWIRL fits.
+# Every choice below comes from the v2 data / v2 baselines; no v1-environment result is assumed.
+# Copy of whales_multiagent_swirl.yaml (SWIRL S-1, K = 5); run from src/ with C=naturenet/config/v2/swirl:
 #   python -m naturenet.models.irl.run_swirl_multiagent  -y $C/whales_multiagent_swirl_kin.yaml --skip_null   # optional quick pass, no null
 #   python -m naturenet.models.irl.run_swirl_multiagent  -y $C/whales_multiagent_swirl_kin.yaml
 #   python -m naturenet.models.irl.plot_hiavi_multiagent -y $C/whales_multiagent_swirl_kin.yaml
@@ -51,24 +52,25 @@ multiagent:
     epochs: 50                # stage 1 (S-1 EM) = Phase B / C S-1 schedule (was 30)
     epochs_2: 30              # stage 2 (EM with temps_final) = Phase B / C (was 20)
     coupled_iters: 10         # EM iterations per mean-field outer iteration (n_outer)
-  # animals: null -> all 44 animals (2015 + 2017; ids are <year>_<uid>, partners only within a year).
-  # heldout_animals below are the 2017 analysis; 2017_825 (4 d) and 2017_5800 (8 d) only act as partners.
-  # Add 2015_<uid> ids to test 2015 as well; a bare "825" would match both 2015_825 and 2017_825.
-  # all 21 held-out whales (same as step 1a)
-  heldout_animals: ["2017_10826", "2017_847", "2017_1385", "2017_835", "2017_845", "2017_4176", "2017_10831", "2017_841", "2017_5840", "2017_5910", "2017_5803", "2017_827", "2017_826", "2017_831", "2017_5921", "2017_10840", "2017_5648", "2017_5670", "2017_5679", "2017_10830", "2017_23031"]
+  # animals: null -> all 44 whales (2015 + 2017; ids <year>_<uid>; partners only within a year).
+  # Held-out set from the v2 concurrency report (ma_concurrency.csv): every animal with >= min_context_steps
+  # original steps that have partner context (animals without partners cannot show a coupling gain).
+  # An explicit heldout_animals list overrides this.
+  heldout_min_context: True
+  heldout_top_n: 10           # SWIRL cost: the 10 animals with the most partner-context steps (v2 report)
   max_aug: 2                  # originals + __aug1..2 per whale (10 copies -> 11x data and 121x kernel pairs)
   window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv", split_gap_days: 30}
   # time-shift null calendar: one season per tracking year (scene days split at gaps > 30 d -> 2015, 2017);
   # each step is shifted inside its own season, so no track moves into the untracked 2016 gap
-  Ks: [5]                                            # SWIRL K* (Phase B S-1)
+  Ks: [5]                                            # v2 S-1 best-fit K
   variants:
     temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
-    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 20.0, max_km: 75.0}   # local (1215 pair-days < 20 km)
+    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 20.0, max_km: 75.0}   # local scale
   n_outer: 5                  # mean-field outer iterations (context <-> posteriors)
   alpha0: 0.1                 # initial coupling
   n_null: 50                  # time-shift replicates; smallest p = 1/51 ~ 0.02 (was 20 -> 0.048)
   null_variants: ["temporal", "proximity"]
-  null_min_shift_days: 20     # U(20, L - 20) d, L = shortest season (2017: 155 d -> U(20, 135))
+  null_min_shift_days: 20     # U(20, L - 20) d, L = season length from the v2 scene index
   n_null_sync: 500            # replicates for the synchrony index (no refit; cheap)
   sync_variant: "temporal"
   eval_include_aug: False     # score held-out ORIGINAL tracks only (copies are not independent data)
@@ -83,9 +85,8 @@ temps_final: 1.0              # all intentions at temperature 1 in stage 2, for 
                               # [0.01, 1, ...] collapsed K=2 to one intention without kinematics in the synthetic test)
 em_tol: null
 
-# Kinematics: whale Argos steps are error-dominated at short dt (median apparent speed 6.3 km/h at 0.5-1 h vs
-# 1.7 km/h at 6-24 h). Run the action-only test first; enable kinematics on SSM-regularised tracks
-# (aniMotum / crawl, 4-6 h step, step_feature step_km), or as a sensitivity with min_dt_h 3 (45% of steps kept).
+# Kinematics: Argos steps at short dt are error-dominated, so min_dt_h drops short-interval steps from the kinematic
+# factor (check the apparent-speed distribution of the v2 tracks before choosing min_dt_h / max_speed_kmh).
 kinematics:
   enabled: True               # steps with dt < min_dt_h get no kinematic factor (Argos error)
   step_feature: "speed_kmh"

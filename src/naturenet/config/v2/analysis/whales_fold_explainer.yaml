@@ -1,0 +1,27 @@
+# Fold explainer, blue whales 2015 + 2017 (v2): inputs + every K-fold output on disk, per fold and per held-out animal.
+#   python -m naturenet.models.irl.fold_explainer -y naturenet/config/v2/analysis/whales_fold_explainer.yaml
+# Animals are year-prefixed (<year>_<uid>); __aug copies stay with their animal (aug_share column).
+title: "Blue whale v2 K-fold"
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/fold_explainer/"
+out_prefix: "whale_v2"
+
+data_yaml: "../swirl/whales_swirl_kfold.yaml"           # shared data block + folds (Blue_Whale_v2/folds/)
+align: swirl
+
+ll_comparison: "../swirl/whales_ll_comparison.yaml"     # ARHMM, SWIRL S-1 / S-2, HIAVI, IAVI
+
+scales:
+  - {yaml: "../swirl/whales_swirl_scales.yaml", label: "SWIRL scales (early stop, auto init)"}   # K = 5
+  - {yaml: "../swirl/whales_swirl_scales_fixed.yaml", label: "SWIRL scales (fixed epochs)"}      # K = 5, baseline ARHMM init
+  - {yaml: "../swirl/whales_hiql_scales.yaml",  label: "HIQL scales"}    # K = 3
+
+per_seq:
+  methods: [hiavi, iavi]
+  Ks: [1, 2, 3, 4, 5]
+  runs: [0]
+
+latent: {}
+compare_k: {swirl_s1: 5, swirl_s2: 5, arhmm: 5, arhmm_act: 5, hiavi: 3}   # = the scales K per family; others: best K
+reference: {alpha: 1.0, rare_count: 5}
+absorbing_state: auto        # n_states - 1 = 98 (n_states 99)
+stay_action: 0

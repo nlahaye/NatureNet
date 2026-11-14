@@ -30,7 +30,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     yml_conf = read_yaml(args.yaml)
-    data = load_swirl_dataset(yml_conf)
+    data = load_swirl_dataset(yml_conf, allow_variable=True)
     if yml_conf.get("run_arhmm", False):
         run_arhmm(yml_conf, data=data, folds_to_run=args.fold)
     if yml_conf.get("run_swirl_nn", True):
