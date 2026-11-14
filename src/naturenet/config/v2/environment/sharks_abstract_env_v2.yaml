@@ -9,7 +9,7 @@ run_uid: "hammerhead_v2"              # merged env maps = <env_maps_dir><env_map
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
 env_maps_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/env_clusters/"
 env_maps_uid: "final_env_maps_"
-n_clusters: null              # synced by sync_v2_configs = K from the class mapper
+n_clusters: 480   # synced by sync_v2_configs
 invalid_state: "absorbing"    # state n_clusters = no scene / land / nodata
 fill_unobserved: "self_loop"
 env_lat_ascending: False      # cmems_env scenes are north-up

@@ -9,7 +9,7 @@ run_uid: "SWIRL_WHALE_1517"              # merged env maps = <env_maps_dir><env_
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
 env_maps_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/env_clusters/"
 env_maps_uid: "final_env_maps_"
-n_clusters: null              # synced by sync_v2_configs = K from the class mapper
+n_clusters: 465   # synced by sync_v2_configs
 invalid_state: "absorbing"    # state n_clusters = no scene / land / nodata
 fill_unobserved: "self_loop"
 env_lat_ascending: False      # cmems_env scenes are north-up

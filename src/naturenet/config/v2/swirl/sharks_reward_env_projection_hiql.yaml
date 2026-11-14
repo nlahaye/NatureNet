@@ -14,7 +14,7 @@ reward_env_projection:
   class_mapper: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/env_clusters/final_env_maps__class_mapper.pkl"   # env_data_format (clusters) mapper
   cluster_scale: 1000         # as in env_data_format (keys = rint(label * cluster_scale))
   profile_index: cluster      # "cluster" = SIT-FUSE label values; "state" = rows already indexed by state id
-  variables: ["__run_sync_v2_configs__"]   # synced: subset of SIT-FUSE xai.feature_names (cluster_profiles_wide columns)
+  variables: [sst, sst_anom30d, grad_mag_sst, bottomT, sst_minus_bottomT, strat_0_100m, mlotst, sos_0m, grad_mag_sos, zos, adt, sla, okubo_weiss_geo, rossby_geo, cur_speed_0m, uo_0m, vo_0m, log10_CHL, grad_mag_log10_CHL, CHL_mean30d, log10_KD490, log10_npp, log10_chl_model_0m, o2_0m, no3_0m, VHM0, wind_speed, ekman_pumping, depth_m, slope_deg, dist_coast_km, dist_200m_isobath_km, log_ship_density]   # synced by sync_v2_configs
   weight_by_use: True         # weight states by how often tracked animals occupy them
   min_state_visits: 1
   alphas: [0.01, 0.1, 1.0, 10.0, 100.0]

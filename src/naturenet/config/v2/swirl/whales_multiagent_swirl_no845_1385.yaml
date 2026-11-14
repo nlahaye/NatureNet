@@ -6,7 +6,7 @@
 #   python -m naturenet.models.irl.run_swirl_multiagent  -y $C/whales_multiagent_swirl_no845_1385.yaml --skip_null   # optional quick pass, no null
 #   python -m naturenet.models.irl.run_swirl_multiagent  -y $C/whales_multiagent_swirl_no845_1385.yaml
 #   python -m naturenet.models.irl.plot_hiavi_multiagent -y $C/whales_multiagent_swirl_no845_1385.yaml
-n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+n_states: 466   # synced by sync_v2_configs
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
