@@ -6,9 +6,10 @@
 # reward (additive); this is an order test on S-1, not S-2. Drop order 2 / 3 from the grid for an order-1-only run.
 # Changes vs the previous version: /data/nlahaye paths; seq_len 60, variable, min_seq_len 10 (= Phase B);
 # temps_final 1.0; D = 12 (= whales); init from the Phase B ARHMM; no S-1 / S-2 reference fits (run_s2 False).
-# 1. Link the Phase B ARHMM init (run 0, seed 12345, K = 3) into the scales out_dir:
+# 1. Link the Phase B ARHMM init (run 0, seed 12345, K = 3) into the scales out_dir
+#    (the pc1T ARHMM = the init of the Phase B S-1 / S-2 runs in sharks_swirl_kfold_pc1T_t1.yaml):
 #      cd /data/nlahaye/NatureNet/Hammerhead_Out_v2/scales/
-#      for k in 0 1 2 3 4; do ln -s ../baselines/SWIRL_BASE_loop_0_latent_3_states_3_hidden_12345_seed_arhmm_s_KF_$k.npz \
+#      for k in 0 1 2 3 4; do ln -s ../baselines/SWIRL_BASE_pc1T_loop_0_latent_3_states_3_hidden_12345_seed_arhmm_s_KF_$k.npz \
 #        SWIRL_SCALES_3_hidden_12345_seed_arhmm_s_KF_$k.npz; done
 # 2. python -m naturenet.models.irl.run_swirl_scales_kfold -y naturenet/config/v2/swirl/sharks_swirl_scales.yaml --check
 # 3. python -m naturenet.models.irl.run_swirl_scales_kfold -y naturenet/config/v2/swirl/sharks_swirl_scales.yaml
