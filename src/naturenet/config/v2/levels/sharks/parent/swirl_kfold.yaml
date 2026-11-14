@@ -87,7 +87,7 @@ s2_index_emissions: True     # S-2 emissions from int indices (x*M+slot) instead
 overwrite: False            # False = skip folds whose outputs exist (resume)
 
 # get_stats* loops (K in [min_latent, max_latent] inclusive)
-min_latent: 2
+min_latent: 1
 max_latent: 5
 num_runs: 3
 

@@ -45,4 +45,4 @@ input_channels_request:
   - dist_coast_km
   - dist_200m_isobath_km
   - log_ship_density
-input_channels: null          # written by sync_v2_configs
+input_channels: [sst, sst_anom30d, grad_mag_sst, strat_0_100m, mlotst, sos_0m, adt, sla, okubo_weiss_geo, rossby_geo, cur_speed_0m, uo_0m, vo_0m, ekman_pumping, wind_speed, log10_CHL, grad_mag_log10_CHL, CHL_mean8d, CHL_mean30d, log10_npp, log10_zooc, log10_chl_model_0m, o2_0m, no3_0m, VHM0, depth_m, slope_deg, dist_coast_km, dist_200m_isobath_km, log_ship_density]   # synced by sync_v2_configs

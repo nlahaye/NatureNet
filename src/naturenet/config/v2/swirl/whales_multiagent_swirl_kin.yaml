@@ -8,15 +8,12 @@
 # v2 best-fit K (smallest K within one fold-paired SE of the best mean; Table 1): sharks ARHMM 3, S-1 3, S-2 2,
 # HIQL 1 (= IAVI); whales ARHMM 5, S-1 5, S-2 5, HIQL 2.
 # Every choice below comes from the v2 data / v2 baselines; no v1-environment result is assumed.
-# Held out: the 10 animals with the most partner-context steps in the v2 concurrency report.
-# Multi-agent SWIRL is S-1 only; the order-2 (S-2 analogue) coupling is swirl_scales N2 (whales_scales_multiagent_swirl.yaml).
-#   python -m naturenet.models.irl.run_swirl_multiagent  -y v2/swirl/whales_multiagent_swirl_kin.yaml --skip_null
-#   python -m naturenet.models.irl.run_swirl_multiagent  -y v2/swirl/whales_multiagent_swirl_kin.yaml
-#   python -m naturenet.models.irl.plot_hiavi_multiagent -y v2/swirl/whales_multiagent_swirl_kin.yaml --subdir multiagent_swirl
-# Independent-model schedule = Phase B / C S-1 (50 + 30 EM iterations), so the coupled refit (n_outer x coupled_iters
-# extra iterations) does not gain from an under-converged independent fit.
-# Outputs: <out_dir>/multiagent_swirl (same out_dir as the HIAVI run in whales_multiagent.yaml).
-n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+# Copy of whales_multiagent_swirl.yaml (SWIRL S-1, K = 5); run from src/ with C=naturenet/config/v2/swirl:
+#   python -m naturenet.models.irl.run_swirl_multiagent  -y $C/whales_multiagent_swirl_kin.yaml --skip_null   # optional quick pass, no null
+#   python -m naturenet.models.irl.run_swirl_multiagent  -y $C/whales_multiagent_swirl_kin.yaml
+#   python -m naturenet.models.irl.plot_hiavi_multiagent -y $C/whales_multiagent_swirl_kin.yaml
+# Compare coupled vs independent within this run only (kinematic LLs include the step / turn factors).
+n_states: 466   # synced by sync_v2_configs
 actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"

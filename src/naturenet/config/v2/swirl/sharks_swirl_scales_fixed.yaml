@@ -17,8 +17,8 @@
 # 3. Launcher: plan_jobs --scales .../sharks_swirl_scales_fixed.yaml (see NatureNet_v2_retest_commands.md), or
 #    python -m naturenet.models.irl.run_swirl_scales_kfold -y naturenet/config/v2/swirl/sharks_swirl_scales_fixed.yaml
 # 4. python -m naturenet.models.irl.plot_swirl_scales      -y naturenet/config/v2/swirl/sharks_swirl_scales_fixed.yaml
-# Check: N1 test LL per fold should match Phase B S-1 (pc1T, T = 1) K = 3 run 0.
-n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+# Check: N1 test LL per fold should match Phase B S-1 (pc1T, T = 1) K = 3 run 0. Report gains with and without fold 2.
+n_states: 481              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
 actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_*_actions.pkl"
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"

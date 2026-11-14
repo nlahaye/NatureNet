@@ -8,7 +8,7 @@
 #   python -m naturenet.models.irl.reward_env_projection  -y v2/swirl/sharks_hiql_final.yaml -p v2/swirl/sharks_reward_env_projection.yaml --n_hidden 2   (set model: hiavi in the -p file)
 # Same data block and HIAVI settings as the Phase B CV. Check n_states / actions against the Phase B YAML you ran.
 # --- shared data block (identical to the Phase B / C shark configs -> same sequences) ---
-n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+n_states: 481   # synced by sync_v2_configs
 actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_*_actions.pkl"   # originals + __aug copies
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
@@ -66,7 +66,7 @@ env_window:
   scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_scene_index.csv"   # first .. last complete v2 scene day
   nearest_days: 0
 plot_inputs: True
-input_keys: ["__run_sync_v2_configs__"]   # synced: = input_channels of the sample_inputs_v2 step
+input_keys: [sst, sst_anom30d, grad_mag_sst, bottomT, sst_minus_bottomT, strat_0_100m, mlotst, sos_0m, grad_mag_sos, zos, adt, sla, okubo_weiss_geo, rossby_geo, cur_speed_0m, uo_0m, vo_0m, log10_CHL, grad_mag_log10_CHL, CHL_mean30d, log10_KD490, log10_npp, log10_chl_model_0m, o2_0m, no3_0m, VHM0, wind_speed, ekman_pumping, depth_m, slope_deg, dist_coast_km, dist_200m_isobath_km, log_ship_density]   # synced by sync_v2_configs
 static_layers: {}
 reward_normalize: "none"
 hiavi_plot_series: True

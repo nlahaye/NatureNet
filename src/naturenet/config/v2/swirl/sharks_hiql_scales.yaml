@@ -9,7 +9,7 @@
 #   python -m naturenet.models.irl.run_swirl_scales_kfold -y v2/swirl/sharks_hiql_scales.yaml --check
 #   python -m naturenet.models.irl.run_swirl_scales_kfold -y v2/swirl/sharks_hiql_scales.yaml [--fold k] [--variant ...]
 #   python -m naturenet.models.irl.plot_swirl_scales      -y v2/swirl/sharks_hiql_scales.yaml
-n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+n_states: 481   # synced by sync_v2_configs
 actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_*_actions.pkl"
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"

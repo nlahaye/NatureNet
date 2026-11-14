@@ -61,7 +61,7 @@ run_hiavi_kfold: True
 run_hiavi_final: False   # level override
 
 # Sweep (get_stats_hiavi)
-min_latent: 2
+min_latent: 1
 max_latent: 5
 num_runs: 3
 
