@@ -15,10 +15,10 @@
 # Compare on the action LL (arhmm_act): same event space and steps as SWIRL S-1 / S-2.
 
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/ll_comparison_pseudocount/"
-out_prefix: "blue_whale_v1_arhmm_pc"
+out_prefix: "blue_whale_v2_arhmm_pc"
 title: "Blue whale ARHMM pseudo-count (action LL)"
 ci: 0.95
-compare_k: 3
+compare_k: 5                # v2 whale ARHMM best-fit K
 reference: "swirl_s1"
 
 methods:

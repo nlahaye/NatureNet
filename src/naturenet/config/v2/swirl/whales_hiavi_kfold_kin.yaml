@@ -1,0 +1,86 @@
+# v2 whales: HIAVI ("HIQL" in the manuscript) K-fold WITH kinematic emissions. Copy of whales_hiavi_kfold.yaml;
+# changes: run_uid WHALE_HIAVI_BASE -> WHALE_HIAVI_BASE_kin, out_dir, min_latent 1, kinematics block (same as the SWIRL kin config).
+#   plan_jobs ... --hiavi naturenet/config/v2/swirl/whales_hiavi_kfold_kin.yaml
+# --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+df_run_uid: "SWIRL_WHALE_1517"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+                            # near-equal pieces; null = no cap), padded + masked (exact LLs). Not for NN-SWIRL.
+min_seq_len: 10
+n_folds: 5                  # 44 animals (2015 + 2017, <year>_<uid>) -> 8-9 per test fold (folds group by base id, so __aug copies stay together)
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+
+seed: 12345                 # base seed; get_stats_hiavi runs use seed + run index
+n_hidden_init: 3
+n_hidden: 3                 # K for run_hiavi_kfold / plot_hiavi (get_stats_hiavi sweeps min..max_latent)
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/baselines_hiavi_kin/"
+run_uid: "WHALE_HIAVI_BASE_kin"
+
+folds_to_run: null
+holdout_fraction: 0.2
+overwrite: False
+
+# HIAVI
+hiavi_discount: 0.9
+hiavi_restarts: 10          # best restart by TRAIN LL
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"        # s = states[:, 1:-1], comparable to SWIRL
+run_hiavi_kfold: True
+run_hiavi_final: True
+
+# Sweep (get_stats_hiavi); HIAVI is cheap, so max_latent 6 is fine as a plateau check
+min_latent: 1
+max_latent: 5
+num_runs: 3
+
+# Plots (plot_hiavi): California Current window (1-99% of in-window fixes: 22.7-38.3 N, 124.5-111.4 W)
+lon_bounds: [-126, -110]     # = v2 env grid
+lat_bounds: [22, 40]
+splits: ["train", "test"]
+plot_trajs: True
+plot_gifs: False
+# envs: "/data/nlahaye/NatureNet/Blue_Whale_v2/envs.pkl"
+# hiavi_env_map: "/data/nlahaye/NatureNet/Blue_Whale_v2/env_map.npy"   # (H, W) abstract env states
+# env_lon_bounds: [-126, -110]
+# env_lat_bounds: [22, 40]
+plot_inputs: False
+input_keys: []
+static_layers: {}
+reward_normalize: "none"
+hiavi_plot_series: True
+hiavi_cv_plot: True
+
+# --- kinematic emissions (per-intention step speed + turning angle; kinematics.py) ---
+# Reported LL = (LL_joint - pooled train kinematic null) / n: the "comparable" LL on the action-only scale, so the
+# kinematic runs can be set against the action-only baselines on the same folds. LL_joint / LL_kin_null / LL_action
+# are saved alongside. Same block (min_dt_h 3, max_speed 15 km/h) as whales_multiagent_swirl_kin.yaml.
+kinematics:
+  enabled: True
+  step_feature: "speed_kmh"     # irregular Argos dt
+  step_dist: "gamma"
+  use_step: True
+  use_turn: True
+  fix_mu0: False
+  zero_km: 0.05                 # moves shorter than this are "stationary" (zero-inflation mass)
+  min_dt_h: 3.0                 # steps with dt below this get no kinematic factor (Argos error)
+  max_speed_kmh: 15.0           # implausible speeds -> missing
+  weight: 1.0
+  kappa_max: 200.0
+  min_weight: 2.0
+  label_margin: 0.5
+  # dfs_pkl: default <df_dir>/<df_run_uid>_dfs.pkl

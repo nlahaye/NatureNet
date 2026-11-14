@@ -1,0 +1,22 @@
+# v2 sharks: action-only baselines vs kinematic-emission and NN-SWIRL runs on the same folds.
+#   python -m naturenet.models.irl.plot_ll_comparison -y naturenet/config/v2/swirl/sharks_ll_comparison_kin_nn.yaml
+# Kinematic LLs are the "comparable" LLs (joint - pooled train kinematic null, per step), on the action-only scale.
+# Entries whose files are not on disk yet are skipped with a warning, so this can be run while jobs finish.
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/ll_comparison_kin_nn/"
+out_prefix: "hammerhead_v2_kin_nn"
+title: "Hammerhead K-fold log-likelihood: kinematics and NN-SWIRL"
+ci: 0.95
+compare_k: null
+reference: "swirl_s1"
+
+methods:
+  - {name: arhmm_act, yaml: "sharks_swirl_kfold_pc1T_t1.yaml"}
+  - {name: swirl_s1,  yaml: "sharks_swirl_kfold_pc1T_t1.yaml", min_latent: 1}
+  - {name: swirl_s2,  yaml: "sharks_swirl_kfold_pc1T_t1.yaml", min_latent: 1}
+  - {name: hiavi,     yaml: "sharks_hiavi_kfold.yaml", min_latent: 1}
+  - {name: swirl_s1, alias: swirl_s1_kin, label: "SWIRL S-1 + kinematics", yaml: "sharks_swirl_kfold_kin.yaml", color: "#08306b"}
+  - {name: swirl_s2, alias: swirl_s2_kin, label: "SWIRL S-2 + kinematics", yaml: "sharks_swirl_kfold_kin.yaml", color: "#006d6f"}
+  - {name: hiavi, alias: hiavi_kin, label: "HIQL + kinematics", yaml: "sharks_hiavi_kfold_kin.yaml", color: "#3f007d"}
+  - {name: arhmm_nn,    yaml: "sharks_swirl_nn_kfold.yaml"}
+  - {name: swirl_nn_s1, yaml: "sharks_swirl_nn_kfold.yaml"}
+  - {name: swirl_nn_s2, yaml: "sharks_swirl_nn_kfold.yaml"}

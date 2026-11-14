@@ -5,7 +5,7 @@
 # Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
 # Reward-to-environment projection and use vs availability (Phase E, interpretability).
 #   python -m naturenet.models.irl.reward_env_projection -y v2/swirl/sharks_hiql_final.yaml \
-#       -p v2/swirl/sharks_reward_env_projection_hiql.yaml --n_hidden 3
+#       -p v2/swirl/sharks_reward_env_projection_hiql.yaml --n_hidden 2
 # The run yml supplies out_dir / run_uid / seed / actions / df files; this file only adds the block below.
 reward_env_projection:
   model: hiavi                # HIQL (HIAVI) final run

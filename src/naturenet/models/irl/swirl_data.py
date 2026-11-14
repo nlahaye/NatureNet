@@ -375,7 +375,8 @@ def load_swirl_dataset(yml_conf, verbose=True, allow_variable=False):
         raise ValueError("segment_policy: variable (padded, masked sequences) is supported by run_swirl_kfold / "
                          "get_stats / get_stats_2 / run_arhmm_kfold, run_hiavi_kfold / get_stats_hiavi, "
                          "run_swirl_scales_kfold, run_hiavi_multiagent / run_swirl_multiagent / "
-                         "run_scales_multiagent and check_inputs. This script needs fixed-length sequences: "
+                         "run_scales_multiagent, NN-SWIRL (get_stats_nn / get_stats_3 / get_stats_3_s2 / "
+                         "run_swirl_nn*) and check_inputs. This script needs fixed-length sequences: "
                          "use segment_policy: chunk (or exact).")
     segs = load_segments(yml_conf)
     states, actions, groups, L, meta = build_dataset(segs, yml_conf.get("seq_len"), policy, verbose=verbose,

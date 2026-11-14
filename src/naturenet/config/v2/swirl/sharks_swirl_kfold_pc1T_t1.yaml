@@ -91,7 +91,7 @@ num_runs: 3
 
 run_arhmm: False            # ARHMM via get_stats (step 1)
 arhmm_action_ll: True       # also score the ARHMM as an action model (train_ll_act / test_ll_act; plot "arhmm_act")
-arhmm_pseudo_count: 1.0     # was 1.0e-5; best on every fold in the pseudo-count test
+arhmm_pseudo_count: 1.0     # was 1.0e-5; setting of the v2 baselines (chosen in the v1 pseudo-count test; re-test on v2 with *_arhmm_pseudocount.yaml)
 arhmm_pseudo_support: "T"   # was null; pseudo-count only on moves reachable under the fold's T
 arhmm_pseudo_floor: 1.0e-5  # pseudo-count on unreachable moves when arhmm_pseudo_support = "T"
 run_swirl_init: True

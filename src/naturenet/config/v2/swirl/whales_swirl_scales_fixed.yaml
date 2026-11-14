@@ -40,8 +40,8 @@ folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for 
 # Every toggle defaults to off (order 1 + all off = SWIRL S-1). Durations need max_duration <= seq_len / 3 (D = 12).
 
 seed: 12345
-n_hidden_init: 5            # whale K* (S-1 1-SE rule; Phase C run)
-n_hidden: 5                 # whale K* (S-1 1-SE rule; Phase C run)
+n_hidden_init: 5            # v2 S-1 best-fit K
+n_hidden: 5                 # v2 S-1 best-fit K
 emission_dim: 1
 latent_state_dim: 1
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/scales_fixed/"

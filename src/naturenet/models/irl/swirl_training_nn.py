@@ -114,8 +114,23 @@ def comp_ll_jax(logits, one_hot_x, one_hot_a):
 
 
 def emission_ll(logpi, xe, a):
-    """logpi (K, X, A), xe / a (T,) int -> (T, K). Same as comp_ll_jax on one-hots, without them."""
-    return logpi[:, xe, a].T
+    """
+    logpi (K, X, A), xe / a (T,) int -> (T, K). Same as comp_ll_jax on one-hots, without them.
+    Padded steps (segment_policy: variable; a = PAD_ACTION < 0) get emission LL 0.
+    """
+    m = a >= 0
+    ll = logpi[:, jnp.clip(xe, 0, logpi.shape[1] - 1), jnp.maximum(a, 0)].T
+    return jnp.where(m[:, None], ll, 0.0)
+
+
+def pad_eye_nn(Ps, a):
+    """
+    (T-1, K, K) transitions with the identity into padded steps (a < 0). With the zero emission LL of a padded
+    step the forward LL, the real-step posteriors and the Viterbi path equal those of the unpadded sequence
+    (same construction as swirl_training.pad_eye). No-op without padding.
+    """
+    m = (a >= 0)[1:]
+    return jnp.where(m[:, None, None], Ps, jnp.eye(Ps.shape[-1], dtype=Ps.dtype))
 
 
 def comp_log_transP(log_Ps, Rs, one_hot_x):
@@ -221,7 +236,7 @@ def e_step_all(logpi0, log_Ps, Rs, logpi, xoh, xe, a):
     pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
 
     def one(xoh_i, xe_i, a_i):
-        Ps = comp_transP(log_Ps, Rs, xoh_i)
+        Ps = pad_eye_nn(comp_transP(log_Ps, Rs, xoh_i), a_i)
         ll = emission_ll(logpi, xe_i, a_i)
         alpha = forward(pi0, Ps, ll)
         beta = backward(Ps, ll)
@@ -236,9 +251,10 @@ def loglik_and_paths(logpi0, log_Ps, Rs, logpi, xoh, xe, a):
     pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
 
     def one(xoh_i, xe_i, a_i):
-        Ps = comp_transP(log_Ps, Rs, xoh_i)
+        Ps = pad_eye_nn(comp_transP(log_Ps, Rs, xoh_i), a_i)
         ll = emission_ll(logpi, xe_i, a_i)
-        return jax_logsumexp(forward(pi0, Ps, ll)[-1]), _viterbi_JAX(pi0, Ps, ll)
+        path = jnp.where(a_i >= 0, _viterbi_JAX(pi0, Ps, ll), -1)   # -1 on padded steps
+        return jax_logsumexp(forward(pi0, Ps, ll)[-1]), path
 
     return vmap(one)(xoh, xe, a)
 
@@ -259,12 +275,14 @@ def pi0_m_step_numpy(expectations):
 
 @partial(jax.jit, static_argnames=("mode", "n_steps", "n_iter"))
 def _emit_steps(R_state, T, gamma, xe, a, discount, mode, n_steps, n_iter):
-    ntot = gamma.shape[0] * gamma.shape[1]
-    g = jnp.moveaxis(gamma, -1, 0)  # (K, N, T)
+    m = a >= 0                                       # real steps (all True for fixed-length data)
+    ntot = jnp.maximum(jnp.sum(m), 1)
+    g = jnp.moveaxis(jnp.where(m[..., None], gamma, 0.0), -1, 0)  # (K, N, T), padded steps carry no weight
+    xe_c, a_c = jnp.clip(xe, 0, None), jnp.maximum(a, 0)
 
     def loss_fn(params):
         logpi = policy_logits(params, R_state.apply_fn, T, mode, discount, n_iter)
-        return -jnp.sum(g * logpi[:, xe, a]) / ntot
+        return -jnp.sum(g * logpi[:, jnp.clip(xe_c, 0, logpi.shape[1] - 1), a_c]) / ntot
 
     def body(st, _):
         loss, grads = jax.value_and_grad(loss_fn)(st.params)
@@ -294,25 +312,30 @@ def emit_m_step(R_state, T, gamma, xe, a, mode="s1", num_iters=800, discount=DEF
     return R_state, (float(losses[-1]) if losses is not None else np.nan)
 
 
-def _trans_objective(params, gamma, xi, xoh):
+def _trans_objective(params, gamma, xi, xoh, mask=None):
+    """mask (N, T) real steps: transitions into padded steps are excluded (None = all real)."""
     log_Ps, Rs = params
+    if mask is None:
+        mask = jnp.ones(xoh.shape[:2], dtype=bool)
 
-    def one(xoh_i, xi_i):
-        return jnp.sum(xi_i * comp_log_transP(log_Ps, Rs, xoh_i))
+    def one(xoh_i, xi_i, m_i):
+        return jnp.sum(jnp.where(m_i[1:, None, None], xi_i * comp_log_transP(log_Ps, Rs, xoh_i), 0.0))
 
-    return -jnp.sum(vmap(one)(xoh, xi)) / (xoh.shape[0] * xoh.shape[1])
+    return -jnp.sum(vmap(one)(xoh, xi, mask)) / jnp.maximum(jnp.sum(mask), 1)
 
 
 _LBFGS = {}
 
 
-def trans_m_step(log_Ps, Rs, gamma, xi, xoh, num_iters=1000, tol=1e-4):
+def trans_m_step(log_Ps, Rs, gamma, xi, xoh, num_iters=1000, tol=1e-4, mask=None):
     """Input-driven transition M-step (L-BFGS); one solver instance per (maxiter, tol) so it compiles once."""
     from jaxopt import LBFGS
     key = (int(num_iters), float(tol))
     if key not in _LBFGS:
         _LBFGS[key] = LBFGS(fun=_trans_objective, maxiter=key[0], tol=key[1], stop_if_linesearch_fails=True)
-    res = _LBFGS[key].run((jnp.asarray(log_Ps), jnp.asarray(Rs)), gamma=gamma, xi=xi, xoh=xoh)
+    if mask is None:
+        mask = jnp.ones(xoh.shape[:2], dtype=bool)
+    res = _LBFGS[key].run((jnp.asarray(log_Ps), jnp.asarray(Rs)), gamma=gamma, xi=xi, xoh=xoh, mask=mask)
     return res.params
 
 

@@ -1,0 +1,63 @@
+# v2 sharks: NN-SWIRL K-fold (MLP reward; S-1 and S-2), same shared data block and folds as sharks_swirl_kfold_pc1T_t1.yaml, so the
+# test LLs are paired with the linear SWIRL / HIQL / ARHMM baselines (segment_policy: variable is supported:
+# padded steps are masked exactly as in the linear SWIRL; LLs per real step).
+# Launcher (from src/):
+#   python -m naturenet.models.irl.plan_jobs --out /data/nlahaye/launch/sharks_nn/plan.yaml \
+#       --state_dir /data/nlahaye/launch/sharks_nn --nn_swirl naturenet/config/v2/swirl/sharks_swirl_nn_kfold.yaml
+#   python -m sit_fuse.local_launcher run /data/nlahaye/launch/sharks_nn/plan.yaml
+# Jobs per (K, run, fold): get_stats_nn (NN ARHMM init, CPU) -> get_stats_3 (S-1, GPU) + get_stats_3_s2 (S-2, GPU).
+# No kinematic emissions in NN-SWIRL (action-only).
+# --- shared data block (identical in every full_plan shark config -> comparable LLs, shared folds) ---
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_*_actions.pkl"
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
+df_run_uid: "hammerhead_v2"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+                            # preprocessing cap max_segment_len (49 for the existing pkls; 60 gave 0 sequences)
+segment_policy: "variable"
+                            # near-equal pieces; null = no cap), padded + masked (exact LLs). Not for NN-SWIRL.
+min_seq_len: 10
+n_folds: 5
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/folds/"     # one fold file for ARHMM, SWIRL, NN-SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+
+seed: 12345                 # base seed; runs use seed + run index
+n_hidden_init: 2            # overwritten per (K, run) by the get_stats_nn / get_stats_3 loops
+n_hidden: 2
+emission_dim: 1
+latent_state_dim: 1
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/baselines_nn/"
+run_uid: "SWIRL_NN_BASE"
+folds_to_run: null
+holdout_fraction: 0.2
+overwrite: False
+
+min_latent: 1
+max_latent: 5
+num_runs: 3
+skip_n_states: []
+
+# NN ARHMM init (ssm ARHMMs, recurrent transitions -> Rs_start)
+arhmm_init_iters: 100
+arhmm_init_iters_final: 500
+
+# NN-SWIRL (run_swirl_nn_kfold.nn_settings; defaults shown)
+nn_hidden_size: 32
+nn_learning_rate: 5.0e-3
+nn_reward_bound: null       # e.g. 5.0: tanh-bounded reward
+nn_epochs_init: 20          # S-1 stage 1 (emission only) / stage 2 (all parameters) EM iterations
+nn_epochs: 20
+nn_epochs_init_s2: 10       # S-2
+nn_epochs_s2: 10
+nn_emit_iters: 800          # Adam steps per emission M-step
+nn_emit_tol: null
+nn_s1_warmup_iters: 0
+discount: 0.95
+vi_iters: 100
+em_tol: null
+run_s2_nn: True             # False: plan_jobs writes no S-2 jobs

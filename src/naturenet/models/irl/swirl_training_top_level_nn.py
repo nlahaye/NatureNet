@@ -64,7 +64,8 @@ def em_train_nn(logpi0, log_Ps, Rs, R_state, T, xoh, xe, a, mode="s1", iters=20,
                 vi_iters=DEFAULT_VI_ITERS, tol=None, trans_iters=1000, verbose=True):
     """
     T (S, A, S) dense first-order transitions; xoh (N, T, 1, S) one-hot states; xe (N, T) emission index
-    (x for "s1", x * S + x_prev for "s2"); a (N, T) actions.
+    (x for "s1", x * S + x_prev for "s2"); a (N, T) actions, a < 0 = padded step (segment_policy: variable:
+    emission LL 0, identity transitions, excluded from every M-step and from the per-step LL).
     tol: stop when the relative change of the total LL between EM iterations is < tol (None = fixed iters).
     Returns logpi0, log_Ps, Rs, R_state, LL_list (LL_list[i] is the LL before the i-th update).
     """
@@ -89,7 +90,7 @@ def em_train_nn(logpi0, log_Ps, Rs, R_state, T, xoh, xe, a, mode="s1", iters=20,
             break
         new_logpi0 = pi0_m_step(gamma) if init else logpi0
         if trans:
-            new_log_Ps, new_Rs = trans_m_step(log_Ps, Rs, gamma, xi, xoh, num_iters=trans_iters)
+            new_log_Ps, new_Rs = trans_m_step(log_Ps, Rs, gamma, xi, xoh, num_iters=trans_iters, mask=a >= 0)
         else:
             new_log_Ps, new_Rs = log_Ps, Rs
         if emit:
@@ -103,12 +104,14 @@ def em_train_nn(logpi0, log_Ps, Rs, R_state, T, xoh, xe, a, mode="s1", iters=20,
 
 def learnt_LL_nn(logpi0, log_Ps, Rs, R_state, T, xoh, xe, a, mode="s1", discount=DEFAULT_DISCOUNT,
                  vi_iters=DEFAULT_VI_ITERS):
-    """Total LL / (N * T) and Viterbi paths (N, T) for one split."""
+    """Total LL / (real steps) and Viterbi paths (N, T; -1 on padded steps) for one split.
+    Without padding the real steps are N * T (as before)."""
     T, xoh = _f64(T), _f64(xoh)
     logpi = policy_logits_state(R_state, T, discount, mode, vi_iters)
     lls, paths = loglik_and_paths(_f64(logpi0), _f64(log_Ps), _f64(Rs), logpi, xoh,
                                   jnp.asarray(xe, dtype=jnp.int32), jnp.asarray(a, dtype=jnp.int32))
-    LL = float(jnp.sum(lls)) / (xoh.shape[0] * xoh.shape[1])
+    n_real = max(int(np.sum(np.asarray(a) >= 0)), 1)
+    LL = float(jnp.sum(lls)) / n_real
     if not np.isfinite(LL):
         raise FloatingPointError(f"learnt LL is {LL}")
     return LL, np.asarray(paths)

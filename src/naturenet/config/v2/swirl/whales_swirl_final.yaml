@@ -27,7 +27,7 @@ folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for 
 
 seed: 12345                 # base seed; get_stats* runs use seed + run index
 n_hidden_init: 5
-n_hidden: 5   # Phase B best S-1 K
+n_hidden: 5   # v2 S-1 and S-2 best-fit K
 emission_dim: 1
 latent_state_dim: 1
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/final/swirl/"
@@ -56,7 +56,7 @@ temps_init: null            # default all 1
 temps_final: 1.0
                             #   K = 1 results made before the fix are invalid: rerun with whales_swirl_kfold_k1_rerun.yaml
 use_init_reward: False
-run_s2: True   # S-2 at K = 5 for whales (Table 1); sharks: S-1 only
+run_s2: True   # v2 whale S-2 best-fit K = 5 (Table 1)
 s2_max_dense_entries: 2.0e+8
 cache_fold_inputs: True
 s2_index_emissions: True     # S-2 emissions from int indices (x*M+slot) instead of dense (N,T,S*M) one-hots; same LLs,

@@ -30,7 +30,7 @@ from flax import serialization
 
 from naturenet.models.irl.run_arhmm_kfold_nn import arhmm_nn_fname, run_arhmm
 from naturenet.models.irl.swirl_data import (
-    align_for_swirl,
+    align_data,
     as_list,
     get_folds,
     load_swirl_dataset,
@@ -61,12 +61,18 @@ _DEFAULT_EPOCHS = {"s1": (20, 20), "s2": (10, 10)}
 # ---------------------------------------------------------------------------
 
 def prepare_nn_data(yml_conf, data=None):
-    data = data if data is not None else load_swirl_dataset(yml_conf)
+    """
+    segment_policy: variable: padded steps have a = PAD_ACTION (-1) and (x, x_prev) = the row's first real step
+    (align_data), so every lookup stays valid; swirl_training_nn masks them (a < 0) exactly as the linear SWIRL.
+    """
+    data = data if data is not None else load_swirl_dataset(yml_conf, allow_variable=True)
     if "nn_xoh" in data:
         return data
     S = int(yml_conf["n_states"])
     check_swirl_inputs(data["states"], data["actions"], S, N_ACTIONS)
-    x, x_prev, a = align_for_swirl(data["states"], data["actions"])
+    x, x_prev, a = align_data(data)
+    if not np.all(a[:, 0] >= 0):
+        raise ValueError("every sequence needs at least one real SWIRL step (>= 3 states)")
     data.update(n_states=S, n_actions=N_ACTIONS, x=x, x_prev=x_prev, a=a,
                 nn_xoh=jax.nn.one_hot(jnp.asarray(x), S, dtype=jnp.float64)[:, :, None, :],
                 nn_xe={"s1": jnp.asarray(x, dtype=jnp.int32),
@@ -227,7 +233,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     yml_conf = read_yaml(args.yaml)
-    data = load_swirl_dataset(yml_conf)
+    data = load_swirl_dataset(yml_conf, allow_variable=True)
     if yml_conf.get("run_arhmm", False):
         run_arhmm(yml_conf, data=data, folds_to_run=args.fold)
     if yml_conf.get("run_swirl_nn", True):

@@ -17,7 +17,7 @@
 # 3. Launcher: plan_jobs --scales .../sharks_swirl_scales_fixed.yaml (see NatureNet_v2_retest_commands.md), or
 #    python -m naturenet.models.irl.run_swirl_scales_kfold -y naturenet/config/v2/swirl/sharks_swirl_scales_fixed.yaml
 # 4. python -m naturenet.models.irl.plot_swirl_scales      -y naturenet/config/v2/swirl/sharks_swirl_scales_fixed.yaml
-# Check: N1 test LL per fold should match Phase B S-1 (pc1T, T = 1) K = 3 run 0. Report gains with and without fold 2.
+# Check: N1 test LL per fold should match Phase B S-1 (pc1T, T = 1) K = 3 run 0.
 n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
 actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_*_actions.pkl"
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
@@ -41,8 +41,8 @@ folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/folds/"     # one fold fil
 # ARHMM init: run run_swirl_kfold with run_arhmm: True on this YAML first (or scales.init: sticky).
 
 seed: 12345
-n_hidden_init: 3            # = K* from Phase B (edit)
-n_hidden: 3                 # = K* from Phase B (edit)
+n_hidden_init: 3            # v2 S-1 best-fit K
+n_hidden: 3                 # v2 S-1 best-fit K
 emission_dim: 1
 latent_state_dim: 1
 out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/scales_fixed/"

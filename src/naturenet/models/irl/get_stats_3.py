@@ -18,7 +18,7 @@ def loop_swirl(yml_conf, args):
     if int(yml_conf["n_states"]) in [int(s) for s in as_list(yml_conf.get("skip_n_states"))]:
         print("n_states", yml_conf["n_states"], "is in skip_n_states; nothing to do")
         return
-    data = prepare_nn_data(yml_conf, load_swirl_dataset(yml_conf))
+    data = prepare_nn_data(yml_conf, load_swirl_dataset(yml_conf, allow_variable=True))
     for conf in iter_loop_configs(yml_conf, n_hidden=args.n_hidden, run=args.run):
         print(conf["run_uid"], "seed", conf["seed"])
         run_swirl_nn(conf, data=data, folds_to_run=args.fold)
