@@ -1,0 +1,127 @@
+# KINEMATIC copy of sharks_scales_multiagent.yaml. Identical except: kinematics.enabled True (block below), run_uid, and
+# its own output folder. Both the independent and the coupled models emit step / turn densities, so the
+# coupling gain is compared within this run only (kinematic LLs are not comparable to action-only LLs).
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Sharks multi-agent decision scales (new for v2; same data
+# block, coupling kernels and held-out rule as sharks_multiagent.yaml, scale variants as whales_scales_multiagent.yaml).
+# Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# Phase D2 (sharks): every variant screened for both backends. hiql_scales at K = 2 (v2 HIQL best-fit K = 1 has no
+# intentions to switch between; 2 = smallest K where every layer is defined); swirl_scales at K = 3 (v2 S-1 best-fit K).
+# v2 best-fit K (smallest K within one fold-paired SE of the best mean; Table 1): sharks ARHMM 3, S-1 3, S-2 2,
+# HIQL 1 (= IAVI); whales ARHMM 5, S-1 5, S-2 5, HIQL 2.
+# Every choice below comes from the v2 data / v2 baselines; no v1-environment result is assumed.
+# Screen without nulls; run nulls only for pairs that pass (pooled gain > 0 and more than half of the animals improve).
+#   python -m naturenet.models.irl.run_hiavi_multiagent  -y v2/swirl/sharks_multiagent.yaml --concurrency_only   # who overlaps
+#   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/sharks_scales_multiagent_kin.yaml --backend hiql_scales --K 2 --skip_null
+#   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/sharks_scales_multiagent_kin.yaml --backend swirl_scales --K 3 --skip_null
+#   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/sharks_scales_multiagent_kin.yaml --backend <b> --variant <passing> --K <K>
+#   python -m naturenet.models.irl.plot_scales_multiagent -y v2/swirl/sharks_scales_multiagent_kin.yaml --K <K>
+# Outputs: <out_dir>/multiagent_{backend}_{variant}/, summary <out_dir>/ma_scales_summary.csv.
+# --- shared data block (identical to the Phase B / C shark configs -> same sequences) ---
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
+df_run_uid: "hammerhead_v2" # step times / positions from <df_dir>/<df_run_uid>_dfs.pkl
+per_fold_trans_prob: True   # T from the training animals of each fold
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5                  # unused by the multi-agent runner (leave-one-animal-out), kept identical
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/folds/"
+# --- end shared data block ---
+
+seed: 12345
+n_hidden: 2                 # = Ks (cosmetic; Ks sets K)
+out_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/multiagent_scales_kin/"
+run_uid: "SHARK_SCALES_MA_KIN"
+
+hiavi_discount: 0.9         # = Phase B HIQL
+hiavi_restarts: 10
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"
+
+multiagent:
+  scales_backends: ["hiql_scales", "swirl_scales"]
+  swirl:                      # SWIRL-scales init / schedule (as swirl_multiagent)
+    init: "arhmm"
+    arhmm_epochs: 50
+    restarts: 2
+    epochs: 50                # = Phase B / C S-1 schedule (was 30)
+    epochs_2: 30              # (was 20)
+    coupled_iters: 10
+    ctx_source: independent   # partner context from own-evidence posteriors (mean_field: coupled, echo-prone)
+  scales_defaults:            # shared by every variant; "on" toggles take these blocks
+    reward_l2: 1.0
+    reward_tol: null          # 1e-4 at order 1, 1e-8 above
+    context_min_count: 5      # = single-animal scales configs (k-grams seen >= 5 times in the training animals; was 3)
+    switch_history: {kind: "lags+decay", lags: 2, decay_steps: [3, 10], window: 10}   # = single-animal scales configs (was lags only)
+    durations: {max_duration: 12, hazard: "logistic", hazard_features: False, smooth: 1.0, l2: 1.0}   # = single-animal scales configs (l2 was 0.01)
+    hierarchy: {n_regimes: 2, sticky: 0.95, init_noise: 0.5}
+    hiql: {backoff: 5.0}      # HIQL: Dirichlet back-off of deep contexts to their parent (inf = order 1)
+    coupling: {fit_alpha: True, fit_beta: True, beta0: 0.0, tol: 1.0e-8}
+    coupled_iters: 10
+    ctx_source: independent   # partner context from own-evidence posteriors (mean_field: coupled, echo-prone)
+  scales_variants:
+    # step 1: order N + switching history, destination coupling (alpha)
+    - {name: S1_N1, step: 1, order: 1}
+    - {name: S1_N2, step: 1, order: 2}
+    - {name: S1_N2_hist, step: 1, order: 2, switch_history: on}
+    - {name: S1_N3_hist, step: 1, order: 3, switch_history: on}
+    # step 2: per-animal regimes, shared alpha
+    - {name: S2_N1_R2, step: 2, order: 1, hierarchy: on}
+    - {name: S2_N2_R2, step: 2, order: 2, switch_history: on, hierarchy: on}
+    # step 3: durations with partner-driven hazards (beta; alpha too when K > 2)
+    - {name: S3_N1_dur, step: 3, order: 1, durations: on}
+    - {name: S3_N2_dur_R2, step: 3, order: 2, durations: on, hierarchy: on}
+  # animals: null -> every shark in the v2 tracks (v2 scenes cover the full tracking period).
+  # Held-out set from the v2 concurrency report (ma_concurrency.csv): every animal with >= min_context_steps
+  # original steps that have partner context. Run --concurrency_only first to see who overlaps.
+  heldout_min_context: True
+  max_aug: 2                  # originals + __aug1..2 per shark (as whales)
+  window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_scene_index.csv"}   # time-shift null calendar = first .. last complete v2 scene day
+  Ks: [2]                     # hiql_scales (see header); swirl_scales: pass --K 3 (v2 S-1 best-fit K)
+  variants:
+    temporal:  {h_days: 1.0, max_dt_days: 3.0}                                  # co-timing only
+    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 50.0, max_km: 150.0}  # co-timing x closeness
+  n_outer: 5                  # mean-field outer iterations (context <-> posteriors)
+  alpha0: 0.1                 # initial coupling
+  n_null: 50                  # time-shift replicates (HIQL); use 20 for swirl_scales (cost)
+  null_variants: ["temporal", "proximity"]
+  null_min_shift_days: 30     # partners shifted by U(30, L - 30) days, independently per animal
+  n_null_sync: 500            # replicates for the synchrony index (no refit; cheap)
+  sync_variant: "temporal"
+  eval_include_aug: False     # score held-out ORIGINAL tracks only
+  min_context_steps: 30       # warn if < 2 animals reach this many steps with partner context
+
+# SWIRL keys (used by the swirl backend; harmless for HIAVI)
+emission_dim: 1
+latent_state_dim: 1
+temps_final: 1.0            # scalar -> every intention at T = 1 in stage 2 (= Phase B / C; a 2-element list breaks K = 3)
+em_tol: null
+
+# Kinematic emissions: same block as the single-animal kinematic CV (sharks_swirl_kfold_kin.yaml / sharks_hiavi_kfold_kin.yaml),
+# so the multi-agent and single-animal kinematic results use the same step / turn model.
+kinematics:
+  enabled: True
+  step_feature: "speed_kmh"     # irregular Argos dt
+  step_dist: "gamma"
+  use_step: True
+  use_turn: True
+  fix_mu0: False
+  zero_km: 0.05                 # moves shorter than this are "stationary" (zero-inflation mass)
+  min_dt_h: 3.0                 # steps with dt below this get no kinematic factor (Argos error)
+  max_speed_kmh: 15.0           # implausible speeds -> missing
+  weight: 1.0
+  kappa_max: 200.0
+  min_weight: 2.0
+  label_margin: 0.5
+  # dfs_pkl: default <df_dir>/<df_run_uid>_dfs.pkl

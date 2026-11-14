@@ -1,0 +1,106 @@
+# KINEMATIC copy of whales_multiagent_swirl_full.yaml. Identical except: kinematics.enabled True (block below), run_uid, and
+# its own output folder. Both the independent and the coupled models emit step / turn densities, so the
+# coupling gain is compared within this run only (kinematic LLs are not comparable to action-only LLs).
+# v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/whales_multiagent_swirl_full.yaml;
+# only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
+# Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# Step 1a: whale SWIRL multi-agent, every animal with partner context held out (v2 report), 50 time-shift nulls.
+# Every choice below comes from the v2 data / v2 baselines; no v1-environment result is assumed.
+# Copy of whales_multiagent_swirl.yaml (SWIRL S-1, K = 5); run from src/ with C=naturenet/config/v2/swirl:
+#   python -m naturenet.models.irl.run_swirl_multiagent  -y $C/whales_multiagent_swirl_full_kin.yaml --skip_null   # optional quick pass, no null
+#   python -m naturenet.models.irl.run_swirl_multiagent  -y $C/whales_multiagent_swirl_full_kin.yaml
+#   python -m naturenet.models.irl.plot_hiavi_multiagent -y $C/whales_multiagent_swirl_full_kin.yaml
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+df_run_uid: "SWIRL_WHALE_1517"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5                  # 44 animals (2015 + 2017, <year>_<uid>) -> 8-9 per test fold (folds group by base id, so __aug copies stay together)
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+
+seed: 12345
+n_hidden: 5                  # = Ks (cosmetic; Ks sets K)
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/multiagent/"
+run_uid: "WHALE_MA_KIN"
+
+
+
+hiavi_discount: 0.9
+hiavi_restarts: 10
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"
+
+multiagent:
+  ma_subdir: "multiagent_swirl_full_kin"   # <out_dir>/multiagent_swirl_full_kin/
+  backend: "swirl"            # default for run_hiavi_multiagent; run_swirl_multiagent / --backend swirl override
+  swirl:
+    init: "arhmm"             # arhmm (kinematic ARHMM warm start, as in run_swirl_kfold) | sticky
+    arhmm_epochs: 50
+    restarts: 1               # independent-model restarts per fold (best train LL kept)
+    epochs: 50                # stage 1 (S-1 EM) = Phase B / C S-1 schedule (was 30)
+    epochs_2: 30              # stage 2 (EM with temps_final) = Phase B / C (was 20)
+    coupled_iters: 10         # EM iterations per mean-field outer iteration (n_outer)
+  # animals: null -> all 44 whales (2015 + 2017; ids <year>_<uid>; partners only within a year).
+  # Held-out set from the v2 concurrency report (ma_concurrency.csv): every animal with >= min_context_steps
+  # original steps that have partner context (animals without partners cannot show a coupling gain).
+  # An explicit heldout_animals list overrides this.
+  heldout_min_context: True
+  max_aug: 2                  # originals + __aug1..2 per whale (10 copies -> 11x data and 121x kernel pairs)
+  window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv", split_gap_days: 30}
+  # time-shift null calendar: one season per tracking year (scene days split at gaps > 30 d -> 2015, 2017);
+  # each step is shifted inside its own season, so no track moves into the untracked 2016 gap
+  Ks: [5]                                            # v2 S-1 best-fit K
+  variants:
+    temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
+    proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 20.0, max_km: 75.0}   # local scale
+    proximity_wide: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 50.0, max_km: 150.0}  # = hammerhead kernel
+  n_outer: 5                  # mean-field outer iterations (context <-> posteriors)
+  alpha0: 0.1                 # initial coupling
+  n_null: 50                  # time-shift replicates; smallest p = 1/51 ~ 0.02 (was 20 -> 0.048)
+  null_variants: ["temporal", "proximity"]
+  null_min_shift_days: 20     # U(20, L - 20) d, L = season length from the v2 scene index
+  n_null_sync: 500            # replicates for the synchrony index (no refit; cheap)
+  sync_variant: "temporal"
+  eval_include_aug: False     # score held-out ORIGINAL tracks only (copies are not independent data)
+  min_context_steps: 30       # warn if < 2 animals reach this many steps with partner context
+  # dfs_pkl: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_dfs.pkl"
+
+
+# SWIRL keys (as in init_test_swirl.yaml)
+emission_dim: 1
+latent_state_dim: 1
+temps_final: 1.0              # all intentions at temperature 1 in stage 2, for every K (the default
+                              # [0.01, 1, ...] collapsed K=2 to one intention without kinematics in the synthetic test)
+em_tol: null
+
+# Kinematic emissions: same block as the single-animal kinematic CV (whales_swirl_kfold_kin.yaml / whales_hiavi_kfold_kin.yaml),
+# so the multi-agent and single-animal kinematic results use the same step / turn model.
+kinematics:
+  enabled: True
+  step_feature: "speed_kmh"     # irregular Argos dt
+  step_dist: "gamma"
+  use_step: True
+  use_turn: True
+  fix_mu0: False
+  zero_km: 0.05                 # moves shorter than this are "stationary" (zero-inflation mass)
+  min_dt_h: 3.0                 # steps with dt below this get no kinematic factor (Argos error)
+  max_speed_kmh: 15.0           # implausible speeds -> missing
+  weight: 1.0
+  kappa_max: 200.0
+  min_weight: 2.0
+  label_margin: 0.5
+  # dfs_pkl: default <df_dir>/<df_run_uid>_dfs.pkl
