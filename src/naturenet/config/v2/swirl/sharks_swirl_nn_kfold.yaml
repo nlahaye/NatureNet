@@ -8,7 +8,7 @@
 # Jobs per (K, run, fold): get_stats_nn (NN ARHMM init, CPU) -> get_stats_3 (S-1, GPU) + get_stats_3_s2 (S-2, GPU).
 # No kinematic emissions in NN-SWIRL (action-only).
 # --- shared data block (identical in every full_plan shark config -> comparable LLs, shared folds) ---
-n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+n_states: 481   # synced by sync_v2_configs
 actions: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/hammerhead_v2_*_actions.pkl"
 positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
 df_dir: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/"
