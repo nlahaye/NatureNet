@@ -1,0 +1,87 @@
+Invalid-state report (policy=variable, seq_len=60; -1 = no env scene for the fix date, land / nodata, or outside the env grid):
+  SWIRL_WHALE_v1_10826: 33 segs, 0/6490 states invalid (0.0%); all-invalid 0, partly 0, clean 33; segment length 4..553
+  SWIRL_WHALE_v1_10830: 11 segs, 0/1903 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 173..173
+  SWIRL_WHALE_v1_10831: 66 segs, 0/7073 states invalid (0.0%); all-invalid 0, partly 0, clean 66; segment length 7..586
+  SWIRL_WHALE_v1_10840: 22 segs, 0/4257 states invalid (0.0%); all-invalid 0, partly 0, clean 22; segment length 5..382
+  SWIRL_WHALE_v1_1385: 22 segs, 0/6094 states invalid (0.0%); all-invalid 0, partly 0, clean 22; segment length 195..359
+  SWIRL_WHALE_v1_23031: 11 segs, 0/3520 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 320..320
+  SWIRL_WHALE_v1_4176: 11 segs, 0/4257 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 387..387
+  SWIRL_WHALE_v1_5648: 11 segs, 0/1914 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 174..174
+  SWIRL_WHALE_v1_5670: 11 segs, 0/1606 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 146..146
+  SWIRL_WHALE_v1_5679: 11 segs, 0/2090 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 190..190
+  SWIRL_WHALE_v1_5800: 11 segs, 0/627 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 57..57
+  SWIRL_WHALE_v1_5803: 33 segs, 0/2376 states invalid (0.0%); all-invalid 0, partly 0, clean 33; segment length 10..139
+  SWIRL_WHALE_v1_5840: 11 segs, 0/5907 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 537..537
+  SWIRL_WHALE_v1_5910: 22 segs, 0/3938 states invalid (0.0%); all-invalid 0, partly 0, clean 22; segment length 6..352
+  SWIRL_WHALE_v1_5921: 11 segs, 0/2332 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 212..212
+  SWIRL_WHALE_v1_825: 11 segs, 0/187 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 17..17
+  SWIRL_WHALE_v1_826: 11 segs, 0/5830 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 530..530
+  SWIRL_WHALE_v1_827: 55 segs, 0/4466 states invalid (0.0%); all-invalid 0, partly 0, clean 55; segment length 3..223
+  SWIRL_WHALE_v1_831: 11 segs, 0/3333 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 303..303
+  SWIRL_WHALE_v1_835: 11 segs, 0/4785 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 435..435
+  SWIRL_WHALE_v1_841: 44 segs, 0/6545 states invalid (0.0%); all-invalid 0, partly 0, clean 44; segment length 42..382
+  SWIRL_WHALE_v1_845: 11 segs, 0/6787 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 617..617
+  SWIRL_WHALE_v1_847: 11 segs, 0/4477 states invalid (0.0%); all-invalid 0, partly 0, clean 11; segment length 407..407
+  variable: every valid run kept as one sequence (runs longer than seq_len split into near-equal pieces); rows padded at the end and masked.
+SWIRL dataset: 1738 sequences, policy=variable (seq_len max=60, min_seq_len=10); states per sequence min/q25/median/q75/max = 10/52/55/57/60; padded width 60, padding 12.0% of the batch
+  SWIRL_WHALE_v1_10826: kept 6424/6457 transitions (99.5%)
+  SWIRL_WHALE_v1_10830: kept 1892/1892 transitions (100.0%)
+  SWIRL_WHALE_v1_10831: kept 6875/7007 transitions (98.1%)
+  SWIRL_WHALE_v1_10840: kept 4191/4235 transitions (99.0%)
+  SWIRL_WHALE_v1_1385: kept 6072/6072 transitions (100.0%)
+  SWIRL_WHALE_v1_23031: kept 3509/3509 transitions (100.0%)
+  SWIRL_WHALE_v1_4176: kept 4246/4246 transitions (100.0%)
+  SWIRL_WHALE_v1_5648: kept 1903/1903 transitions (100.0%)
+  SWIRL_WHALE_v1_5670: kept 1595/1595 transitions (100.0%)
+  SWIRL_WHALE_v1_5679: kept 2079/2079 transitions (100.0%)
+  SWIRL_WHALE_v1_5800: kept 616/616 transitions (100.0%)
+  SWIRL_WHALE_v1_5803: kept 2343/2343 transitions (100.0%)
+  SWIRL_WHALE_v1_5840: kept 5896/5896 transitions (100.0%)
+  SWIRL_WHALE_v1_5910: kept 3861/3916 transitions (98.6%)
+  SWIRL_WHALE_v1_5921: kept 2321/2321 transitions (100.0%)
+  SWIRL_WHALE_v1_825: kept 176/176 transitions (100.0%)
+  SWIRL_WHALE_v1_826: kept 5819/5819 transitions (100.0%)
+  SWIRL_WHALE_v1_827: kept 4389/4411 transitions (99.5%)
+  SWIRL_WHALE_v1_831: kept 3322/3322 transitions (100.0%)
+  SWIRL_WHALE_v1_835: kept 4774/4774 transitions (100.0%)
+  SWIRL_WHALE_v1_841: kept 6501/6501 transitions (100.0%)
+  SWIRL_WHALE_v1_845: kept 6776/6776 transitions (100.0%)
+  SWIRL_WHALE_v1_847: kept 4466/4466 transitions (100.0%)
+n_sequences              1738
+seq_len_steps            8-58 (median 54, variable)
+n_original_sequences     158
+n_animals                23
+n_states                 99
+states_unvisited         49
+top5_state_share         0.659
+dt_median_h              1.762
+frac_dt_gt_2med          0.403
+animals_in_window        None
+              animal  n_seq  n_steps      start        end  dt_med_h  dt_p10_h  dt_p90_h  frac_dt_gt_2med  steps_in_window
+SWIRL_WHALE_v1_10826     11      573 2017-07-26 2017-11-21      1.73      0.11     11.22             0.42              573
+SWIRL_WHALE_v1_10830      3      169 2017-07-25 2017-08-18      2.11      0.21      9.08             0.39              169
+SWIRL_WHALE_v1_10831     13      612 2017-07-26 2017-12-11      1.56      0.12      9.53             0.34              612
+SWIRL_WHALE_v1_10840      7      374 2017-07-25 2017-09-27      1.83      0.23      8.82             0.37              374
+ SWIRL_WHALE_v1_1385     11      541 2017-07-14 2017-10-21      1.46      0.11     11.50             0.34              541
+SWIRL_WHALE_v1_23031      6      313 2017-07-26 2017-09-09      1.72      0.15      8.70             0.36              313
+ SWIRL_WHALE_v1_4176      7      379 2017-07-17 2017-09-25      1.70      0.11     11.02             0.41              379
+ SWIRL_WHALE_v1_5648      3      170 2017-07-17 2017-08-18      1.76      0.11     11.01             0.42              170
+ SWIRL_WHALE_v1_5670      3      142 2017-07-17 2017-08-15      1.72      0.03     11.27             0.40              142
+ SWIRL_WHALE_v1_5679      4      185 2017-07-17 2017-08-22      2.03      0.08     11.22             0.43              185
+ SWIRL_WHALE_v1_5800      1       55 2017-07-17 2017-07-23      1.62      0.14      7.29             0.35               55
+ SWIRL_WHALE_v1_5803      6      207 2017-07-26 2017-09-19      1.76      0.06     12.23             0.43              207
+ SWIRL_WHALE_v1_5840     10      526 2017-07-17 2017-10-21      1.51      0.13     12.30             0.35              526
+ SWIRL_WHALE_v1_5910      6      345 2017-07-26 2017-10-03      1.74      0.11     11.19             0.42              345
+ SWIRL_WHALE_v1_5921      4      207 2017-07-26 2017-09-05      1.78      0.10     11.28             0.42              207
+  SWIRL_WHALE_v1_825      1       15 2017-07-27 2017-07-29      1.20      0.25     14.99             0.36               15
+  SWIRL_WHALE_v1_826      9      520 2017-07-10 2017-11-05      1.88      0.12     12.42             0.43              520
+  SWIRL_WHALE_v1_827      9      390 2017-07-26 2017-11-28      3.26      0.19     16.98             0.48              390
+  SWIRL_WHALE_v1_831      6      296 2017-07-26 2017-09-09      1.83      0.20      8.48             0.36              296
+  SWIRL_WHALE_v1_835      8      426 2017-07-10 2017-09-30      1.63      0.09     11.27             0.40              426
+  SWIRL_WHALE_v1_841     12      579 2017-07-11 2017-12-07      2.37      0.16     14.98             0.46              579
+  SWIRL_WHALE_v1_845     11      605 2017-07-17 2017-11-22      1.94      0.10     11.41             0.43              605
+  SWIRL_WHALE_v1_847      7      399 2017-07-14 2017-10-12      2.18      0.12     12.85             0.43              399
+FLAGS:
+ - irregular dt: 40% of steps exceed 2x the median (1.8 h). Durations / hazards count steps; report them in steps, or rerun step-3 variants on regularised tracks as a sensitivity.
+ - 49 of 99 states never visited by the original tracks; check n_states and the env date coverage.
+ - animals with < 2 sequences at seq_len 8-58 (median 54, variable): ['SWIRL_WHALE_v1_5800', 'SWIRL_WHALE_v1_825'] (weak held-out folds)

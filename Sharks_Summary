@@ -1,0 +1,45 @@
+Invalid-state report (policy=variable, seq_len=60; -1 = no env scene for the fix date, land / nodata, or outside the env grid):
+  hammerhead_v1_183623: 165 segs, 0/8789 states invalid (0.0%); all-invalid 0, partly 0, clean 165; segment length 2..258
+  hammerhead_v1_200368: 88 segs, 0/7194 states invalid (0.0%); all-invalid 0, partly 0, clean 88; segment length 4..451
+  hammerhead_v1_200369: 220 segs, 0/1738 states invalid (0.0%); all-invalid 0, partly 0, clean 220; segment length 2..41
+  hammerhead_v1_209020: 275 segs, 0/1331 states invalid (0.0%); all-invalid 0, partly 0, clean 275; segment length 2..12
+  hammerhead_v1_222133: 187 segs, 0/6303 states invalid (0.0%); all-invalid 0, partly 0, clean 187; segment length 2..218
+  hammerhead_v1_235283: 154 segs, 0/693 states invalid (0.0%); all-invalid 0, partly 0, clean 154; segment length 2..14
+  hammerhead_v1_244607: 154 segs, 0/1034 states invalid (0.0%); all-invalid 0, partly 0, clean 154; segment length 2..21
+  hammerhead_v1_244608: 132 segs, 0/6380 states invalid (0.0%); all-invalid 0, partly 0, clean 132; segment length 2..495
+  hammerhead_v1_261743: 110 segs, 0/748 states invalid (0.0%); all-invalid 0, partly 0, clean 110; segment length 2..24
+  variable: every valid run kept as one sequence (runs longer than seq_len split into near-equal pieces); rows padded at the end and masked.
+SWIRL dataset: 847 sequences, policy=variable (seq_len max=60, min_seq_len=10); states per sequence min/q25/median/q75/max = 10/18/37/55/58; padded width 58, padding 37.4% of the batch
+  hammerhead_v1_183623: kept 8481/8624 transitions (98.3%)
+  hammerhead_v1_200368: kept 7073/7106 transitions (99.5%)
+  hammerhead_v1_200369: kept 979/1518 transitions (64.5%)
+  hammerhead_v1_209020: kept 330/1056 transitions (31.2%)
+  hammerhead_v1_222133: kept 5951/6116 transitions (97.3%)
+  hammerhead_v1_235283: kept 143/539 transitions (26.5%)
+  hammerhead_v1_244607: kept 539/880 transitions (61.2%)
+  hammerhead_v1_244608: kept 5951/6248 transitions (95.2%)
+  hammerhead_v1_261743: kept 440/638 transitions (69.0%)
+n_sequences              847
+seq_len_steps            8-56 (median 35, variable)
+n_original_sequences     77
+n_animals                9
+n_states                 76
+states_unvisited         32
+top5_state_share         0.909
+dt_median_h              1.516
+frac_dt_gt_2med          0.366
+animals_in_window        None
+              animal  n_seq  n_steps      start        end  dt_med_h  dt_p10_h  dt_p90_h  frac_dt_gt_2med  steps_in_window
+hammerhead_v1_183623     21      750 2020-03-22 2020-10-13      1.55      0.18     12.81             0.36              750
+hammerhead_v1_200368     15      628 2021-01-15 2021-06-26      0.86      0.08     13.00             0.31              628
+hammerhead_v1_200369      4       85 2020-10-27 2021-03-07      1.24      0.01     21.01             0.38               85
+hammerhead_v1_209020      3       27 2021-08-30 2021-10-03      2.00      0.01     20.55             0.42               27
+hammerhead_v1_222133     16      525 2022-11-15 2023-06-15      2.01      0.14     19.93             0.43              525
+hammerhead_v1_235283      1       12 2024-04-17 2024-04-24      4.48      1.27     44.32             0.55               12
+hammerhead_v1_244607      3       46 2024-03-14 2024-05-29      5.52      1.33     23.19             0.63               46
+hammerhead_v1_244608     12      529 2023-11-28 2024-04-29      1.59      0.06     10.57             0.35              529
+hammerhead_v1_261743      2       38 2024-09-11 2024-09-28      0.68      0.11     10.56             0.22               38
+FLAGS:
+ - irregular dt: 37% of steps exceed 2x the median (1.5 h). Durations / hazards count steps; report them in steps, or rerun step-3 variants on regularised tracks as a sensitivity.
+ - 32 of 76 states never visited by the original tracks; check n_states and the env date coverage.
+ - animals with < 2 sequences at seq_len 8-56 (median 35, variable): ['hammerhead_v1_235283'] (weak held-out folds)

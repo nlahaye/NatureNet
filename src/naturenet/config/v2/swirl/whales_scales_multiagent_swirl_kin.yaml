@@ -4,11 +4,14 @@
 # v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/whales_scales_multiagent_swirl.yaml;
 # only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
 # Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
-# Phase D2 (whales): multi-agent SWIRL decision scales at K = 5 (v2 S-1 best-fit K), every variant screened.
-# v2 best-fit K (smallest K within one fold-paired SE of the best mean; Table 1): sharks ARHMM 3, S-1 3, S-2 2,
-# HIQL 1 (= IAVI); whales ARHMM 5, S-1 5, S-2 5, HIQL 2.
+# Phase D2 (whales): multi-agent SWIRL decision scales + kin at K = 5, secondary tool (SWIRL S-2 + kin K = 5).
+# Kinematic baselines (user decision): the kinematic models are the baselines (kinematic CV best K = 5 for every
+# model, at the grid edge; joint LL - pooled kinematic null does not degrade vs action-only).
+# Tools: whales HIQL + kin K = 5 (primary), SWIRL S-2 + kin K = 5 (secondary); sharks HIQL + kin K = 5
+# (primary), HIQL (HIAVI) + kin K = 2 (secondary).
 # Every choice below comes from the v2 data / v2 baselines; no v1-environment result is assumed.
-# Multi-agent SWIRL has no S-2 backend; swirl_scales order 2 (S1_N2) is the closest analogue.
+# Multi-agent SWIRL has no S-2 backend; swirl_scales order 2 (S1_N2) is the S-2 analogue. All 8 variants are
+# screened (N1 = S-1 reference for the order gain).
 #   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/whales_scales_multiagent_swirl_kin.yaml --skip_null
 #   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/whales_scales_multiagent_swirl_kin.yaml --variant <passing>
 #   python -m naturenet.models.irl.plot_scales_multiagent -y v2/swirl/whales_scales_multiagent_swirl_kin.yaml --K 5
@@ -91,7 +94,7 @@ multiagent:
   window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv", split_gap_days: 30}
   # time-shift null calendar: one season per tracking year (scene days split at gaps > 30 d -> 2015, 2017);
   # each step is shifted inside its own season, so no track moves into the untracked 2016 gap
-  Ks: [5]                                            # v2 S-1 best-fit K
+  Ks: [5]                                            # SWIRL S-2 + kin secondary tool
   variants:
     temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
     proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 20.0, max_km: 75.0}   # local scale
