@@ -4,16 +4,16 @@
 # v2 environment (CMEMS v2 scenes + new SIT-FUSE clusters). Generated from config/swirl/full_plan/whales_scales_multiagent.yaml;
 # only paths, n_states, input_keys / variables, env_window and the shared sequence settings differ.
 # Run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
-# Phase D2 (whales): multi-agent decision scales, every variant screened for both backends at the v2 best-fit K
-# (hiql_scales K = 2, swirl_scales K = 5).
-# v2 best-fit K (smallest K within one fold-paired SE of the best mean; Table 1): sharks ARHMM 3, S-1 3, S-2 2,
-# HIQL 1 (= IAVI); whales ARHMM 5, S-1 5, S-2 5, HIQL 2.
+# Phase D2 (whales): multi-agent decision scales, hiql_scales + kin at K = 5 (primary tool), every variant screened.
+# The secondary tool (SWIRL S-2 + kin K = 5) runs from whales_scales_multiagent_swirl_kin.yaml.
+# Kinematic baselines (user decision): the kinematic models are the baselines (kinematic CV best K = 5 for every
+# model, at the grid edge; joint LL - pooled kinematic null does not degrade vs action-only).
+# Tools: whales HIQL + kin K = 5 (primary), SWIRL S-2 + kin K = 5 (secondary); sharks HIQL + kin K = 5
+# (primary), HIQL (HIAVI) + kin K = 2 (secondary).
 # Every choice below comes from the v2 data / v2 baselines; no v1-environment result is assumed.
-# Which layers to keep comes from the v2 single-animal scales runs at the same K (not run yet at HIQL K = 2);
-# until then screen every variant without nulls and run nulls only for pairs that pass (pooled gain > 0 and
-# more than half of the held-out animals improve).
-#   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/whales_scales_multiagent_kin.yaml --backend hiql_scales --K 2 --skip_null
-#   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/whales_scales_multiagent_kin.yaml --backend swirl_scales --K 5 --skip_null
+# Screen every variant without nulls; run nulls only for pairs that pass (pooled gain > 0 and more than half of
+# the held-out animals improve).
+#   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/whales_scales_multiagent_kin.yaml --backend hiql_scales --K 5 --skip_null
 #   python -m naturenet.models.irl.run_scales_multiagent -y v2/swirl/whales_scales_multiagent_kin.yaml --backend <b> --variant <passing> --K <K>
 #   python -m naturenet.models.irl.plot_scales_multiagent -y v2/swirl/whales_scales_multiagent_kin.yaml --K <K>
 # S1_N3_hist: check that deep contexts have enough steps (run_swirl_scales_kfold --check on the v2 data).
@@ -35,7 +35,7 @@ folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for 
 # --- end shared data block ---
 
 seed: 12345
-n_hidden: 2                  # = Ks (cosmetic; Ks sets K)
+n_hidden: 5                  # = Ks (cosmetic; Ks sets K)
 out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/multiagent_scales_kin/"
 run_uid: "WHALE_SCALES_MA_KIN"
 
@@ -53,7 +53,7 @@ hiavi_iavi_max_iters: 10000
 hiavi_align: "swirl"
 
 multiagent:
-  scales_backends: ["hiql_scales", "swirl_scales"]
+  scales_backends: ["hiql_scales"]   # swirl_scales: whales_scales_multiagent_swirl_kin.yaml
   swirl:                      # SWIRL-scales init / schedule (as swirl_multiagent)
     init: "arhmm"
     arhmm_epochs: 50
@@ -94,7 +94,7 @@ multiagent:
   window: {scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv", split_gap_days: 30}
   # time-shift null calendar: one season per tracking year (scene days split at gaps > 30 d -> 2015, 2017);
   # each step is shifted inside its own season, so no track moves into the untracked 2016 gap
-  Ks: [2]                                            # v2 HIQL best-fit K; swirl_scales: pass --K 5 (v2 S-1 best-fit K)
+  Ks: [5]                                            # HIQL + kin primary tool
   variants:
     temporal:  {h_days: 1.0, max_dt_days: 3.0}                               # co-timing only
     proximity: {h_days: 1.0, max_dt_days: 3.0, lambda_km: 20.0, max_km: 75.0}   # local scale

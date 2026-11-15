@@ -1,0 +1,84 @@
+# Final single-animal HIQL (HIAVI) + kinematics fit (whales, K = 5; primary behavior-analysis tool) for maps, time
+# series, intention kinematics and reward projection. Copy of whales_hiql_final.yaml except: n_hidden 5, the
+# kinematics block of whales_hiavi_kfold_kin.yaml (the kinematic CV baseline), run_uid WHALE_HIQL_KIN_FINAL, out_dir final/hiql_kin/.
+# v2 environment; run naturenet.environment.sync_v2_configs before use (fills n_states, input_keys, variables).
+# holdout_fraction 0: one fit on every animal (the CV gives the uncertainty). LL files hold the comparable LL
+# (joint - pooled kinematic null) plus LL_joint / LL_kin_null / LL_action; *_kinematics.csv labels the intentions.
+#   python -m naturenet.models.irl.run_hiavi_kfold        -y v2/swirl/whales_hiql_final_kin_k5.yaml --holdout
+#   python -m naturenet.models.irl.plot_hiavi             -y v2/swirl/whales_hiql_final_kin_k5.yaml
+#   python -m naturenet.models.irl.reward_env_projection  -y v2/swirl/whales_hiql_final_kin_k5.yaml -p v2/swirl/whales_reward_env_projection_hiql.yaml --n_hidden 5
+# (scripts/run_final_fits.sh runs all three for every chosen tool.)
+# --- shared data block (identical in every full_plan whale config -> comparable LLs, shared folds) ---
+n_states: null              # synced by naturenet.environment.sync_v2_configs (K clusters + 1 absorbing)
+actions: "/data/nlahaye/NatureNet/Blue_Whale_v2/SWIRL_WHALE_1517_*_actions.pkl"   # originals + __aug copies
+positions: "auto"           # each <...>_actions.pkl paired with <...>_states_abstract_env.pkl
+df_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/"
+df_run_uid: "SWIRL_WHALE_1517"
+per_fold_trans_prob: True
+fill_unobserved: "self_loop"
+require_full_trans_prob: True
+seq_len: 60                 # variable policy: one sequence per valid run, runs > 60 split
+segment_policy: "variable"
+min_seq_len: 10
+n_folds: 5                  # 44 animals (2015 + 2017, <year>_<uid>) -> 8-9 per test fold (folds group by base id, so __aug copies stay together)
+fold_seed: 0
+folds_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/folds/"   # one fold file for ARHMM, SWIRL, HIAVI and decision scales
+# --- end shared data block ---
+
+
+seed: 12345                 # base seed; get_stats_hiavi runs use seed + run index
+n_hidden_init: 5
+n_hidden: 5                 # HIQL + kin primary tool
+out_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/final/hiql_kin/"
+run_uid: "WHALE_HIQL_KIN_FINAL"
+
+holdout_fraction: 0.0   # train on every animal
+overwrite: False
+
+hiavi_discount: 0.9
+hiavi_restarts: 10          # best restart by TRAIN LL
+hiavi_mstep: "soft"
+hiavi_pseudocount: 0.5
+hiavi_max_iters: 200
+hiavi_tol: 1.0e-6
+hiavi_sticky: 0.95
+hiavi_iavi_tol: 1.0e-8
+hiavi_iavi_max_iters: 10000
+hiavi_align: "swirl"        # s = states[:, 1:-1], comparable to SWIRL
+run_hiavi_kfold: False
+run_hiavi_final: True
+
+
+lon_bounds: [-126, -110]     # = v2 env grid
+lat_bounds: [22, 40]
+splits: ["train"]
+plot_trajs: True
+plot_gifs: False
+# input_keys = input_channels of the v2 sample step; needs <df_dir>/SWIRL_WHALE_1517_<key>_states_input.pkl from
+#   python -m naturenet.environment.sample_env_inputs -y config/v2/environment/whales_sample_inputs_v2.yaml
+# Post-hoc analyses only: fixes outside the v2 scene calendar are dropped (fits unchanged).
+env_window:
+  scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_scene_index.csv"   # first .. last complete v2 scene day
+  nearest_days: 0
+plot_inputs: True
+input_keys: ["__run_sync_v2_configs__"]   # synced: = input_channels of the sample_inputs_v2 step
+static_layers: {}
+reward_normalize: "none"
+hiavi_plot_series: True
+hiavi_cv_plot: False   # CV curves come from the Phase B dir / plot_ll_comparison
+plot_dir: "/data/nlahaye/NatureNet/Blue_Whale_v2/final/hiql_kin/plots/"
+
+kinematics:                 # = whales_hiavi_kfold_kin.yaml / whales_swirl_kfold_kin.yaml (the kinematic baselines)
+  enabled: True
+  step_feature: "speed_kmh"
+  step_dist: "gamma"
+  use_step: True
+  use_turn: True
+  fix_mu0: False
+  zero_km: 0.05
+  min_dt_h: 3.0
+  max_speed_kmh: 15.0
+  weight: 1.0
+  kappa_max: 200.0
+  min_weight: 2.0
+  label_margin: 0.5

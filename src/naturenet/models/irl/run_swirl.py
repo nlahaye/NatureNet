@@ -11,6 +11,9 @@ Train / test split is by animal: ``holdout_groups`` (list of base ids) or ``hold
 Same pipeline as one run_swirl_kfold fold, so the final fit matches the CV settings:
   * segment_policy: variable is supported (padded rows trimmed for the ARHMM, masked in SWIRL);
   * ARHMM pseudo-count / support from the YAML (arhmm_pseudo_count, arhmm_pseudo_support "T" uses the final T);
+  * kinematics block: kinematic ARHMM (as run_arhmm_kfold) and kinematic S-1 / S-2 (as run_swirl_kfold); LL files
+    hold the comparable LL (joint - pooled train kinematic null) plus LL_joint / LL_kin_null / LL_action;
+  * M-step and ARHMM speed options (mstep_*, arhmm_*) from the YAML, as in the CV runners;
   * ARHMM: <run_uid>_<K>_hidden_<seed>_seed_arhmm_s_KF_final.npz; SWIRL init / final files without a fold tag
     (name_fmt "final": <run_uid>_<K>_<seed>_S1_naturenet_iter2_temp_2.npz, ..._S1_naturenet_iter2_LL1.npz, ...),
     which is what plot_swirl_new / swirl_track_series / reward_env_projection read.
@@ -24,7 +27,8 @@ import os
 import numpy as np
 import numpy.random as npr
 
-from naturenet.models.irl.run_arhmm_kfold import run_arhmm_internal, set_pseudo_count
+from naturenet.models.irl.kinematics import cached_kinematics, kin_conf
+from naturenet.models.irl.run_arhmm_kfold import run_arhmm_internal, set_arhmm_speed, set_pseudo_count
 from naturenet.models.irl.run_swirl_kfold import (
     fit_swirl_final,
     fit_swirl_init,
@@ -32,6 +36,7 @@ from naturenet.models.irl.run_swirl_kfold import (
     load_arhmm,
     prepare_data,
 )
+from naturenet.models.irl.swirl_training import set_mstep_options
 from naturenet.models.irl.swirl_data import align_data, holdout_split, load_swirl_dataset, step_mask
 
 from sit_fuse.utils import read_yaml
@@ -54,7 +59,8 @@ def _arhmm_path(yml_conf):
 
 
 def run_arhmm(yml_conf, data=None):
-    """ARHMM init on the train animals of the final split (variable rows trimmed to their real steps)."""
+    """ARHMM init on the train animals of the final split (variable rows trimmed to their real steps); with a
+    kinematics block the ARHMM also fits per-intention step / turn emissions (as run_arhmm_kfold)."""
     if os.path.exists(_arhmm_path(yml_conf)) and not yml_conf.get("overwrite", False):
         print("final ARHMM exists; skipping")
         return
@@ -72,14 +78,17 @@ def run_arhmm(yml_conf, data=None):
         set_pseudo_count(yml_conf, fold_trans_prob(yml_conf, data, tr))
     else:
         set_pseudo_count(yml_conf)
-    if yml_conf.get("kinematics"):
-        raise NotImplementedError("final run with a kinematics block: use run_swirl_kfold (the final baselines are "
-                                  "action-only)")
+    kcfg = kin_conf(yml_conf)
+    kin = None if kcfg is None else cached_kinematics(yml_conf, data, kcfg, offset=1, shape=np.asarray(xs).shape)
+    set_arhmm_speed(yml_conf)
     npr.seed(int(yml_conf["seed"]))
     run_arhmm_internal(yml_conf["seed"], yml_conf["emission_dim"], yml_conf["n_hidden_init"],
                        yml_conf["latent_state_dim"], yml_conf["n_states"], rows[tr], yml_conf["out_dir"],
                        yml_conf["run_uid"], FINAL, test_positions=rows[te] if len(te) else None,
-                       epochs=int(yml_conf.get("arhmm_epochs", 100)))
+                       kin_train=None if kin is None else kin[tr],
+                       kin_test=None if kin is None or not len(te) else kin[te], kin_cfg=kcfg,
+                       epochs=int(yml_conf.get("arhmm_epochs", 100)),
+                       tol_per_step=float(yml_conf.get("arhmm_tol_per_step", 0.0) or 0.0))
 
 
 def _data(yml_conf, data):
@@ -122,6 +131,7 @@ if __name__ == '__main__':
     yml_conf = read_yaml(args.yaml)
     yml_conf.setdefault("n_hidden", yml_conf["n_hidden_init"])
     data = prepare_data(yml_conf, load_swirl_dataset(yml_conf, allow_variable=True))
+    print("M-step options:", set_mstep_options(yml_conf))
 
     if yml_conf.get("run_arhmm", True):
         run_arhmm(yml_conf, data)
