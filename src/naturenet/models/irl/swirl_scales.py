@@ -94,10 +94,15 @@ VI_ITERS = 100
 
 @dataclass
 class HistoryConfig:
-    kind: tuple = ()              # subset of ("lags", "decay", "summary"); () = off
+    kind: tuple = ()              # subset of ("lags", "decay", "summary", "env"); () = off
     lags: int = 2
     decay_steps: tuple = (3.0, 10.0)
     window: int = 10
+    # "env": environmental covariates of the current fix (z-scored input channels from sample_env_inputs; see
+    # naturenet.drivers.env_covariates) in the switching (and hazard) features -> environment-driven switching
+    env_channels: tuple = ()      # channel names (empty = every channel of the states_input files)
+    env_diff: bool = True         # also the change since the previous fix
+    env_tag: str = ""             # short name for the variant tag (hist-env-<tag>)
 
     @property
     def enabled(self):
@@ -240,7 +245,8 @@ class ScalesConfig:
         if self.reward_param != "additive":
             parts.append(self.reward_param)
         if self.history.enabled:
-            parts.append("hist-" + "+".join(self.history.kind))
+            parts.append("hist-" + "+".join(self.history.kind)
+                         + (f"-{self.history.env_tag}" if "env" in self.history.kind and self.history.env_tag else ""))
         if self.durations.enabled:
             parts.append(f"dur-{self.durations.hazard[:4]}{self.D}")
         if self.hierarchy.enabled:
@@ -270,11 +276,13 @@ def _history_conf(h):
         return HistoryConfig()
     kind = h.pop("kind", ("lags",))
     kind = tuple(kind.split("+")) if isinstance(kind, str) else tuple(kind)
-    bad = set(kind) - {"lags", "decay", "summary"}
+    bad = set(kind) - {"lags", "decay", "summary", "env"}
     if bad:
         raise ValueError(f"unknown switch_history kinds {bad}")
     if "decay_steps" in h:
         h["decay_steps"] = tuple(float(v) for v in np.atleast_1d(h["decay_steps"]))
+    if "env_channels" in h:
+        h["env_channels"] = tuple(str(v) for v in (h["env_channels"] or ()))
     return HistoryConfig(kind=kind, **{k: v for k, v in h.items() if k in HistoryConfig.__dataclass_fields__})
 
 
@@ -410,8 +418,12 @@ class ContextTree:
 # Switching-history features
 # ---------------------------------------------------------------------------
 
-def history_features(state_rows, S, hcfg):
-    """(N, T, F) features of the history through x_t = rows[:, t+1] (the transition into t+1 uses row t)."""
+def history_features(state_rows, S, hcfg, env_rows=None, env_names=None):
+    """
+    (N, T, F) features of the history through x_t = rows[:, t+1] (the transition into t+1 uses row t).
+    env_rows (N, L, C): environmental covariates aligned with state_rows (already z-scored; NaN = missing), used
+    by kind "env": value at x_t, change since x_t-1 (env_diff) and one missing indicator (NaN -> 0).
+    """
     rows = np.asarray(state_rows, dtype=np.int64)
     N, L = rows.shape
     T = L - 2
@@ -451,6 +463,25 @@ def history_features(state_rows, S, hcfg):
                 f[:, t, 2] = (rows[:, lo:p - 1] == rows[:, p][:, None]).any(1)
         blocks.append(f)
         names += ["stay_frac", "n_unique", "revisit"]
+    if "env" in hcfg.kind:
+        if env_rows is None:
+            raise ValueError('switch_history kind "env" needs env_rows (naturenet.drivers.env_covariates)')
+        E = np.asarray(env_rows, dtype=float)
+        if E.shape[:2] != rows.shape:
+            raise ValueError(f"env_rows {E.shape} do not match the state rows {rows.shape}")
+        C = E.shape[-1]
+        cn = list(env_names) if env_names is not None else [f"env{c}" for c in range(C)]
+        cur = E[:, pos]
+        miss = ~np.isfinite(cur)
+        blocks.append(np.nan_to_num(cur))
+        names += [f"env_{n}" for n in cn]
+        if hcfg.env_diff:
+            prev = E[:, pos - 1]
+            dv = cur - prev
+            blocks.append(np.nan_to_num(dv))
+            names += [f"denv_{n}" for n in cn]
+        blocks.append(miss.any(-1, keepdims=True).astype(float))
+        names += ["env_missing"]
     return np.concatenate(blocks, axis=-1), names
 
 
@@ -820,19 +851,21 @@ def n_real_steps(d):
     return float(np.asarray(d["a"] >= 0).sum())
 
 
-def scales_data(state_rows, a, tree, hcfg, S, kin=None, idx=None):
+def scales_data(state_rows, a, tree, hcfg, S, kin=None, idx=None, env_rows=None, env_names=None):
     """
     dict(x, ctx, a, phi, kin) for the rows idx (x = rows[:, 1:-1], a aligned with x). Padded steps
     (segment_policy: variable) are marked by a = -1; their x / ctx / phi are ignored (masked) downstream.
+    env_rows (N, L, C) aligned with state_rows: environmental covariates for switch_history kind "env".
     """
     rows = np.asarray(state_rows)
     a = np.asarray(a)
     if idx is not None:
         rows, a = rows[idx], a[idx]
         kin = None if kin is None else kin[idx]
+        env_rows = None if env_rows is None else np.asarray(env_rows)[idx]
     if a.shape != (rows.shape[0], rows.shape[1] - 2):
         raise ValueError(f"actions {a.shape} do not match x = rows[:, 1:-1] {rows[:, 1:-1].shape}")
-    phi, names = history_features(rows, S, hcfg)
+    phi, names = history_features(rows, S, hcfg, env_rows, env_names)
     ctx = tree.contexts(rows)
     assert ctx.shape == a.shape and phi.shape[:2] == a.shape
     return dict(x=jnp.asarray(rows[:, 1:-1].astype(np.int64)), ctx=jnp.asarray(ctx), a=jnp.asarray(a, dtype=jnp.int64),

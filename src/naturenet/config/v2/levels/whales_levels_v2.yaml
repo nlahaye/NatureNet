@@ -22,6 +22,12 @@ levels:
   # MBON Seascapes baseline (naturenet.environment.seascapes): a published habitat classification as the state space
   - {name: seascape, level: categorical, scene_file_template: "/data/nlahaye/NatureNet_Env/Seascapes/v2/whales/seascape_whales_t{i}.tif",
      cluster_scale: 1, zero_label_valid: False, exclude_classes: [], interpret_subdir: interpret_seascape}
+  # Environment-ablation nulls (test 1, naturenet.drivers.env_null): movement unchanged, labels replaced.
+  # shift / shuffle / marginal keep the fine K (and the fine cluster profiles); single = one environment state.
+  - {name: null_shift, level: "null", mode: shift, seed: 0}
+  - {name: null_shuffle, level: "null", mode: shuffle, seed: 0}
+  - {name: null_marginal, level: "null", mode: marginal, seed: 0}
+  - {name: null_single, level: "null", mode: single, seed: 0, runs: [hiavi_kfold_kin, hiql_scales_kin_k5]}
 templates:
   env_format: config/v2/environment/whales_env_format_clusters_v2.yaml
   abstract_env: config/v2/environment/whales_abstract_env_v2.yaml
@@ -32,8 +38,14 @@ runs:                         # generated for every level; which ones to run: se
   swirl_kfold: config/v2/swirl/whales_swirl_kfold.yaml   # SWIRL S-1 / S-2: best one or two levels only
   hiql_final: config/v2/swirl/whales_hiql_final.yaml              # final fit: chosen level(s) only
   reward_env_projection_hiql: config/v2/swirl/whales_reward_env_projection_hiql.yaml
+  # kinematics-enabled tools (environmental-driver tests, config/v2/drivers/whales_drivers.yaml)
+  hiavi_kfold_kin: config/v2/swirl/whales_hiavi_kfold_kin.yaml        # HIQL + kin, K = 5 at every level / null
+  hiql_scales_kin_k5: config/v2/swirl/whales_hiql_scales_kin_k5.yaml  # decision-scale grid x environment level
+null_runs: [hiavi_kfold_kin, hiql_scales_kin_k5, reward_env_projection_hiql]   # runs generated for null levels
 overrides:
   hiavi_kfold: {run_hiavi_final: False}   # level sweep = CV only; holdout fit via hiql_final at the chosen level
+  # K = 5 only across levels (the K sweep with min_latent = 1 stays at the fine level, config/v2/swirl)
+  hiavi_kfold_kin: {run_hiavi_final: False, n_hidden: 5, min_latent: 5, max_latent: 5}
 ll_comparison:
   out_prefix: "whale_v2_levels"
   title: "Blue whale K-fold log-likelihood by environment level"
@@ -48,3 +60,4 @@ ll_comparison:
     - {name: hiavi, alias: "iavi_{lv}", label: "IAVI {lv} (K=1)", run: iavi_kfold}
     - {name: swirl_s1, alias: "swirl_s1_{lv}", label: "SWIRL S-1 {lv}", run: swirl_kfold}
     - {name: swirl_s2, alias: "swirl_s2_{lv}", label: "SWIRL S-2 {lv}", run: swirl_kfold}
+    - {name: hiavi, alias: "hiql_kin_{lv}", label: "HIQL+kin {lv}", run: hiavi_kfold_kin}

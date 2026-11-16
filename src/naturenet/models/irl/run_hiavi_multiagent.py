@@ -39,6 +39,19 @@ segment_policy / hiavi_*), plus a `multiagent` block (see the YAML). Steps:
 
 Outputs in <out_dir>/<ma_subdir>/: ma_concurrency.csv, ma_pairs.npz, ma_cv.csv, ma_sync.csv, ma_summary.json,
 ma_final_K<K>.npz (+ ma_kinematics.csv with kinematics).
+
+Null kinds (multiagent.null_kind):
+  time_shift    (default) each animal's calendar is circularly shifted (no concurrency left)
+  env_matched   environment-matched social null: every partner step in the kernel is replaced by a random step
+                of another animal in the SAME environment state that is not concurrent with the target step
+                (|dt| >= env_null.min_dt_days, default null_min_shift_days; optional env_null.doy_window_days keeps
+                the season). Kernel weights w and the partners' environment composition are preserved, so a gain
+                that survives this null is not explained by animals sharing the same habitat.
+  The env_matched replicates reuse the observed CV parts and the independent fits (same parts folder) and write
+  cv_K<K>_envnull####.csv parts plus ma_cv_env_matched.csv / ma_summary_env_matched.json /
+  ma_final_K<K>_env_matched.npz, so both nulls can be run side by side.
+Every held-out row also carries d_by_state (JSON {state: [sum d, n]} over steps with partner context), for the
+per-environment-state coupling summary (naturenet.drivers.coupling_env).
 """
 import argparse
 import glob
@@ -130,6 +143,11 @@ def ma_conf(yml_conf):
     m.setdefault("eval_include_aug", False)
     m.setdefault("min_context_steps", 30)
     m.setdefault("ma_subdir", "multiagent")
+    m.setdefault("null_kind", "time_shift")
+    if m["null_kind"] not in ("time_shift", "env_matched"):
+        raise ValueError(f"multiagent.null_kind must be time_shift | env_matched, got {m['null_kind']!r}")
+    m["env_null"] = dict(dict(min_dt_days=None, doy_window_days=None, max_tries=50, n_null=None),
+                         **(m.get("env_null") or {}))
     m.setdefault("seed", int(yml_conf.get("seed", 0)))
     return m
 
@@ -326,7 +344,15 @@ class HiaviBackend:
         return {f"logp_tr_{tag}": m.logp_tr, f"pis_{tag}": m.pis, f"r_{tag}": m.r}
 
 
-def heldout_scores(bk, T_env, model0, models, tr, te, kerns_te, eval_mask, valid=None):
+def _d_by_state(d, conc, states):
+    if states is None or np.shape(states) != np.shape(d) or not conc.any():
+        return "{}"
+    s = np.asarray(states)[conc]
+    dd = np.asarray(d)[conc]
+    return json.dumps({int(k): [float(dd[s == k].sum()), int((s == k).sum())] for k in np.unique(s)})
+
+
+def heldout_scores(bk, T_env, model0, models, tr, te, kerns_te, eval_mask, valid=None, states=None):
     """
     Per-step predictive LLs on te for the independent and each coupled model; context from train.
     valid (N, T): real steps (padded steps of segment_policy: variable are excluded from every score).
@@ -347,12 +373,17 @@ def heldout_scores(bk, T_env, model0, models, tr, te, kerns_te, eval_mask, valid
                           d_total=float(d[msk].sum()), d_per_step=float(d[msk].mean()),
                           d_conc=float(d[conc].sum()) if conc.any() else 0.0,
                           d_conc_per_step=float(d[conc].mean()) if conc.any() else np.nan,
-                          n_test_steps=int(msk.sum()), n_conc_steps=int(conc.sum()))
+                          n_test_steps=int(msk.sum()), n_conc_steps=int(conc.sum()),
+                          d_by_state=_d_by_state(d, conc, None if states is None else states[te]))
     return out
 
 
-def run_cv(bk, conf, pc, K, variants, times=None, null_id=-1, base_cache=None, verbose=True):
-    """One leave-one-animal-out pass (observed calendar if times is None, else shifted). Returns rows."""
+def run_cv(bk, conf, pc, K, variants, times=None, null_id=-1, base_cache=None, verbose=True, kernel_fn=None,
+           null_kind="time_shift"):
+    """
+    One leave-one-animal-out pass (observed calendar if times is None, else shifted). Returns rows.
+    kernel_fn(kern, tgt, src, vname) -> kern transforms every kernel after it is built (environment-matched null).
+    """
     groups = np.asarray(bk.data["groups"]).astype(str)
     eval_mask = np.ones(len(groups), bool) if conf["eval_include_aug"] else original_mask(pc)
     animals = sorted(np.unique(groups))
@@ -381,17 +412,77 @@ def run_cv(bk, conf, pc, K, variants, times=None, null_id=-1, base_cache=None, v
         for vname, v in variants.items():
             kern_tr = pc.build(tr, tr, times=times, **v)
             kerns_te[vname] = pc.build(te, tr, times=times, **v)
+            if kernel_fn is not None:
+                kern_tr = kernel_fn(kern_tr, tr, tr, vname)
+                kerns_te[vname] = kernel_fn(kerns_te[vname], te, tr, vname)
             models[vname] = bk.fit_coupled(m0, T_env, tr, kern_tr)
-        sc = heldout_scores(bk, T_env, m0, models, tr, te, kerns_te, eval_mask, valid=pc.valid)
+        st = bk.data.get("hiavi_s") if isinstance(getattr(bk, "data", None), dict) else None
+        sc = heldout_scores(bk, T_env, m0, models, tr, te, kerns_te, eval_mask, valid=pc.valid, states=st)
         for vname, r in sc.items():
             m, (w_tr, c_tr) = models[vname]
             rows.append(dict(model=bk.name, K=K, fold=kf, heldout=an, variant=vname, null_id=null_id,
+                             null_kind=null_kind if null_id >= 0 else "observed",
                              train_ll_indep=ll0, train_ll_coupled=bk.loglik(m, T_env, tr, w_tr, c_tr), **r))
             if verbose:
                 print(f"{bk.name} K={K} hold {an} {vname:9s} null {null_id:3d}: alpha {r['alpha']:.3f} "
                       f"dLL/step {r['d_per_step']:+.4f} (context steps {r['n_conc_steps']}, "
                       f"dLL there {r['d_conc_per_step']:+.4f})")
     return rows
+
+
+class EnvMatchedNull:
+    """
+    Kernel transform for the environment-matched social null. Every nonzero (target step i, source step j) of a
+    kernel is moved to a random source step j' with the same environment state as j, of an animal other than the
+    target, with |t_j' - t_i| >= min_dt_days (and |day-of-year difference| <= doy_window_days if set). The weight
+    is kept; entries without a candidate after max_tries draws are dropped (share reported in .stats).
+    """
+
+    def __init__(self, pc, states, seed, rep, min_dt_days, doy_window_days=None, max_tries=50):
+        self.pc, self.states = pc, np.asarray(states)
+        if self.states.shape != pc.times.shape:
+            raise ValueError(f"env_matched null: states {self.states.shape} != step metadata {pc.times.shape}")
+        self.seed, self.rep = int(seed), int(rep)
+        self.min_dt, self.doy = float(min_dt_days), doy_window_days
+        self.max_tries = int(max_tries)
+        self.stats = dict(entries=0, dropped=0)
+
+    def __call__(self, kern, tgt, src, vname):
+        from zlib import crc32
+        Km = kern["K"].tocoo()
+        if Km.nnz == 0:
+            return kern
+        pc, T = self.pc, self.pc.T
+        tgt, src = np.asarray(tgt), np.asarray(src)
+        s_state = self.states[src].ravel()
+        s_time = pc.times[src].ravel()
+        s_an = np.repeat(pc.animal[src], T)
+        s_ok = pc.valid[src].ravel() & (s_state >= 0)
+        t_time = pc.times[tgt].ravel()
+        t_an = np.repeat(pc.animal[tgt], T)
+        rng = np.random.default_rng([self.seed, self.rep, crc32(f"{vname}|{len(tgt)}|{int(tgt[0])}".encode())])
+        pools = {int(k): np.flatnonzero(s_ok & (s_state == k)) for k in np.unique(s_state[s_ok])}
+        rows, cols, vals = Km.row, Km.col.copy(), Km.data.copy()
+        new = np.full(len(cols), -1)
+        st = s_state[cols]
+        for k, pool in pools.items():
+            todo = np.flatnonzero((st == k) & (new < 0))
+            for _ in range(self.max_tries):
+                if not len(todo) or not len(pool):
+                    break
+                cand = pool[rng.integers(0, len(pool), len(todo))]
+                ok = (s_an[cand] != t_an[rows[todo]]) & (np.abs(s_time[cand] - t_time[rows[todo]]) >= self.min_dt)
+                if self.doy is not None:
+                    dd = np.abs(np.mod(s_time[cand], 365.25) - np.mod(t_time[rows[todo]], 365.25))
+                    ok &= np.minimum(dd, 365.25 - dd) <= float(self.doy)
+                new[todo[ok]] = cand[ok]
+                todo = todo[~ok]
+        keep = new >= 0
+        self.stats["entries"] += int(len(new))
+        self.stats["dropped"] += int((~keep).sum())
+        from scipy import sparse as sp
+        Kn = sp.csr_matrix((vals[keep], (rows[keep], new[keep])), shape=Km.shape)
+        return dict(kern, K=Kn)
 
 
 def synchrony(pc, gamma, variant, times=None, mask=None):
@@ -450,7 +541,7 @@ def _fingerprint(yml_conf):
     import hashlib
     y = json.loads(json.dumps(yml_conf, sort_keys=True, default=str))
     m = y.get("multiagent") or {}
-    for k in ("n_null", "n_null_sync"):
+    for k in ("n_null", "n_null_sync", "null_kind", "env_null"):     # null settings do not change the obs parts
         m.pop(k, None)
     return hashlib.sha1(json.dumps(y, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -514,13 +605,14 @@ def parse_part(part, n_null):
     raise ValueError(f"--part must be obs | null:<i> | null:<i>-<j> | null:all, got {part!r}")
 
 
-def _part_csv(folder, K, null_id):
-    return os.path.join(folder, f"cv_K{int(K)}_obs.csv" if null_id < 0 else f"cv_K{int(K)}_null{int(null_id):04d}.csv")
+def _part_csv(folder, K, null_id, null_kind="time_shift"):
+    tag = "null" if null_kind == "time_shift" else "envnull"
+    return os.path.join(folder, f"cv_K{int(K)}_obs.csv" if null_id < 0 else f"cv_K{int(K)}_{tag}{int(null_id):04d}.csv")
 
 
-def _cv_part(folder, K, null_id, compute):
+def _cv_part(folder, K, null_id, compute, null_kind="time_shift"):
     """Rows of one CV pass: read the part file if present, else compute and write it."""
-    path = _part_csv(folder, K, null_id) if folder else None
+    path = _part_csv(folder, K, null_id, null_kind) if folder else None
     if path and os.path.exists(path):
         return pd.read_csv(path).to_dict("records")
     rows = compute()
@@ -587,7 +679,34 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
     null_shifts = [draw_shifts(animals, rng, win, conf["null_min_shift_days"]) for _ in range(int(conf["n_null"]))]
     sync_shifts = [draw_shifts(animals, rng, win, conf["null_min_shift_days"])
                    for _ in range(int(conf["n_null_sync"]))]
-    sel = parse_part(part, len(null_shifts))
+    null_kind = conf["null_kind"]
+    en = conf["env_null"]
+    n_null = len(null_shifts) if null_kind == "time_shift" else int(en.get("n_null") or conf["n_null"])
+    sfx = "" if null_kind == "time_shift" else f"_{null_kind}"
+    env_states = data.get("hiavi_s") if null_kind == "env_matched" else None
+    if null_kind == "env_matched" and env_states is None:
+        raise ValueError("null_kind env_matched needs the aligned environment states (data['hiavi_s'])")
+
+    def null_kw(r):
+        """run_cv keyword arguments of null replicate r."""
+        if null_kind == "time_shift":
+            return dict(times=pc.shifted_times(null_shifts[r], win))
+        fn = EnvMatchedNull(pc, env_states, conf["seed"], r, en.get("min_dt_days") or conf["null_min_shift_days"],
+                            en.get("doy_window_days"), en.get("max_tries", 50))
+        return dict(kernel_fn=fn, null_kind=null_kind)
+
+    def null_cv(K, r, cache, verbose_r):
+        """rows of null replicate r (env_matched: + share of kernel entries without a matched candidate)."""
+        kw = null_kw(r)
+        rows_r = run_cv(bk, conf, pc, K, nv, null_id=r, base_cache=cache, verbose=verbose_r, **kw)
+        fn = kw.get("kernel_fn")
+        if fn is not None:
+            share = fn.stats["dropped"] / max(fn.stats["entries"], 1)
+            for row in rows_r:
+                row["env_null_dropped"] = share
+        return rows_r
+
+    sel = parse_part(part, n_null)
     folder = os.path.join(out_dir, "parts", f"{re.sub(r'[^A-Za-z0-9_.-]', '_', str(bk.name))}_{_fingerprint(yml_conf)}")
     # part files are written by --part jobs (or multiagent.parts: True) and REUSED by the merge run whenever the
     # folder exists (it used to be ignored without multiagent.parts, so the merge recomputed every part serially)
@@ -602,25 +721,24 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
             if do_obs:
                 _cv_part(folder, K, -1, lambda: run_cv(bk, conf, pc, K, variants, base_cache=cache, verbose=verbose))
             for r in null_ids:
-                _cv_part(folder, K, r, lambda: run_cv(bk, conf, pc, K, nv, times=pc.shifted_times(null_shifts[r], win),
-                                                       null_id=r, base_cache=cache, verbose=False))
+                _cv_part(folder, K, r, lambda: null_cv(K, r, cache, False), null_kind)
                 if verbose:
                     print(f"K={K}: null replicate {r} done")
         print("wrote parts in", folder)
         return None
     rows, sync_rows = [], []
-    summary = {"model": bk.name, "kinematics": bk.kin is not None, "window_days": win, "animals": animals, "K": {}}
+    summary = {"model": bk.name, "kinematics": bk.kin is not None, "window_days": win, "animals": animals, "K": {},
+               "null_kind": null_kind}
     kin_tables = []
     for K in (Ks or conf["Ks"]):
         K = int(K)
         cache = DiskCache(folder) if folder else {}
         rows_k = _cv_part(folder, K, -1, lambda: run_cv(bk, conf, pc, K, variants, base_cache=cache, verbose=verbose))
         if not skip_null:
-            for r, sh in enumerate(null_shifts):
-                rows_k += _cv_part(folder, K, r, lambda: run_cv(bk, conf, pc, K, nv, times=pc.shifted_times(sh, win),
-                                                                null_id=r, base_cache=cache, verbose=False))
+            for r in range(n_null):
+                rows_k += _cv_part(folder, K, r, lambda: null_cv(K, r, cache, False), null_kind)
                 if verbose:
-                    print(f"K={K}: null replicate {r + 1}/{len(null_shifts)} done")
+                    print(f"K={K}: {null_kind} null replicate {r + 1}/{n_null} done")
         rows += rows_k
 
         # full-data fits
@@ -659,7 +777,7 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
             final.update(kf)
             if lab is not None:
                 kin_tables.append(lab.assign(K=K, model=bk.name, fit=vname))
-        np.savez(os.path.join(out_dir, f"ma_final_K{K}.npz"), **final)
+        np.savez(os.path.join(out_dir, f"ma_final_K{K}{sfx}.npz"), **final)
 
         # summary
         df = pd.DataFrame(rows_k)
@@ -701,11 +819,11 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
         summary["K"][str(K)] = sk
         print(json.dumps(sk, indent=1))
 
-    pd.DataFrame(rows).to_csv(os.path.join(out_dir, "ma_cv.csv"), index=False)
-    pd.DataFrame(sync_rows).to_csv(os.path.join(out_dir, "ma_sync.csv"), index=False)
+    pd.DataFrame(rows).to_csv(os.path.join(out_dir, f"ma_cv{sfx}.csv"), index=False)
+    pd.DataFrame(sync_rows).to_csv(os.path.join(out_dir, f"ma_sync{sfx}.csv"), index=False)
     if kin_tables:
-        pd.concat(kin_tables).to_csv(os.path.join(out_dir, "ma_kinematics.csv"), index=False)
-    with open(os.path.join(out_dir, "ma_summary.json"), "w") as f:
+        pd.concat(kin_tables).to_csv(os.path.join(out_dir, f"ma_kinematics{sfx}.csv"), index=False)
+    with open(os.path.join(out_dir, f"ma_summary{sfx}.json"), "w") as f:
         json.dump(summary, f, indent=1)
     print("wrote", out_dir)
     return summary

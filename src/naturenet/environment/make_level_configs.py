@@ -1,5 +1,7 @@
 """
-Generate the per-level NatureNet configs for the multi-scale SIT-FUSE environment (parent / coarse levels).
+Generate the per-level NatureNet configs for the multi-scale SIT-FUSE environment (parent / coarse levels) and
+for external categorical environments (categorical level, e.g. MBON Seascapes), plus environment-ablation nulls
+(level: null, mode: shift | shuffle | marginal | single; naturenet.drivers.env_null writes the states files).
 
     python -m naturenet.environment.make_level_configs -y config/v2/levels/sharks_levels_v2.yaml [--dry_run]
 
@@ -13,6 +15,9 @@ folder <out_config_dir>/<name>/ with:
   <run>.yaml         one per spec `runs` entry (HIQL / IAVI K-fold, SWIRL, final fit, projection): paths under
                      base_dir -> level dir (folds_dir kept, so every level uses the same folds and the paired
                      test-LL differences are valid), run_uid + "_<NAME>", n_states: null, spec `overrides`
+Level entries: {name, level: parent} | {name, level: coarse, k} | {name, level: categorical,
+scene_file_template (with {i} = scene t), cluster_scale: 1, zero_label_valid: False, exclude_classes: [],
+interpret_subdir (SIT-FUSE cluster_interpret --out_subdir of the class profiles; default interpret_<name>)}.
 plus <out_config_dir>/ll_comparison_levels.yaml (fine baseline + every level; missing runs are skipped).
 Templates are edited line by line, so their comments are kept. Rerun after changing the spec or the templates
 (generated files are overwritten), then run sync.yaml for each level after its env_format step.
@@ -95,12 +100,32 @@ def level_tag(lv):
 
 
 def interpret_subdir(lv):
+    if lv["level"] == "null":                    # shift / shuffle / marginal keep the source label meanings
+        return lv.get("interpret_subdir") or "interpret"
+    if lv["level"] == "categorical":
+        return lv.get("interpret_subdir") or f"interpret_{lv['name']}"
     return "interpret_parent" if lv["level"] == "parent" else f"interpret_k{int(lv['k'])}"
+
+
+def _categorical_env_format(t, lv):
+    for k in ("scene_file_template",):
+        if k not in lv:
+            raise ValueError(f"{lv['name']}: categorical level needs {k}")
+    t = set_key(t, "scene_file_template", _y(lv["scene_file_template"]), "categorical class rasters, {i} = scene t")
+    t = set_key(t, "cluster_scale", _y(lv.get("cluster_scale", 1)), "class id = raster value")
+    t = set_key(t, "zero_label_valid", _y(bool(lv.get("zero_label_valid", False))), "0 / -1 = no class")
+    t = set_key(t, "label_input", '"fine"', "rasters read as they are")
+    t = set_key(t, "exclude_classes", _y(list(lv.get("exclude_classes") or [])), "set invalid (absorbing)")
+    for k, v in (lv.get("env_format") or {}).items():
+        t = set_key(t, k, _y(v), "level override")
+    return t
 
 
 def env_format_text(tmpl, spec, lv, ldir):
     t = replace_prefix(tmpl, spec["base_dir"], ldir)
     t = set_key(t, "cluster_level", _y(lv["level"]))
+    if lv["level"] == "categorical":
+        return _categorical_env_format(t, lv)
     t = set_key(t, "label_input", _y(lv.get("label_input", spec.get("label_input", "fine"))))
     t = set_key(t, "num_child", _y(int(spec.get("num_child", 5))), "SIT-FUSE cluster.heir.num_classes")
     t = set_key(t, "zero_label_valid", "True", "id 0 is a real cluster")
@@ -124,9 +149,25 @@ def run_text(tmpl, spec, lv, ldir, overrides):
         t = set_key(t, k, _y(v), "level override", indent="")
     if "reward_env_projection:" in t:
         prof = os.path.join(spec["sitfuse_out_dir"], "xai", interpret_subdir(lv), "cluster_profiles_wide.csv")
-        t = set_key(t, "profiles_csv", _y(prof), f"cluster_interpret --level {lv['level']}", indent="  ")
+        note = (f"cluster_interpret --label_pattern <class rasters> --label_scale 1 --out_subdir {interpret_subdir(lv)}"
+                if lv["level"] == "categorical" else f"cluster_interpret --level {lv['level']}")
+        t = set_key(t, "profiles_csv", _y(prof), note, indent="  ")
         t = set_key(t, "class_mapper", _y(mapper_path(spec, ldir)), "level class mapper", indent="  ")
+        if lv["level"] == "categorical":
+            t = set_key(t, "cluster_scale", _y(lv.get("cluster_scale", 1)), "categorical ids", indent="  ")
     return t
+
+
+def null_text(spec, lv, ldir, cdir, base):
+    """naturenet.drivers.env_null config of a null level (environment ablation, test 1)."""
+    src = lv.get("source_dir") or spec["base_dir"]
+    conf = dict(source_dir=src, dst_dir=ldir, df_run_uid=spec["df_run_uid"], mode=lv.get("mode", "shift"),
+                seed=int(lv.get("seed", 0)), output_uid=spec.get("output_uid", "final_env_maps_"),
+                source_mapper=lv.get("source_mapper") or os.path.join(src, "env_clusters", spec.get(
+                    "output_uid", "final_env_maps_") + "_class_mapper.pkl"), link=True, write_trans_prob=True)
+    return (f"# Environment level {lv['name']}: {conf['mode']} null of {src} (movement unchanged, labels only).\n"
+            f"#   python -m naturenet.drivers.env_null -y {_rel(os.path.join(cdir, 'null.yaml'), base)}\n"
+            + yaml.safe_dump(conf, sort_keys=False))
 
 
 def mapper_path(spec, ldir):
@@ -134,7 +175,9 @@ def mapper_path(spec, ldir):
 
 
 def header(spec_path, tmpl_path, lv):
-    what = "parent (first-stage) clusters" if lv["level"] == "parent" else f"coarse level K = {lv['k']}"
+    what = {"parent": "parent (first-stage) clusters", "categorical": "external categorical classes",
+            "null": f"environment null ({lv.get('mode', 'shift')})"}.get(
+        lv["level"]) or f"coarse level K = {lv['k']}"
     return (f"# Environment level {lv['name']}: {what}. Generated by naturenet.environment.make_level_configs from\n"
             f"# {tmpl_path} ({os.path.basename(spec_path)}); edit the spec or template and regenerate.\n")
 
@@ -145,8 +188,10 @@ def generate(spec, spec_path, base, dry_run=False):
     tm = spec["templates"]
     read = lambda p: open(_abs(p, base)).read()
     for lv in spec["levels"]:
-        if lv["level"] not in ("parent", "coarse"):
-            raise ValueError(f"{lv['name']}: level must be parent | coarse (fine = the v2 baseline configs)")
+        if lv["level"] not in ("parent", "coarse", "categorical", "null"):
+            raise ValueError(f"{lv['name']}: level must be parent | coarse | categorical | null "
+                             "(fine = the v2 baseline)")
+        is_null = lv["level"] == "null"
         ldir = os.path.join(spec["levels_dir"], lv["name"]) + "/"
         cdir = os.path.join(out_cfg, lv["name"])
         files = {}
@@ -158,22 +203,30 @@ def generate(spec, spec_path, base, dry_run=False):
                                   exclude=["*_states_abstract_env.pkl", "*_trans_prob_abstract_env.npz",
                                            "*_total_count_abstract_env.pkl", "*_points_abstract_env.pkl"],
                                   copy_dirs=[], dry_run=False), sort_keys=False))
-        files["env_format.yaml"] = header(spec_path, tm["env_format"], lv) + env_format_text(read(tm["env_format"]),
-                                                                                              spec, lv, ldir)
-        ab = replace_prefix(read(tm["abstract_env"]), spec["base_dir"], ldir)
-        ab = set_key(ab, "n_clusters", "null", "synced by sync_v2_configs (level K)", indent="", append=False)
-        files["abstract_env.yaml"] = header(spec_path, tm["abstract_env"], lv) + ab
+        if is_null:
+            files["null.yaml"] = null_text(spec, lv, ldir, cdir, base)
+        else:
+            files["env_format.yaml"] = header(spec_path, tm["env_format"], lv) + env_format_text(
+                read(tm["env_format"]), spec, lv, ldir)
+            ab = replace_prefix(read(tm["abstract_env"]), spec["base_dir"], ldir)
+            ab = set_key(ab, "n_clusters", "null", "synced by sync_v2_configs (level K)", indent="", append=False)
+            files["abstract_env.yaml"] = header(spec_path, tm["abstract_env"], lv) + ab
         base_sync = yaml.safe_load(read(tm["sync"]))
-        run_files = [os.path.join(_rel(cdir, base), f"{r}.yaml") for r in spec["runs"]]
+        run_names = [r for r in spec["runs"] if not is_null or r in (lv.get("runs") or spec.get("null_runs")
+                                                                       or spec["runs"])]
+        run_files = [os.path.join(_rel(cdir, base), f"{r}.yaml") for r in run_names]
         files["sync.yaml"] = (
             f"# Environment level {lv['name']}: n_states = K_level + 1 in this level's configs only.\n"
             f"#   python -m naturenet.environment.sync_v2_configs patch -y {_rel(os.path.join(cdir, 'sync.yaml'), base)}\n"
             + yaml.safe_dump(dict(env_meta_json=base_sync["env_meta_json"], class_mapper=mapper_path(spec, ldir),
                                   invalid_state=base_sync.get("invalid_state", "absorbing"),
                                   sample_config=base_sync["sample_config"],
-                                  files=[os.path.join(_rel(cdir, base), "abstract_env.yaml")] + run_files),
+                                  files=([] if is_null else [os.path.join(_rel(cdir, base), "abstract_env.yaml")])
+                                  + run_files),
                              sort_keys=False))
         for r, tp in spec["runs"].items():
+            if is_null and r not in (lv.get("runs") or spec.get("null_runs") or spec["runs"]):
+                continue
             files[f"{r}.yaml"] = header(spec_path, tp, lv) + run_text(read(tp), spec, lv, ldir,
                                                                       (spec.get("overrides") or {}).get(r))
         for name, text in files.items():
@@ -185,6 +238,8 @@ def generate(spec, spec_path, base, dry_run=False):
     methods = [dict(e) for e in (llc.get("fine") or [])]
     for i, lv in enumerate(spec["levels"]):
         for e in llc.get("per_level") or []:
+            if not os.path.join(out_cfg, lv["name"], f"{e['run']}.yaml") in written:
+                continue                                   # run not generated at this level (e.g. nulls)
             d = {k: (v.format(lv=lv["name"]) if isinstance(v, str) else v) for k, v in e.items() if k != "run"}
             d["yaml"] = os.path.join(lv["name"], f"{e['run']}.yaml")
             d.setdefault("color", PALETTE[len(methods) % len(PALETTE)])

@@ -262,8 +262,13 @@ def fit_variant_fold(yml_conf, data, T, tr, te, tag, conf, base, R_start, temps,
     epochs, epochs_2 = int(yml_conf.get("epochs", 50)), int(yml_conf.get("epochs_2", 30))
     t0 = time.time()
     tree = _tree(cfg, data, T, tr, S)
-    dtr = sc.scales_data(rows, a, tree, cfg.history, S, kin=kin, idx=tr)
-    dte = None if te is None or len(te) == 0 else sc.scales_data(rows, a, tree, cfg.history, S, kin=kin, idx=te)
+    env, env_names = None, None
+    if "env" in cfg.history.kind:                     # environment-driven switching (naturenet.drivers.env_covariates)
+        from naturenet.drivers.env_covariates import cached_env_rows
+        env, env_names = cached_env_rows(yml_conf, data, cfg.history.env_channels)
+    dtr = sc.scales_data(rows, a, tree, cfg.history, S, kin=kin, idx=tr, env_rows=env, env_names=env_names)
+    dte = None if te is None or len(te) == 0 else sc.scales_data(rows, a, tree, cfg.history, S, kin=kin, idx=te,
+                                                                 env_rows=env, env_names=env_names)
     if cfg.emission == "hiql":
         r = _fit_hiql(yml_conf, s, cfg, tree, dtr, T, tr, kin, parent, kf_ind)
     else:

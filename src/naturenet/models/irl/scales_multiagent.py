@@ -97,8 +97,12 @@ class _ScalesMixin:
         idx = np.asarray(idx)
         key = (id(tree), idx.tobytes())
         if key not in self._bundles:
+            env, env_names = None, None
+            if "env" in self.cfg_i.history.kind:
+                from naturenet.drivers.env_covariates import cached_env_rows
+                env, env_names = cached_env_rows(self.yml_conf, self.data, self.cfg_i.history.env_channels)
             self._bundles[key] = sc.scales_data(self.rows, self.acts, tree, self.cfg_i.history, self.S,
-                                                kin=self.kin, idx=idx)
+                                                kin=self.kin, idx=idx, env_rows=env, env_names=env_names)
         return self._bundles[key]
 
     def _tree(self, T_np, idx):

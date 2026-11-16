@@ -139,12 +139,16 @@ def test_l3_make_level_configs():
                     new, n = patch_text(t, dict(n_states="21"))
                     assert n >= 1 and yaml.safe_load(new)["n_states"] == 21
                 if name == "env_format.yaml":
-                    assert c["cluster_level"] in ("parent", "coarse") and c["zero_label_valid"] is True
+                    assert (c["cluster_level"] in ("parent", "coarse") and c["zero_label_valid"] is True) or \
+                        (c["cluster_level"] == "categorical" and c["zero_label_valid"] is False)
                     if c["cluster_level"] == "coarse":
                         assert c["level_k"] in [lv["k"] for lv in spec["levels"] if lv["level"] == "coarse"]
                 if name == "reward_env_projection_hiql.yaml":
                     r = c["reward_env_projection"]
-                    assert "/levels/" in r["class_mapper"] and "/xai/interpret_" in r["profiles_csv"]
+                    lv = os.path.basename(os.path.dirname(p))
+                    assert "/levels/" in r["class_mapper"]
+                    # nulls keep the fine cluster meaning (labels permuted), so they use the fine profiles
+                    assert ("/xai/interpret/" if lv.startswith("null_") else "/xai/interpret_") in r["profiles_csv"]
                 if name == "ll_comparison_levels.yaml":
                     aliases = [m.get("alias", m["name"]) for m in c["methods"]]
                     assert len(aliases) == len(set(aliases))
