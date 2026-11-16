@@ -22,6 +22,9 @@ Exit code 1 if work remains (todo / failed / stale / blocked / running) or an in
 also on warnings), so it can gate the next stage of a script.
 
     python -m naturenet.drivers.audit -y config/v2/drivers/whales_drivers.yaml [--plan <plan.yaml>] [--strict]
+
+Pipeline manifest mode (what has run / what is left for any staged pipeline, e.g. steps 1-15; see manifest_audit):
+    python -m naturenet.drivers.audit --manifest config/v2/audit/whales_pipeline.yaml [--steps 1-15] [--strict]
 """
 import argparse
 import glob
@@ -259,6 +262,10 @@ def report(st, P, G, K, path):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if "--manifest" in argv or "-m" in argv:           # pipeline manifest mode (steps 1-15, any use case)
+        from naturenet.drivers import manifest_audit
+        return manifest_audit.main(argv)
     from naturenet.drivers.plan import Study
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-y", "--yaml", required=True)

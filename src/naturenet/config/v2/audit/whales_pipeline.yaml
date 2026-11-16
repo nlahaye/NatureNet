@@ -1,0 +1,257 @@
+# Whales v2 pipeline manifest (runbook steps 1-15): what each step writes, for the manifest auditor.
+#   python -m naturenet.drivers.audit --manifest config/v2/audit/whales_pipeline.yaml --steps 1-15
+# Paths come from the run configs ({cfg.<alias>.<key>}) wherever a config holds them, so a changed out_dir /
+# run_uid is picked up automatically. Override any var with --set NAME=value (e.g. --set MS_DOCX=/path/x.docx).
+# Action-only runs (steps 5, 6, 7-ao) are the LL-table baselines; the kinematic tools (5b, 6b, 7-14) are primary.
+name: whales v2 (steps 1-15)
+out: "{R}/audit_pipeline/"
+vars:
+  SP: whales
+  R: /data/nlahaye/NatureNet/Blue_Whale_v2
+  UID: SWIRL_WHALE_1517
+  CM: /data/nlahaye/NatureNet_Env/Copernicus/v2/whales
+  SF: /data/nlahaye/output/Learnergy/COP_WHALE_V2
+  WI: /data/nlahaye/NatureNet/Blue_Whale_In
+  LS: /data/nlahaye/NatureNet/launcher
+  SHIP: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global.tif
+  MS_DOCX: /data/nlahaye/NatureNet/manuscript/Movement_Paper_MEE_updated_v6.docx
+configs:
+  swirl_kfold: config/v2/swirl/whales_swirl_kfold.yaml
+  hiavi_kfold: config/v2/swirl/whales_hiavi_kfold.yaml
+  iavi_kfold: config/v2/swirl/whales_iavi_kfold.yaml
+  ll_cmp: config/v2/swirl/whales_ll_comparison.yaml
+  swirl_kin: config/v2/swirl/whales_swirl_kfold_kin.yaml
+  hiavi_kin: config/v2/swirl/whales_hiavi_kfold_kin.yaml
+  ll_kin: config/v2/swirl/whales_ll_comparison_kin_nn.yaml
+  sc_swirl: config/v2/swirl/whales_swirl_scales.yaml
+  sc_hiql: config/v2/swirl/whales_hiql_scales.yaml
+  sc_hiql_kin: config/v2/swirl/whales_hiql_scales_kin_k5.yaml
+  sc_swirl_kin: config/v2/swirl/whales_swirl_scales_kin.yaml
+  fin_hiql: config/v2/swirl/whales_hiql_final_kin_k5.yaml
+  fin_swirl: config/v2/swirl/whales_swirl_s2_final_kin_k5.yaml
+  fin_swirl_ao: config/v2/swirl/whales_swirl_final.yaml
+  fin_hiql_ao: config/v2/swirl/whales_hiql_final.yaml
+  fin_iavi_ao: config/v2/swirl/whales_iavi_final.yaml
+  ma_kin: config/v2/swirl/whales_multiagent_kin.yaml
+  ma_sc_kin: config/v2/swirl/whales_scales_multiagent_kin.yaml
+  ts_kin: config/v2/time_series/whales_correlation_final_kin_v2.yaml
+
+checks:
+  - {name: sequences, files: ["config/v2/swirl/whales_*.yaml"], when: df_dir,
+     expect: {seq_len: 60, segment_policy: variable, min_seq_len: 10}}
+  - {name: cv_grid, files: ["config/v2/swirl/whales_*kfold*kin*.yaml"], when: min_latent, expect: {min_latent: 1}}
+  - {name: cv_grid_action_only, files: ["config/v2/swirl/whales_*kfold.yaml", "config/v2/swirl/whales_*kfold_pc1T_t1.yaml"],
+     when: min_latent, expect: {min_latent: 1}, level: warning}
+  - {name: v2_paths, files: ["config/v2/swirl/whales_*.yaml", "config/v2/environment/whales_*.yaml",
+                             "config/v2/time_series/whales_*.yaml"], absent: ["/mnt/data"]}
+
+steps:
+  - id: 1a
+    title: Static inputs (ship density)
+    outputs:
+      - {path: "{SHIP}", ref: false}
+  - id: 1a-w
+    title: Merge 2015 + 2017 tracks
+    outputs:
+      - path: "{WI}/Bmu_2015_2017CA.augmented.land_jittered.csv"
+      - path: "{WI}/Bmu_2015_2017CA.augmented.land_jittered.summary.json"
+        json: {expr: "len(d) > 0"}
+  - id: 1b
+    title: CMEMS scenes
+    after: [1a]
+    outputs:
+      - {path: "{CM}/cop_env_{SP}_t*.zarr", min: 100}
+      - path: "{CM}/{SP}_scene_index.csv"
+        level: warning
+        csv: {expr: "df['complete'].astype(str).str.lower().isin(['true', '1']).mean() >= 0.9"}
+      - {path: "{CM}/{SP}_env_meta.json"}
+      - {path: "{CM}/{SP}_water_mask.tif"}
+      - {path: "{CM}/{SP}_sitfuse_data_block.yaml"}
+    note: "scene index: warns if fewer than 90% of days are complete"
+  - id: 2a
+    title: SIT-FUSE split, encoder, heads, clusters
+    after: [1b]
+    outputs:
+      - {path: "{SF}/scene_split/{SP}_scene_split_summary.json"}
+      - path: "{SF}/**/child_heads_manifest.csv"
+        level: warning
+        csv: {expr: "'routing_ok' not in df or df['routing_ok'].min() >= 1.0"}
+      - {path: "{SF}/cop_env_{SP}_t*.zarr.clust.data_*clusters.no_geo.tif", min: 100}
+      - {path: "{SF}/**/train_sample_report.json", optional: true}
+  - id: 2b
+    title: SIT-FUSE seed variants
+    after: [2a]
+    outputs:
+      - {path: "{SF}_seed*", min: 4}
+      - {path: "{SF}_seed*/cop_env_{SP}_t*.zarr*clust.data_*clusters*.tif", min: 4}
+  - id: 3a
+    title: Movement preprocessing
+    after: [1a-w]
+    outputs:
+      - {path: "{R}/{UID}_dfs.pkl"}
+      - {path: "{R}/{UID}_*_actions.pkl"}
+  - id: 3b
+    title: Cluster maps along tracks
+    after: [2a, 3a]
+    outputs:
+      - {path: "{R}/env_clusters/final_env_maps_{UID}.pkl"}
+  - id: 3c
+    title: Sync K-dependent config values
+    after: [3b]
+    checks:
+      - {name: synced, files: ["config/v2/swirl/whales_*.yaml"], when: df_dir, not_null: [n_states]}
+  - id: 3d
+    title: Abstract-state trajectories
+    after: [3b]
+    outputs:
+      - {path: "{R}/{UID}_*_states_abstract_env.pkl"}
+      - {path: "{R}/{UID}_trans_prob_abstract_env.npz"}
+  - id: 3e
+    title: Raw inputs at each fix
+    after: [1b, 3a]
+    outputs:
+      - {path: "{R}/{UID}_*_states_input.pkl"}
+      - {path: "{R}/{UID}_states_input_channels.json"}
+  - id: 4
+    title: Input checks
+    optional: true
+    after: [3d, 3e]
+    outputs:
+      - {path: "/tmp/ci2/{SP}.csv", optional: true}
+    note: report-only step (written to /tmp)
+  - id: 5
+    title: Action-only K selection (baselines)
+    after: [3c, 3d, 3e]
+    plan: {path: "{LS}/{SP}_plan.yaml", jobs: ["swirl.*", "hiavi.*", "iavi.*"], optional: true}
+    outputs:
+      - path: "{cfg.swirl_kfold.out_dir}/{cfg.swirl_kfold.run_uid}_loop_0_latent_*_states_*_{cfg.swirl_kfold.seed}_naturenet_S1_iter2_LL1_test_KF_*.npz"
+        min: "({cfg.swirl_kfold.max_latent} - {cfg.swirl_kfold.min_latent} + 1) * {cfg.swirl_kfold.n_folds}"
+      - path: "{cfg.swirl_kfold.out_dir}/{cfg.swirl_kfold.run_uid}_loop_0_latent_*_states_*_{cfg.swirl_kfold.seed}_naturenet_S2_iter2_LL2_test_KF_*.npz"
+        min: "({cfg.swirl_kfold.max_latent} - {cfg.swirl_kfold.min_latent} + 1) * {cfg.swirl_kfold.n_folds}"
+      - path: "{cfg.hiavi_kfold.out_dir}/ll_hiavi.csv"
+        csv: {where: "run_uid == '{cfg.hiavi_kfold.run_uid}'",
+              cover: {K: "range({cfg.hiavi_kfold.min_latent}, {cfg.hiavi_kfold.max_latent} + 1)",
+                      fold: "range({cfg.hiavi_kfold.n_folds})"}}
+      - path: "{cfg.iavi_kfold.out_dir}/ll_hiavi.csv"
+        csv: {where: "run_uid == '{cfg.iavi_kfold.run_uid}'", cover: {fold: "range({cfg.iavi_kfold.n_folds})"}}
+      - {path: "{cfg.ll_cmp.out_dir}/{cfg.ll_cmp.out_prefix}_ll_summary.csv"}
+  - id: 5b
+    title: Kinematic baselines
+    after: [3c, 3d, 3e]
+    plan: {path: "{LS}/{SP}_kin_plan.yaml", optional: false}
+    outputs:
+      - path: "{cfg.swirl_kin.out_dir}/{cfg.swirl_kin.run_uid}_loop_0_latent_*_states_*_{cfg.swirl_kin.seed}_naturenet_S2_iter2_LL2_test_KF_*.npz"
+        min: "({cfg.swirl_kin.max_latent} - {cfg.swirl_kin.min_latent} + 1) * {cfg.swirl_kin.n_folds}"
+      - path: "{cfg.swirl_kin.out_dir}/{cfg.swirl_kin.run_uid}_loop_0_latent_5_states_5_hidden_{cfg.swirl_kin.seed}_seed_arhmm_s_KF_*.npz"
+        min: "{cfg.swirl_kin.n_folds}"
+        ref: false
+      - path: "{cfg.hiavi_kin.out_dir}/ll_hiavi.csv"
+        csv: {where: "run_uid == '{cfg.hiavi_kin.run_uid}'",
+              cover: {K: "range({cfg.hiavi_kin.min_latent}, {cfg.hiavi_kin.max_latent} + 1)",
+                      fold: "range({cfg.hiavi_kin.n_folds})"}}
+      - {path: "{cfg.ll_kin.out_dir}/{cfg.ll_kin.out_prefix}_ll_summary.csv"}
+    note: "the K = 5 ARHMM files seed the 6b SWIRL scales"
+  - id: 6
+    title: Action-only decision scales
+    optional: true
+    after: [5]
+    outputs:
+      - {path: "{cfg.sc_swirl.out_dir}/{cfg.sc_swirl.run_uid}_scales_summary.csv"}
+      - {path: "{cfg.sc_hiql.out_dir}/{cfg.sc_hiql.run_uid}_scales_summary.csv"}
+  - id: 6b
+    title: Kinematic decision scales
+    after: [5b]
+    plan: {path: "{LS}/scales_kin_tools.yaml", jobs: ["scales.*whales*"], optional: false}
+    outputs:
+      - path: "{cfg.sc_hiql_kin.out_dir}/{cfg.sc_hiql_kin.run_uid}_scales_cv.csv"
+        csv: {per: variant, cover: {fold: "range({cfg.sc_hiql_kin.n_folds})"}}
+      - path: "{cfg.sc_swirl_kin.out_dir}/{cfg.sc_swirl_kin.run_uid}_scales_cv.csv"
+        csv: {per: variant, cover: {fold: "range({cfg.sc_swirl_kin.n_folds})"}}
+      - {path: "{cfg.sc_hiql_kin.out_dir}/{cfg.sc_hiql_kin.run_uid}_scales_summary.csv"}
+      - {path: "{cfg.sc_swirl_kin.out_dir}/{cfg.sc_swirl_kin.run_uid}_scales_summary.csv"}
+    note: "summaries come from run_scales_kfold.sh STAGE=plots"
+  - id: 7
+    title: Final fits (kinematic tools)
+    after: [5b]
+    outputs:
+      - {path: "{cfg.fin_hiql.out_dir}/{cfg.fin_hiql.run_uid}_{cfg.fin_hiql.n_hidden}_{cfg.fin_hiql.seed}_hiavi.npz"}
+      - {path: "{cfg.fin_hiql.out_dir}/{cfg.fin_hiql.run_uid}_{cfg.fin_hiql.n_hidden}_{cfg.fin_hiql.seed}_hiavi_kinematics.csv", optional: true}
+      - {path: "{cfg.fin_swirl.out_dir}/{cfg.fin_swirl.run_uid}_{cfg.fin_swirl.n_hidden}_{cfg.fin_swirl.seed}_S2_naturenet_iter2.npz"}
+      - {path: "{cfg.fin_swirl.out_dir}/{cfg.fin_swirl.run_uid}_{cfg.fin_swirl.n_hidden}_{cfg.fin_swirl.seed}_S1_naturenet_iter2*.npz"}
+  - id: 7-ao
+    title: Final fits (action-only, comparison figures)
+    optional: true
+    after: [5]
+    outputs:
+      - {path: "{cfg.fin_swirl_ao.out_dir}/{cfg.fin_swirl_ao.run_uid}_{cfg.fin_swirl_ao.n_hidden}_{cfg.fin_swirl_ao.seed}_S*_naturenet_iter2*.npz"}
+      - {path: "{cfg.fin_hiql_ao.out_dir}/{cfg.fin_hiql_ao.run_uid}_{cfg.fin_hiql_ao.n_hidden}_{cfg.fin_hiql_ao.seed}_hiavi.npz"}
+      - {path: "{cfg.fin_iavi_ao.out_dir}/{cfg.fin_iavi_ao.run_uid}_*.npz"}
+  - id: 8
+    title: Maps, tracks and series export
+    after: [7]
+    outputs:
+      - {path: "{cfg.fin_hiql.plot_dir}/series_hiavi_s1/*_time_series_pd.*", min: 44}
+      - {path: "{cfg.fin_hiql.plot_dir}/state_reward_hiavi_s1.npy"}
+      - {path: "{cfg.fin_swirl.plot_dir}/series_linear_s2/*_time_series_pd.*", min: 44}
+      - {path: "{cfg.fin_swirl.plot_dir}/series_linear_s1/*_time_series_pd.*", min: 44}
+      - {path: "{cfg.fin_swirl.plot_dir}/state_reward_linear_s2.npy"}
+      - {path: "{cfg.fin_swirl.plot_dir}/state_reward_linear_s1.npy", optional: true}
+    note: "min 44 series = one per animal"
+  - id: 9
+    title: SIT-FUSE interpretation (XAI)
+    after: [2a]
+    outputs:
+      - {path: "{SF}/xai/interpret/cluster_profiles_wide.csv"}
+      - {path: "{SF}/xai/**/*shap*", optional: true}
+  - id: 10
+    title: Exploit / explore labels
+    after: [8]
+    outputs:
+      - {path: "{R}/final/exploit_explore/*hiql_kin_k5/*_exploit_explore.csv", min: 2}
+      - {path: "{R}/final/exploit_explore/*swirl_kin_s2_k5/*_exploit_explore.csv", min: 2}
+      - {path: "{R}/final/exploit_explore/*swirl_kin_s1_k5/*_exploit_explore.csv", optional: true}
+    note: "series slices (full / males / females / unknown) + the fitted-kinematics file"
+  - id: 11
+    title: Reward-to-environment projection
+    after: [8, 9]
+    outputs:
+      - {path: "{cfg.fin_hiql.out_dir}/reward_env_projection/reward_projection_coefficients.csv"}
+      - {path: "{cfg.fin_swirl.out_dir}/reward_env_projection_s2/reward_projection_coefficients.csv"}
+      - {path: "{cfg.fin_swirl.out_dir}/reward_env_projection_s1/reward_projection_coefficients.csv", optional: true}
+  - id: 12
+    title: Time-series analysis
+    after: [8]
+    outputs:
+      - {path: "{cfg.ts_kin.out_dir}/hiql_kin/plots/series_hiavi_s1/*/correlation_results.csv", min: 4}
+      - {path: "{cfg.ts_kin.out_dir}/swirl_kin/plots/series_linear_s2/*/correlation_results.csv", min: 4}
+    note: "one per slice (full, males, females, unknown)"
+  - id: 13
+    title: Manuscript tables
+    after: [5, 5b, 6b, 14]
+    outputs:
+      - {path: "{R}/manuscript_kin/ms_{SP}_kin_T1_baselines.csv"}
+      - {path: "{R}/manuscript_kin/ms_{SP}_kin_T2_scales.csv"}
+      - {path: "{R}/manuscript_kin/ms_{SP}_kin_T3_multiagent.csv"}
+      - {path: "{R}/manuscript_kin/ms_{SP}_kin_tables.md"}
+      - {path: "{R}/manuscript_kin/ma_compare_kin.csv"}
+  - id: 14
+    title: Multi-agent (kinematic tools)
+    after: [5b]
+    plan: {path: "{LS}/ma_kin_tools_full.yaml", jobs: ["*whales*"], optional: false}
+    outputs:
+      - path: "{cfg.ma_kin.out_dir}/{cfg.ma_kin.multiagent.ma_subdir}/ma_summary.json"
+        json: {expr: "'5' in d['K']"}
+      - path: "{cfg.ma_kin.out_dir}/{cfg.ma_kin.multiagent.ma_subdir}/ma_cv.csv"
+        csv: {expr: "(df['null_id'] >= 0).any()"}
+      - {path: "{cfg.ma_kin.out_dir}/{cfg.ma_kin.multiagent.ma_subdir}/ma_final_K5.npz"}
+      - {path: "{cfg.ma_kin.out_dir}/{cfg.ma_kin.multiagent.ma_subdir}/plots/ma_results_K5.csv"}
+      - {path: "{cfg.ma_sc_kin.out_dir}/ma_scales_summary.csv"}
+      - {path: "{cfg.ma_sc_kin.out_dir}/ma_scales_plots/*", optional: true}
+    note: "ma_cv.csv without null rows = screen only (STAGE=full not run)"
+  - id: 15
+    title: Manuscript update
+    manual: true
+    after: [13]
+    outputs:
+      - {path: "{MS_DOCX}", optional: true}
+    note: "edit by hand once 1-14 and 18 are done; set --set MS_DOCX=<path>"
