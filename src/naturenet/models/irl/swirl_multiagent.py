@@ -10,6 +10,8 @@ Coupled model: the same SWIRL with partner-coupled intention transitions (swirl_
 fitted by mean-field coordinate ascent as in hiavi_multiagent.fit_coupled: posteriors of the training
 animals -> partner context (w, c) -> n_outer x (em_train_ext with alpha fitted, coupled_iters EM steps),
 warm-started from the independent fit. alpha = 0 / w = 0 is exactly the independent SWIRL.
+Log-linear coupling (variant `coupling: align | matrix`, `coupling_l2`; see swirl_ext / hiavi_multiagent):
+    P_t(j -> k) = softmax_k( log P^SWIRL_t(j -> k | x_t) + w_t (B c_t)[k] ),  B = beta I | free K x K.
 
 YAML (multiagent.swirl, all optional):
     init: arhmm | sticky       arhmm_epochs: 50       restarts: 1
@@ -20,7 +22,9 @@ import numpy as np
 import numpy.random as npr
 import jax.numpy as jnp
 
-from naturenet.models.irl.hiavi_multiagent import PartnerContext
+import json
+
+from naturenet.models.irl.hiavi_multiagent import PartnerContext, check_coupling, coupling_summary
 from naturenet.models.irl.kinematics import KinematicEmissions, kin_conf
 from naturenet.models.irl.run_hiavi_kfold import _seed, prepare_hiavi_data
 from naturenet.models.irl.swirl_data import init_rewards
@@ -138,13 +142,18 @@ class SwirlBackend:
         idx = np.asarray(idx)
         gamma = self._eval(m0, T_env, idx)["gamma"]
         r, alpha = m0, float(self.conf["alpha0"])
+        cpl = dict(kern.get("coupling") or {})
+        form = check_coupling(cpl.get("coupling", "mixture"))
+        l2 = float(cpl.get("coupling_l2", 1.0))
+        B = None
         for _ in range(int(self.conf["n_outer"])):
             w, c = PartnerContext.context(kern, gamma)
             r = em_train_ext(jnp.asarray(r["logpi0"]), jnp.asarray(r["log_Ps"]), r["Rs"], jnp.asarray(r["rewards"]),
                              T_env, self.xo[idx], self.ao[idx], temps=r.get("temps"), kin=self._k(idx),
-                             kin_model=r.get("kin_model"), ctx=(w, c), alpha=alpha, fit_alpha=True,
-                             iters=int(self.sw["coupled_iters"]), tol=self.yml_conf.get("em_tol"))
-            alpha = r["alpha"]
+                             kin_model=r.get("kin_model"), ctx=(w, c), alpha=alpha, fit_alpha=form == "mixture",
+                             iters=int(self.sw["coupled_iters"]), tol=self.yml_conf.get("em_tol"),
+                             coupling=form, B=B, coupling_l2=l2)
+            alpha, B = r["alpha"], r.get("B")
             gamma = self._eval(r, T_env, idx, ctx=(w, c))["gamma"]
         w, c = PartnerContext.context(kern, gamma)
         return r, (w, c)
@@ -169,10 +178,22 @@ class SwirlBackend:
         return float(m.get("alpha", 0.0))
 
     @staticmethod
+    def extra(m):
+        """coupling form, align, B_fro and B (JSON) per fitted coupled model."""
+        form = m.get("coupling", "mixture") or "mixture"
+        K = int(np.asarray(m["rewards"]).shape[0])
+        B = np.asarray(m.get("B", np.zeros((K, K))), float)
+        st = coupling_summary(form, m.get("alpha", 0.0), B)
+        return dict(coupling=form, align=st["align"], B_fro=st["B_fro"], B=json.dumps(np.round(B, 6).tolist()))
+
+    @staticmethod
     def kin_model(m):
         return m.get("kin_model")
 
     @staticmethod
     def arrays(m, tag):
-        return {f"log_Ps_{tag}": np.asarray(m["log_Ps"]), f"reward_{tag}": np.asarray(m["rewards"]),
-                f"logpi0_{tag}": np.asarray(m["logpi0"])}
+        out = {f"log_Ps_{tag}": np.asarray(m["log_Ps"]), f"reward_{tag}": np.asarray(m["rewards"]),
+               f"logpi0_{tag}": np.asarray(m["logpi0"])}
+        if m.get("B") is not None:
+            out[f"B_{tag}"] = np.asarray(m["B"])
+        return out

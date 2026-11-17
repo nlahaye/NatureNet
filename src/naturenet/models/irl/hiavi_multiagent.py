@@ -16,6 +16,20 @@ the same calendar time through a "partner context":
                w = 0 where no other animal is tracked within the window, so the model reduces to HIAVI;
   alpha  [0,1) coupling strength (alpha = 0 is HIAVI; the models are nested).
 
+Log-linear coupling (coupling: align | matrix; alpha is then unused): partners shift the switch logits instead
+of being copied,
+
+    P_t^i(z_t = k | z_{t-1} = j) = softmax_k( log Lambda[j, k] + w_t^i * sum_m B[k, m] c_t^i[m] )
+
+  matrix  B (K, K) free: B[k, m] > 0 = partners in intention m make k more likely (attraction / following),
+          < 0 = less likely (avoidance). Only differences between rows k matter (adding d_m to column m changes
+          nothing); the ridge penalty coupling_l2 / 2 * ||B||^2 picks the column-centred solution.
+  align   B = beta * I (one parameter): beta > 0 = alignment with partners, beta < 0 = anti-alignment.
+B = 0 (or w = 0) is exactly HIAVI, so both forms are nested in the independent model like alpha = 0. The M-step
+for (Lambda, B) maximises the concave expected complete-data log-likelihood sum xi log P (+ ridge) by L-BFGS.
+Kernel option lag_days (PartnerContext.build): the context uses the partners' intentions lag_days EARLIER
+(lag > 0: do partners lead?), with the same time / distance kernel around the shifted time.
+
 alpha > 0 with a held-out gain means intention switches of concurrently tracked animals are aligned in
 time beyond what each animal's own state sequence explains. It does not separate social interaction from a
 shared external driver (season, tide, prey pulse); the proximity-weighted variant and the time-shift null
@@ -31,7 +45,7 @@ concave sum_t [m_t log alpha + (1 - m_t) log(1 - alpha w_t)], m_t = sum_jk xi_t 
 """
 import numpy as np
 from scipy import sparse
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize, minimize_scalar
 from scipy.special import logsumexp
 
 from naturenet.models.irl.hiavi_model import HIAVI, emission_loglik, iavi, softmax_policy, step_mask
@@ -49,6 +63,93 @@ def coupled_log_transitions(logp_tr, alpha, w, c):
     wt = (alpha * w[:, 1:])[..., None, None]                 # (N, T-1, 1, 1)
     P = (1.0 - wt) * lam + wt * c[:, 1:, None, :]            # rows j mix Lambda[j] with c_t
     return np.log(np.maximum(P, TINY))
+
+
+COUPLING_FORMS = ("mixture", "align", "matrix")
+
+
+def check_coupling(form):
+    form = str(form or "mixture").lower()
+    if form not in COUPLING_FORMS:
+        raise ValueError(f"coupling must be one of {COUPLING_FORMS}, got {form!r}")
+    return form
+
+
+def loglinear_log_transitions(logp_tr, B, w, c):
+    """logp_tr (K, K); B (K, K); w (N, T); c (N, T, K) -> log P_t (N, T-1, K, K): softmax_k(log Lambda + w B c)."""
+    shift = w[:, 1:, None] * np.einsum("ntm,km->ntk", c[:, 1:], B)            # (N, T-1, K) destination shift
+    lg = logp_tr[None, None] + shift[:, :, None, :]
+    return lg - logsumexp(lg, axis=-1, keepdims=True)
+
+
+def _log_softmax_rows(L):
+    return L - logsumexp(L, axis=-1, keepdims=True)
+
+
+def loglinear_mstep(logp_tr, B, xi, w, c, l2=1.0, form="matrix", pseudocount=1e-3, maxiter=200):
+    """
+    M-step of (Lambda, B) for the log-linear coupling. xi (N, T-1, K, K) expected transitions; w (N, T), c (N, T, K)
+    (destination steps 1..T-1 are used). Steps without context (w = 0) only enter through their summed counts.
+    Maximises sum xi log P - l2 / 2 * ||B||^2 (form align: B = beta I, penalty l2 / 2 * beta^2). Returns
+    (logp_tr, B).
+    """
+    K = logp_tr.shape[0]
+    wt = w[:, 1:].ravel()
+    X = xi.reshape(-1, K, K)
+    on = wt > 0
+    C0 = X[~on].sum(0) + float(pseudocount)
+    n0 = C0.sum(1)
+    Xs, ws, cs = X[on], wt[on], c[:, 1:].reshape(-1, K)[on]
+    ns = Xs.sum(-1)                                                              # (M, K)
+    ntot = max(float(X.sum()), 1.0)
+    diag = form == "align"
+
+    def unpack(th):
+        L = th[:K * K].reshape(K, K)
+        Bm = th[-1] * np.eye(K) if diag else th[K * K:].reshape(K, K)
+        return L, Bm
+
+    def fg(th):
+        L, Bm = unpack(th)
+        lsL = _log_softmax_rows(L)
+        f = float((C0 * lsL).sum())
+        gL = C0 - n0[:, None] * np.exp(lsL)
+        gB = np.zeros((K, K))
+        if len(ws):
+            b = ws[:, None] * (cs @ Bm.T)                                         # (M, K)
+            lg = L[None] + b[:, None, :]
+            lP = lg - logsumexp(lg, axis=-1, keepdims=True)
+            f += float((Xs * lP).sum())
+            R = Xs - ns[..., None] * np.exp(lP)                                   # (M, K, K)
+            gL = gL + R.sum(0)
+            G = R.sum(1)                                                          # (M, K): d/d shift_k
+            gB = (G * ws[:, None]).T @ cs                                         # (K, K)
+        if diag:
+            beta = th[-1]
+            f -= 0.5 * l2 * beta ** 2
+            gth = np.concatenate([gL.ravel(), [np.trace(gB) - l2 * beta]])
+        else:
+            f -= 0.5 * l2 * float((Bm ** 2).sum())
+            gth = np.concatenate([gL.ravel(), (gB - l2 * Bm).ravel()])
+        return -f / ntot, -gth / ntot
+
+    th0 = np.concatenate([np.asarray(logp_tr, float).ravel(),
+                          [float(np.trace(B)) / K] if diag else np.asarray(B, float).ravel()])
+    res = minimize(fg, th0, jac=True, method="L-BFGS-B", options=dict(maxiter=int(maxiter)))
+    L, Bm = unpack(res.x)
+    if not diag:
+        Bm = Bm - Bm.mean(axis=0, keepdims=True)                                 # same P; column-centred
+    return _log_softmax_rows(L), Bm
+
+
+def coupling_summary(form, alpha, B):
+    """Scalars for tables: alpha (mixture), align (beta, or the mean centred diagonal of B), B_fro (norm of B)."""
+    B = np.asarray(B, float)
+    if form == "mixture":
+        return dict(coupling=form, alpha=float(alpha), align=np.nan, B_fro=np.nan)
+    Bc = B - B.mean(axis=0, keepdims=True)
+    return dict(coupling=form, alpha=0.0, align=float(np.mean(np.diag(Bc))) if form == "matrix" else float(B[0, 0]),
+                B_fro=float(np.sqrt((Bc ** 2).sum())))
 
 
 def forward_backward_tv(logp_init, logp_tr_t, lls, mask=None):
@@ -161,11 +262,13 @@ class PartnerContext:
                 out[mw] = t0 + np.mod(self.times[mw] - t0 + float(dlt), L)
         return out
 
-    def build(self, tgt, src, h_days=1.0, max_dt_days=None, lambda_km=None, max_km=None, times=None):
+    def build(self, tgt, src, h_days=1.0, max_dt_days=None, lambda_km=None, max_km=None, times=None, lag_days=0.0):
         """
         Kernel matrix for target sequences tgt and source sequences src (index arrays). Same-animal pairs are
         excluded; each partner animal's weight is divided by its number of keys (augmented copies), so copies
         act as one animal. times overrides the step times of every sequence (time-shift null).
+        lag_days > 0: the kernel is centred on t - lag_days (partners' intentions lag_days earlier); the distance
+        is still to the partner's position at that earlier step.
         """
         tgt, src = np.asarray(tgt), np.asarray(src)
         times = self.times if times is None else np.asarray(times, dtype=float)
@@ -179,7 +282,7 @@ class PartnerContext:
         order = s_ok[np.argsort(st[s_ok], kind="stable")]
         st_sorted = st[order]
 
-        tt = times[tgt].ravel()
+        tt = times[tgt].ravel() - float(lag_days or 0.0)
         t_ok = self.valid[tgt].ravel()
         t_an = np.repeat(self.animal[tgt], self.T)
         t_lat, t_lon = self.lat[tgt].ravel(), self.lon[tgt].ravel()
@@ -241,13 +344,28 @@ class CoupledHIAVI(HIAVI):
     m.fit_em(s, a, w, c)                                              # EM with fixed context
     m.loglik(s, a, w, c) / m.step_loglik(...) / m.posteriors(...) / m.decode(...)
     fit_alpha=False keeps alpha at alpha0 (alpha0 = 0 -> plain HIAVI with the same code path).
+    coupling: mixture (alpha, default) | align (beta) | matrix (B); coupling_l2 = ridge on B (log-linear forms).
     """
 
-    def __init__(self, n_latents, T_env, alpha0=0.1, fit_alpha=True, lambda_pseudocount=1e-3, **kw):
+    def __init__(self, n_latents, T_env, alpha0=0.1, fit_alpha=True, lambda_pseudocount=1e-3, coupling="mixture",
+                 coupling_l2=1.0, **kw):
         super().__init__(n_latents, T_env, **kw)
-        self.alpha = float(alpha0)
+        self.coupling = check_coupling(coupling)
+        self.alpha = float(alpha0) if self.coupling == "mixture" else 0.0
         self.fit_alpha = bool(fit_alpha)
         self.lambda_pseudocount = float(lambda_pseudocount)
+        self.coupling_l2 = float(coupling_l2)
+        self.B = np.zeros((n_latents, n_latents))
+
+    def log_trans(self, logp_tr, w, c, alpha=None, B=None):
+        """log P_t (N, T-1, K, K) under the model's coupling form."""
+        w, c = np.asarray(w, float), np.asarray(c, float)
+        if self.coupling == "mixture":
+            return coupled_log_transitions(logp_tr, self.alpha if alpha is None else alpha, w, c)
+        return loglinear_log_transitions(logp_tr, self.B if B is None else B, w, c)
+
+    def coupling_stats(self):
+        return coupling_summary(self.coupling, self.alpha, self.B)
 
     def init_from(self, m):
         self.logp_init, self.logp_tr = np.array(m.logp_init), np.array(m.logp_tr)
@@ -283,14 +401,12 @@ class CoupledHIAVI(HIAVI):
         tol = self.tol if tol is None else float(tol)
         if not hasattr(self, "_logpis_em"):
             self.logp_init, self.logp_tr, self._logpis_em = self._init()
-        logp_init, logp_tr, logpis, alpha = self.logp_init, self.logp_tr, self._logpis_em, self.alpha
-        if not self.fit_alpha:
-            alpha = self.alpha
+        logp_init, logp_tr, logpis, alpha, B = self.logp_init, self.logp_tr, self._logpis_em, self.alpha, self.B
         mask = step_mask(a)                                   # padded steps (a = -1)
         n_real = s.size if mask is None else int(mask.sum())
         hist, prev = [], -np.inf
         for it in range(max_iters):
-            lP = coupled_log_transitions(logp_tr, alpha, w, c)
+            lP = self.log_trans(logp_tr, w, c, alpha, B)
             lg, xi, ll, _ = forward_backward_tv(logp_init, lP, self._emit(logpis, s, a, kin), mask)
             tot = float(ll.sum() / n_real)
             if not np.isfinite(tot):
@@ -304,6 +420,12 @@ class CoupledHIAVI(HIAVI):
             if self.kin_model is not None and kin is not None:
                 self.kin_model.m_step(g, kin)
             logp_init = logsumexp(lg[:, 0], axis=0) - np.log(s.shape[0])
+            if self.coupling != "mixture":           # log-linear coupling: joint (Lambda, B) M-step
+                logp_tr, B = loglinear_mstep(logp_tr, B, xi, w, c, self.coupling_l2, self.coupling,
+                                             self.lambda_pseudocount)
+                if verbose:
+                    print(f"  coupled EM {it}: LL/step {tot:.5f} {coupling_summary(self.coupling, 0, B)}")
+                continue
             # mixture transition M-step
             lam = np.exp(logp_tr)[None, None]
             wt = (alpha * w[:, 1:])[..., None, None]
@@ -315,7 +437,7 @@ class CoupledHIAVI(HIAVI):
             alpha = self._alpha_mstep(xi, rho, w)
             if verbose:
                 print(f"  coupled EM {it}: LL/step {tot:.5f} alpha {alpha:.4f}")
-        self.logp_init, self.logp_tr, self._logpis_em, self.alpha = logp_init, logp_tr, logpis, alpha
+        self.logp_init, self.logp_tr, self._logpis_em, self.alpha, self.B = logp_init, logp_tr, logpis, alpha, B
         self.ll_history = np.asarray(hist)
         return self
 
@@ -342,7 +464,7 @@ class CoupledHIAVI(HIAVI):
 
     def _fb(self, s, a, w, c, logpis=None, kin=None):
         logpis = np.log(self.pis) if logpis is None else logpis
-        lP = coupled_log_transitions(self.logp_tr, self.alpha, np.asarray(w, float), np.asarray(c, float))
+        lP = self.log_trans(self.logp_tr, w, c)
         return forward_backward_tv(self.logp_init, lP, self._emit(logpis, s, a, kin), step_mask(a))
 
     def loglik(self, s, a, w, c, kin=None):
@@ -357,12 +479,14 @@ class CoupledHIAVI(HIAVI):
 
     def decode(self, s, a, w, c, kin=None):
         s = np.asarray(s, dtype=np.int64)
-        lP = coupled_log_transitions(self.logp_tr, self.alpha, np.asarray(w, float), np.asarray(c, float))
+        lP = self.log_trans(self.logp_tr, w, c)
         return viterbi_tv(self.logp_init, lP, self._emit(np.log(self.pis), s, a, kin), step_mask(a))
 
     def params(self):
         p = super().params()
         p["alpha"] = self.alpha
+        p["coupling"] = self.coupling
+        p["B"] = np.asarray(self.B)
         return p
 
 
@@ -374,22 +498,26 @@ def hiavi_step_loglik(m, s, a, kin=None):
 
 
 def fit_coupled(base_model, T_env, s, a, pc, tr_idx, settings, kern_tr, n_outer=5, alpha0=0.1, fit_alpha=True,
-                verbose=False, kin=None):
+                verbose=False, kin=None, coupling="mixture", coupling_l2=1.0):
     """
     Mean-field coordinate ascent on the training sequences tr_idx (contexts from the other TRAINING animals).
     kern_tr = pc.build(tr_idx, tr_idx, ...). Returns the fitted CoupledHIAVI and the final training context.
+    coupling / coupling_l2: see CoupledHIAVI (kern_tr["coupling"] from the run's variant overrides both).
     """
+    cpl = dict(kern_tr.get("coupling") or {}) if isinstance(kern_tr, dict) else {}
+    coupling, coupling_l2 = cpl.get("coupling", coupling), float(cpl.get("coupling_l2", coupling_l2))
     s_tr, a_tr = s[tr_idx], a[tr_idx]
     k_tr = None if kin is None else kin[tr_idx]
     settings = {k: v for k, v in settings.items() if k != "kinematics"}
-    m = CoupledHIAVI(base_model.K, T_env, alpha0=alpha0, fit_alpha=fit_alpha, **settings).init_from(base_model)
+    m = CoupledHIAVI(base_model.K, T_env, alpha0=alpha0, fit_alpha=fit_alpha, coupling=coupling,
+                     coupling_l2=coupling_l2, **settings).init_from(base_model)
     gamma = base_model.posteriors(s_tr, a_tr, k_tr)
     for o in range(int(n_outer)):
         w, c = PartnerContext.context(kern_tr, gamma)
         m.fit_em(s_tr, a_tr, w, c, kin=k_tr)
         gamma = np.exp(m._fb(s_tr, a_tr, w, c, m._logpis_em, k_tr)[0])
         if verbose:
-            print(f" outer {o}: train LL {m.ll_history[-1]:.5f} alpha {m.alpha:.4f} "
+            print(f" outer {o}: train LL {m.ll_history[-1]:.5f} {m.coupling_stats()} "
                   f"(context on {100 * np.mean(w > 0):.1f}% of steps)")
     w, c = PartnerContext.context(kern_tr, gamma)
     m.finalize(s_tr, a_tr, w, c, kin=k_tr)

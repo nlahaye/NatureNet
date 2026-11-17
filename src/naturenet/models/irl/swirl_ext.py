@@ -12,6 +12,10 @@ SWIRL EM with two optional extensions, on the same JAX pieces as swirl_training 
    P^SWIRL_t is SWIRL's recurrent transition (log_Ps + MLP(x_t)); (w, c) is the partner context
    (hiavi_multiagent.PartnerContext.context). log_Ps, the MLP and alpha = sigmoid(alpha_raw) are fitted
    jointly by L-BFGS on the expected complete-data log-likelihood of the mixture.
+   Log-linear forms (coupling: align | matrix, see hiavi_multiagent): partners shift the switch logits,
+       P_t(j -> k) = softmax_k( log P^SWIRL_t(j -> k | x_t) + w_t sum_m B[k, m] c_t[m] )
+   with B = beta I (align) or a free K x K matrix (matrix), fitted with the transition parameters under the ridge
+   coupling_l2 / 2 * ||B||^2. B = 0 is exactly the independent SWIRL.
 
 kin=None and ctx=None (or alpha = 0) give exactly the original em_train_naturenet / em_train_temp /
 em_train2_* updates (the same E-step algebra and the same trans / emit M-step functions).
@@ -63,8 +67,42 @@ def _mix(P, w, c, alpha):
     return (1 - aw) * P + aw * c[1:, None, :]
 
 
-def _one_seq(pi0, log_Ps, Rs, logemit, alpha, xoh, xoh_e, aoh, kll, w, c):
-    P = pad_eye(_mix(comp_transP(log_Ps, Rs, xoh), w, c, alpha), aoh)
+COUPLING_FORMS = ("mixture", "align", "matrix")
+
+
+def theta_B(form, theta, K):
+    """coupling parameter vector -> B (K, K) (log-linear forms)."""
+    return theta[0] * jnp.eye(K) if form == "align" else theta.reshape(K, K)
+
+
+def _couple(P, w, c, theta, form):
+    """(T-1, K, K) SWIRL transitions coupled to the partner context (theta = [alpha] | [beta] | B.ravel())."""
+    if form == "mixture":
+        return _mix(P, w, c, theta[0])
+    K = P.shape[-1]
+    shift = w[1:, None] * (c[1:] @ theta_B(form, theta, K).T)                 # (T-1, K)
+    lg = jnp.log(jnp.clip(P, 1e-300)) + shift[:, None, :]
+    return jnp.exp(lg - jax_logsumexp(lg, axis=-1, keepdims=True))
+
+
+def coupling_theta(form, K, alpha=0.0, B=None):
+    """initial parameter vector of a coupling form."""
+    if form not in COUPLING_FORMS:
+        raise ValueError(f"coupling must be one of {COUPLING_FORMS}, got {form!r}")
+    if form == "mixture":
+        return jnp.array([float(alpha)])
+    B = np.zeros((K, K)) if B is None else np.asarray(B, float)
+    return jnp.array([float(np.trace(B)) / K]) if form == "align" else jnp.asarray(B.ravel())
+
+
+def r_theta(r, K):
+    """(form, theta) of a fitted result dict (old results: mixture with r['alpha'])."""
+    form = r.get("coupling", "mixture") or "mixture"
+    return form, coupling_theta(form, K, r.get("alpha", 0.0), r.get("B"))
+
+
+def _one_seq(pi0, log_Ps, Rs, logemit, theta, form, xoh, xoh_e, aoh, kll, w, c):
+    P = pad_eye(_couple(comp_transP(log_Ps, Rs, xoh), w, c, theta, form), aoh)
     ll = comp_ll_jax(logemit, xoh_e, aoh) + jnp.where(oh_mask(aoh)[:, None], kll, 0.0)
     al = forward(pi0, P, ll)
     be = backward(P, ll)
@@ -72,38 +110,50 @@ def _one_seq(pi0, log_Ps, Rs, logemit, alpha, xoh, xoh_e, aoh, kll, w, c):
     return g, xi, al
 
 
-@partial(jax.jit, static_argnames=("use_temp",))
-def e_step_ext(pi0, log_Ps, Rs, rewards, trans_probs, temps, xohs, xohs_e, aohs, kll, w, c, alpha, use_temp):
+@partial(jax.jit, static_argnames=("use_temp", "form"))
+def e_step_ext(pi0, log_Ps, Rs, rewards, trans_probs, temps, xohs, xohs_e, aohs, kll, w, c, theta, use_temp,
+               form="mixture"):
+    """theta: coupling parameters (mixture: [alpha]; align: [beta]; matrix: B.ravel())."""
+    theta = jnp.atleast_1d(theta)
     logemit = _log_policy(rewards, trans_probs, temps, use_temp=use_temp)
-    return vmap(partial(_one_seq, pi0, log_Ps, Rs, logemit, alpha))(xohs, xohs_e, aohs, kll, w, c)
+    return vmap(partial(_one_seq, pi0, log_Ps, Rs, logemit, theta, form))(xohs, xohs_e, aohs, kll, w, c)
 
 
-def _viterbi_one(pi0, log_Ps, Rs, logemit, alpha, xoh, xoh_e, aoh, kll, w, c):
-    P = pad_eye(_mix(comp_transP(log_Ps, Rs, xoh), w, c, alpha), aoh)
+def _viterbi_one(pi0, log_Ps, Rs, logemit, theta, form, xoh, xoh_e, aoh, kll, w, c):
+    P = pad_eye(_couple(comp_transP(log_Ps, Rs, xoh), w, c, theta, form), aoh)
     return viterbi_JAX(pi0, P, comp_ll_jax(logemit, xoh_e, aoh) + jnp.where(oh_mask(aoh)[:, None], kll, 0.0))
 
 
-@partial(jax.jit, static_argnames=("use_temp",))
-def viterbi_ext(pi0, log_Ps, Rs, rewards, trans_probs, temps, xohs, xohs_e, aohs, kll, w, c, alpha, use_temp):
+@partial(jax.jit, static_argnames=("use_temp", "form"))
+def viterbi_ext(pi0, log_Ps, Rs, rewards, trans_probs, temps, xohs, xohs_e, aohs, kll, w, c, theta, use_temp,
+                form="mixture"):
+    theta = jnp.atleast_1d(theta)
     logemit = _log_policy(rewards, trans_probs, temps, use_temp=use_temp)
-    return vmap(partial(_viterbi_one, pi0, log_Ps, Rs, logemit, alpha))(xohs, xohs_e, aohs, kll, w, c)
+    return vmap(partial(_viterbi_one, pi0, log_Ps, Rs, logemit, theta, form))(xohs, xohs_e, aohs, kll, w, c)
 
 
 # ---------------------------------------------------------------------------
 # Coupled transition M-step
 # ---------------------------------------------------------------------------
 
-def _ctrans_loss(flat, xis, xohs, w, c, alpha_fixed, n_total, shapes, fit_alpha):
-    log_Ps, Rs = _unflatten_trans(flat[:-1], shapes)
-    alpha = ALPHA_MAX * jax.nn.sigmoid(flat[-1]) if fit_alpha else alpha_fixed
+def _ctrans_loss(flat, xis, xohs, w, c, alpha_fixed, n_total, shapes, fit_alpha, form="mixture", n_theta=1,
+                 l2=1.0):
+    log_Ps, Rs = _unflatten_trans(flat[:-n_theta], shapes)
+    raw = flat[-n_theta:]
     P0 = jnp.exp(vmap(lambda x: comp_log_transP(log_Ps, Rs, x))(xohs))       # (N, T-1, K, K)
-    aw = alpha * w[:, 1:, None, None]
-    P = (1 - aw) * P0 + aw * c[:, 1:, None, :]
+    pen = 0.0
+    if form == "mixture":
+        alpha = ALPHA_MAX * jax.nn.sigmoid(raw[0]) if fit_alpha else alpha_fixed
+        aw = alpha * w[:, 1:, None, None]
+        P = (1 - aw) * P0 + aw * c[:, 1:, None, :]
+    else:
+        P = vmap(lambda p, ww, cc: _couple(p, ww, cc, raw, form))(P0, w, c)
+        pen = 0.5 * l2 * jnp.sum(raw ** 2)
     m = oh_mask(xohs)[:, 1:, None, None]                                       # real destination steps
-    return -jnp.sum(jnp.where(m, xis * jnp.log(jnp.clip(P, 1e-300)), 0.0)) / n_total
+    return (-jnp.sum(jnp.where(m, xis * jnp.log(jnp.clip(P, 1e-300)), 0.0)) + pen) / n_total
 
 
-_ctrans_vg = jax.jit(jax.value_and_grad(_ctrans_loss), static_argnames=("shapes", "fit_alpha"))
+_ctrans_vg = jax.jit(jax.value_and_grad(_ctrans_loss), static_argnames=("shapes", "fit_alpha", "form", "n_theta"))
 
 
 def _logit(p):
@@ -111,17 +161,35 @@ def _logit(p):
     return np.log(p / (1 - p))
 
 
-def coupled_trans_m_step(log_Ps, Rs, alpha, xis, xohs, w, c, fit_alpha=True, num_iters=1000):
+def coupled_trans_m_step(log_Ps, Rs, alpha, xis, xohs, w, c, fit_alpha=True, num_iters=1000, form="mixture",
+                         theta=None, l2=1.0):
+    """
+    Transition M-step with partner coupling. mixture: returns (log_Ps, Rs, alpha). Log-linear forms (align /
+    matrix): theta = current parameters (coupling_theta), returns (log_Ps, Rs, theta) with B column-centred.
+    """
     W1, b1, W2, b2 = Rs
     parts = [jnp.asarray(p) for p in (log_Ps, W1, b1, W2, b2)]
     shapes = tuple(tuple(int(d) for d in p.shape) for p in parts)
-    flat0 = jnp.concatenate([p.ravel() for p in parts] + [jnp.array([_logit(alpha / ALPHA_MAX)])])
+    if form == "mixture":
+        th0 = jnp.array([_logit(alpha / ALPHA_MAX)])
+    else:
+        th0 = jnp.atleast_1d(jnp.asarray(theta, dtype=jnp.float64))
+    flat0 = jnp.concatenate([p.ravel() for p in parts] + [th0])
     n_total = n_real(xohs)
     res = _minimize(_ctrans_vg, flat0, "L-BFGS-B", num_iters, xis=jnp.asarray(xis), xohs=xohs, w=w, c=c,
-                    alpha_fixed=jnp.asarray(float(alpha)), n_total=n_total, shapes=shapes, fit_alpha=bool(fit_alpha))
-    lp, R = _unflatten_trans(jnp.asarray(res.x[:-1]), shapes)
-    a = float(ALPHA_MAX / (1 + np.exp(-res.x[-1]))) if fit_alpha else float(alpha)
-    return lp, R, a
+                    alpha_fixed=jnp.asarray(float(alpha)), n_total=n_total, shapes=shapes, fit_alpha=bool(fit_alpha),
+                    form=form, n_theta=int(th0.size), l2=float(l2))
+    nt = int(th0.size)
+    lp, R = _unflatten_trans(jnp.asarray(res.x[:-nt]), shapes)
+    if form == "mixture":
+        a = float(ALPHA_MAX / (1 + np.exp(-res.x[-1]))) if fit_alpha else float(alpha)
+        return lp, R, a
+    th = np.asarray(res.x[-nt:], float)
+    if form == "matrix":
+        K = int(round(np.sqrt(nt)))
+        Bm = th.reshape(K, K)
+        th = (Bm - Bm.mean(axis=0, keepdims=True)).ravel()                   # same P, column-centred
+    return lp, R, jnp.asarray(th)
 
 
 # ---------------------------------------------------------------------------
@@ -154,23 +222,32 @@ def _kll(kin, kin_model, N, T, K):
 
 def em_train_ext(logpi0, log_Ps, Rs, rewards, trans_probs, xohs, aohs, xohs_emit=None, temps=None,
                  kin=None, kin_model=None, ctx=None, alpha=0.0, fit_alpha=False, iters=100, init=True,
-                 trans=True, emit=True, kin_mstep=True, tol=None, verbose=False, num_iters=None):
+                 trans=True, emit=True, kin_mstep=True, tol=None, verbose=False, num_iters=None,
+                 coupling="mixture", B=None, coupling_l2=1.0, fit_coupling=None):
     """
     One SWIRL EM run (S-1: xohs_emit=None, trans_probs (S, A, S); S-2: xohs_emit = S-2 one-hots, trans_probs
     the S-2 tensor). temps=None -> naturenet (no temperature) policy, else the temperature policy.
-    Returns dict(logpi0, log_Ps, Rs, rewards, alpha, kin_model, LL_list).
+    coupling: mixture (alpha / fit_alpha, as before) | align | matrix (B start, fitted when ctx is given unless
+    fit_coupling=False; ridge coupling_l2).
+    Returns dict(logpi0, log_Ps, Rs, rewards, alpha, coupling, B, kin_model, LL_list).
     """
     rewards = jnp.asarray(rewards)
     K = int(rewards.shape[0])
     kin_model = None if kin_model is None else kin_model.copy()
     tp, xo, ao, xe, tmp, use_temp, w, c = _inputs(trans_probs, xohs, aohs, xohs_emit, temps, K, kin, kin_model, ctx)
     N, T = xo.shape[0], xo.shape[1]
-    coupled = ctx is not None and (fit_alpha or alpha > 0)
+    theta = coupling_theta(coupling, K, alpha, B)
+    if coupling == "mixture":
+        coupled = ctx is not None and (fit_alpha or alpha > 0)
+    else:
+        fit_coupling = True if fit_coupling is None else bool(fit_coupling)
+        coupled = ctx is not None and fit_coupling
     LL_list = []
     for i in range(int(iters)):
         pi0 = jnp.exp(logpi0 - jax_logsumexp(logpi0))
         g, xi, al = e_step_ext(pi0, log_Ps, Rs, rewards, tp, tmp, xo, xe, ao, _kll(kin, kin_model, N, T, K),
-                               w, c, jnp.asarray(float(alpha)), use_temp)
+                               w, c, jnp.array([float(alpha)]) if coupling == "mixture" else theta, use_temp,
+                               form=coupling)
         g = g * oh_mask(ao)[..., None]                    # padded steps carry no posterior mass
         LL_list.append(float(jnp.sum(jax_logsumexp(al[:, -1], axis=-1))))
         if not np.isfinite(LL_list[-1]):
@@ -181,10 +258,15 @@ def em_train_ext(logpi0, log_Ps, Rs, rewards, trans_probs, xohs, aohs, xohs_emit
             break
         new_logpi0 = pi0_m_step(g) if init else logpi0
         if trans:
-            if coupled:
+            if coupled and coupling == "mixture":
                 new_log_Ps, new_Rs, alpha = coupled_trans_m_step(
                     log_Ps, Rs, alpha, xi, xo, w, c, fit_alpha,
                     MSTEP["trans_iters"] if num_iters is None else num_iters)
+            elif coupled:
+                new_log_Ps, new_Rs, theta = coupled_trans_m_step(
+                    log_Ps, Rs, 0.0, xi, xo, w, c, False,
+                    MSTEP["trans_iters"] if num_iters is None else num_iters, form=coupling, theta=theta,
+                    l2=coupling_l2)
             else:
                 new_log_Ps, new_Rs = trans_m_step_jax_scipy2(log_Ps, Rs, (g, xi), xo, num_iters=num_iters)
         else:
@@ -194,8 +276,10 @@ def em_train_ext(logpi0, log_Ps, Rs, rewards, trans_probs, xohs, aohs, xohs_emit
         if kin_model is not None and kin is not None and kin_mstep:
             kin_model.m_step(np.asarray(g), kin)
         logpi0, log_Ps, Rs, rewards = new_logpi0, new_log_Ps, new_Rs, jnp.asarray(new_rewards)
-    return dict(logpi0=logpi0, log_Ps=log_Ps, Rs=Rs, rewards=rewards, alpha=float(alpha), kin_model=kin_model,
-                temps=None if temps is None else np.asarray(temps), LL_list=np.asarray(LL_list))
+    Bout = np.zeros((K, K)) if coupling == "mixture" else np.asarray(theta_B(coupling, jnp.asarray(theta), K))
+    return dict(logpi0=logpi0, log_Ps=log_Ps, Rs=Rs, rewards=rewards,
+                alpha=float(alpha) if coupling == "mixture" else 0.0, coupling=coupling, B=Bout,
+                kin_model=kin_model, temps=None if temps is None else np.asarray(temps), LL_list=np.asarray(LL_list))
 
 
 def swirl_eval(r, trans_probs, xohs, aohs, xohs_emit=None, kin=None, ctx=None, use_kin=True, paths=True):
@@ -209,10 +293,11 @@ def swirl_eval(r, trans_probs, xohs, aohs, xohs_emit=None, kin=None, ctx=None, u
     km = r.get("kin_model") if use_kin else None
     tp, xo, ao, xe, tmp, use_temp, w, c = _inputs(trans_probs, xohs, aohs, xohs_emit, temps, K, kin, km, ctx)
     N, T = xo.shape[0], xo.shape[1]
-    alpha = jnp.asarray(float(r.get("alpha", 0.0)) if ctx is not None else 0.0)
+    form, theta = r_theta(r, K) if ctx is not None else ("mixture", jnp.array([0.0]))
     pi0 = jnp.exp(r["logpi0"] - jax_logsumexp(r["logpi0"]))
     kll = _kll(kin, km, N, T, K)
-    g, _, al = e_step_ext(pi0, r["log_Ps"], r["Rs"], rewards, tp, tmp, xo, xe, ao, kll, w, c, alpha, use_temp)
+    g, _, al = e_step_ext(pi0, r["log_Ps"], r["Rs"], rewards, tp, tmp, xo, xe, ao, kll, w, c, theta, use_temp,
+                          form=form)
     cum = np.asarray(jax_logsumexp(al, axis=-1))                 # (N, T) log p(a_{0:t})
     step = np.diff(cum, axis=1, prepend=0.0)                     # 0 on padded steps
     m = np.asarray(oh_mask(ao))                                  # (N, T) real steps (all True without padding)
@@ -221,7 +306,7 @@ def swirl_eval(r, trans_probs, xohs, aohs, xohs_emit=None, kin=None, ctx=None, u
                step_ll=np.where(m, step, 0.0), gamma=np.asarray(g) * m[..., None], n_steps=n, mask=m)
     if paths:
         out["path"] = np.where(m, np.asarray(viterbi_ext(pi0, r["log_Ps"], r["Rs"], rewards, tp, tmp, xo, xe, ao,
-                                                         kll, w, c, alpha, use_temp)), -1)
+                                                         kll, w, c, theta, use_temp, form=form)), -1)
     return out
 
 
@@ -238,6 +323,8 @@ def params_to_save(r, prefix="new_"):
            prefix + "Rs": obj_array(r["Rs"]),
            prefix + "reward": np.asarray(r["rewards"]), "LL_list": np.asarray(r["LL_list"]),
            "alpha": float(r.get("alpha", 0.0))}
+    if r.get("coupling", "mixture") != "mixture":
+        out.update(coupling=r["coupling"], B=np.asarray(r["B"]))
     if r.get("temps") is not None:
         out["temps"] = np.asarray(r["temps"])
     if r.get("kin_model") is not None:

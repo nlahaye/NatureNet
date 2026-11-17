@@ -50,6 +50,21 @@ Null kinds (multiagent.null_kind):
   The env_matched replicates reuse the observed CV parts and the independent fits (same parts folder) and write
   cv_K<K>_envnull####.csv parts plus ma_cv_env_matched.csv / ma_summary_env_matched.json /
   ma_final_K<K>_env_matched.npz, so both nulls can be run side by side.
+Coupling forms and kernel options (per variant; multiagent.variants.<name>):
+  h_days, max_dt_days, lambda_km, max_km   partner kernel (as before)
+  lag_days                                 context from the partners' intentions lag_days earlier (lead / follow)
+  coupling: mixture | align | matrix       mixture = alpha (default, as before); align = one signed alignment
+                                           weight beta; matrix = K x K log-linear weights B (hiavi_multiagent)
+  coupling_l2                              ridge on beta / B (default 1.0)
+multiagent.variant_grid expands a base variant over value lists, e.g.
+  variant_grid:
+    - {base: temporal, coupling: [mixture, align, matrix], h_days: [0.5, 1, 2], lag_days: [0, 1]}
+-> variants temporal__coupling-align__h_days-0.5__lag_days-1, ... (one value list per key; product of the lists).
+null_variants: all runs the null on every variant. With >= 2 null variants the summary adds, per K, the
+selection-aware test p_gain_max: the best observed pooled gain over the null variants against the per-replicate
+maximum over the same variants (choosing the best kernel / form is then part of the null).
+ma_cv.csv carries coupling, align (beta or mean centred diag of B) and B_fro per row; ma_final_K<K>.npz B_<variant>.
+
 Every held-out row also carries d_by_state (JSON {state: [sum d, n]} over steps with partner context), for the
 per-environment-state coupling summary (naturenet.drivers.coupling_env).
 """
@@ -84,6 +99,48 @@ from naturenet.models.irl.swirl_track_series import _df_key
 
 DEFAULT_VARIANTS = {"temporal": {"h_days": 1.0, "max_dt_days": 3.0},
                     "proximity": {"h_days": 1.0, "max_dt_days": 3.0, "lambda_km": 50.0, "max_km": 150.0}}
+KERNEL_KEYS = ("h_days", "max_dt_days", "lambda_km", "max_km", "lag_days")
+MODEL_KEYS = ("coupling", "coupling_l2")
+
+
+def split_variant(v):
+    """variant dict -> (PartnerContext.build kwargs, coupling kwargs). Unknown keys are an error."""
+    v = dict(v or {})
+    bad = [k for k in v if k not in KERNEL_KEYS + MODEL_KEYS]
+    if bad:
+        raise ValueError(f"unknown variant keys {bad} (kernel: {KERNEL_KEYS}; model: {MODEL_KEYS})")
+    kv = {k: v[k] for k in KERNEL_KEYS if k in v}
+    if "max_dt_days" not in kv and "h_days" in kv:
+        kv["max_dt_days"] = 3.0 * float(kv["h_days"])
+    return kv, {k: v[k] for k in MODEL_KEYS if k in v}
+
+
+def build_kernel(pc, tgt, src, v, times=None):
+    """pc.build for one variant; the coupling settings ride along in kern['coupling'] for the backend."""
+    kv, mv = split_variant(v)
+    kern = pc.build(tgt, src, times=times, **kv)
+    kern["coupling"] = mv
+    return kern
+
+
+def expand_variant_grid(variants, grid):
+    """multiagent.variant_grid entries {base: <variant>, key: [values], ...} -> extra variants (product)."""
+    import itertools
+    out = dict(variants)
+    for g in grid or []:
+        g = dict(g)
+        base = g.pop("base")
+        if base not in variants:
+            raise ValueError(f"variant_grid base {base!r} is not in multiagent.variants ({sorted(variants)})")
+        keys = list(g)
+        for vals in itertools.product(*[g[k] if isinstance(g[k], (list, tuple)) else [g[k]] for k in keys]):
+            v = dict(variants[base], **dict(zip(keys, vals)))
+            if "h_days" in keys and "max_dt_days" not in keys:
+                v["max_dt_days"] = 3.0 * float(v["h_days"])
+            split_variant(v)
+            name = base + "".join(f"__{k}-{x}" for k, x in zip(keys, vals))
+            out[name] = v
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +206,14 @@ def ma_conf(yml_conf):
     m["env_null"] = dict(dict(min_dt_days=None, doy_window_days=None, max_tries=50, n_null=None),
                          **(m.get("env_null") or {}))
     m.setdefault("seed", int(yml_conf.get("seed", 0)))
+    m["variants"] = expand_variant_grid(m["variants"], m.get("variant_grid"))
+    for v in m["variants"].values():
+        split_variant(v)
+    if m["null_variants"] in ("all", ["all"]):
+        m["null_variants"] = list(m["variants"])
+    bad = [v for v in m["null_variants"] if v not in m["variants"]]
+    if bad:
+        raise ValueError(f"multiagent.null_variants {bad} are not variants (have {sorted(m['variants'])})")
     return m
 
 
@@ -256,7 +321,7 @@ def concurrency_report(pc, variants, out_dir):
     orig = original_mask(pc)
     rows, pairs = [], {}
     for vname, v in variants.items():
-        kern = pc.build(allidx, allidx, **v)
+        kern = build_kernel(pc, allidx, allidx, v)
         mass = np.asarray(kern["K"].sum(axis=1)).ravel().reshape(pc.N, pc.T)
         pairs[vname + "_dist_km"] = pc._last_pairs["dist_km"]
         pairs[vname + "_dt_days"] = pc._last_pairs["dt_days"]
@@ -318,6 +383,13 @@ class HiaviBackend:
         return fit_coupled(m0, T_env, self.s, self.a, None, idx, self.st, kern, n_outer=self.conf["n_outer"],
                            alpha0=self.conf["alpha0"], kin=self.kin)
 
+    @staticmethod
+    def extra(m):
+        """coupling form, align (beta / mean centred diag B), B_fro and B (JSON) per fitted coupled model."""
+        st = m.coupling_stats()
+        return dict(coupling=st["coupling"], align=st["align"], B_fro=st["B_fro"],
+                    B=json.dumps(np.round(np.asarray(m.B), 6).tolist()))
+
     def step_ll_indep(self, m0, T_env, idx):
         return hiavi_step_loglik(m0, self.s[idx], self.a[idx], self._k(idx))
 
@@ -341,7 +413,10 @@ class HiaviBackend:
         return getattr(m, "kin_model", None)
 
     def arrays(self, m, tag):
-        return {f"logp_tr_{tag}": m.logp_tr, f"pis_{tag}": m.pis, f"r_{tag}": m.r}
+        out = {f"logp_tr_{tag}": m.logp_tr, f"pis_{tag}": m.pis, f"r_{tag}": m.r}
+        if hasattr(m, "B"):
+            out[f"B_{tag}"] = np.asarray(m.B)
+        return out
 
 
 def _d_by_state(d, conc, states):
@@ -410,8 +485,8 @@ def run_cv(bk, conf, pc, K, variants, times=None, null_id=-1, base_cache=None, v
                 base_cache[ck] = (T_env, m0, ll0)
         models, kerns_te = {}, {}
         for vname, v in variants.items():
-            kern_tr = pc.build(tr, tr, times=times, **v)
-            kerns_te[vname] = pc.build(te, tr, times=times, **v)
+            kern_tr = build_kernel(pc, tr, tr, v, times=times)
+            kerns_te[vname] = build_kernel(pc, te, tr, v, times=times)
             if kernel_fn is not None:
                 kern_tr = kernel_fn(kern_tr, tr, tr, vname)
                 kerns_te[vname] = kernel_fn(kerns_te[vname], te, tr, vname)
@@ -488,7 +563,7 @@ class EnvMatchedNull:
 def synchrony(pc, gamma, variant, times=None, mask=None):
     """Mean expected agreement sum_k gamma_i c_i over steps with context (full-data independent posteriors)."""
     idx = np.arange(pc.N)
-    kern = pc.build(idx, idx, times=times, **variant)
+    kern = build_kernel(pc, idx, idx, variant, times=times)
     w, c = PartnerContext.context(kern, gamma)
     m = (w > 0) & pc.valid if mask is None else (w > 0) & pc.valid & mask[:, None]
     if not m.any():
@@ -766,7 +841,7 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
         if lab0 is not None:
             kin_tables.append(lab0.assign(K=K, model=bk.name, fit="indep"))
         for vname, v in variants.items():
-            kern = pc.build(all_idx, all_idx, **v)
+            kern = build_kernel(pc, all_idx, all_idx, v)
             m, (w, c) = bk.fit_coupled(m0, T_all, all_idx, kern)
             g = bk.posteriors(m, T_all, all_idx, w, c)
             if hasattr(bk, "extra"):
@@ -813,7 +888,19 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
                                p_beta=float((1 + np.sum(null_beta >= ent["beta_median"])) / (1 + len(null_beta))))
             if "beta" in ob:
                 ent["full_data_beta"] = float(final.get(f"beta_{vname}", np.nan))
+            if "align" in ob and ob["align"].notna().any():         # log-linear coupling (align / matrix)
+                ent.update(coupling=str(ob["coupling"].iloc[0]), align_median=float(ob["align"].median()),
+                           B_fro_median=float(ob["B_fro"].median()),
+                           full_data_align=float(final.get(f"align_{vname}", np.nan)))
+                if len(nu) and "align" in nu:
+                    null_al = nu.groupby("null_id")["align"].median().to_numpy()
+                    ent.update(null_align_mean=float(np.nanmean(null_al)),
+                               p_align=float((1 + np.sum(np.abs(null_al) >= abs(ent["align_median"])))
+                                             / (1 + len(null_al))))          # two-sided: attraction or avoidance
+            elif "coupling" in ob:
+                ent["coupling"] = str(ob["coupling"].iloc[0])
             sk["variants"][vname] = ent
+        sk["selection"] = selection_test(df, [v for v in conf["null_variants"] if v in variants])
         if lab0 is not None:
             sk["kinematic_labels_indep"] = list(map(str, lab0["label"]))
         summary["K"][str(K)] = sk
@@ -827,6 +914,25 @@ def run_multiagent(yml_conf, Ks=None, skip_null=False, verbose=True, backend=Non
         json.dump(summary, f, indent=1)
     print("wrote", out_dir)
     return summary
+
+
+def selection_test(df, names):
+    """
+    Selection-aware test over several variants (kernel / coupling grid): observed max pooled gain over names vs
+    the null distribution of the per-replicate max over the same names. None with < 2 names or no null rows.
+    """
+    if len(names) < 2:
+        return None
+    ob = df[(df["null_id"] < 0) & df["variant"].isin(names)].groupby("variant")["d_total"].sum()
+    nu = df[(df["null_id"] >= 0) & df["variant"].isin(names)]
+    if ob.empty:
+        return None
+    out = dict(variants=list(names), best_variant=str(ob.idxmax()), best_pooled_gain=float(ob.max()))
+    if len(nu):
+        mx = nu.groupby(["null_id", "variant"])["d_total"].sum().groupby("null_id").max().to_numpy()
+        out.update(null_max_mean=float(mx.mean()), n_null=int(len(mx)),
+                   p_gain_max=float((1 + np.sum(mx >= out["best_pooled_gain"])) / (1 + len(mx))))
+    return out
 
 
 def cli(default_backend="hiavi"):

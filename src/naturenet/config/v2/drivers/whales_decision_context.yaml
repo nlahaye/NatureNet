@@ -1,0 +1,36 @@
+# Decision-context similarity between the v2 whale tools (final full-data fits; kinematic models).
+#   python -m naturenet.drivers.decision_context_similarity -y config/v2/drivers/whales_decision_context.yaml
+# Steps are joined on (uid, segment, seg_pos). exploit_explore tables give each mode its exploit / explore /
+# ambiguous class (full-track table from the exploit / explore step); state_reward is the (K, S) reward per mode.
+# Add more models (e.g. the coupled multi-agent decodes, scale variants, CV latents) with kind: series | latents.
+root: "/data/nlahaye/NatureNet/Blue_Whale_v2"
+out_dir: "{root}/final/decision_context"
+n_boot: 1000
+n_null: 50
+seed: 0
+models:
+  hiql_kin_k5:
+    kind: series
+    dir: "{root}/final/hiql_kin/plots/series_hiavi_s1"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+    exploit_explore: "{root}/final/exploit_explore/*hiql_kin_k5/full_exploit_explore.csv"
+    state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy"
+  swirl_s2_kin_k5:
+    kind: series
+    dir: "{root}/final/swirl_kin/plots/series_linear_s2"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+    exploit_explore: "{root}/final/exploit_explore/*swirl_kin_s2_k5/full_exploit_explore.csv"
+    state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s2.npy"
+  swirl_s1_kin_k5:
+    kind: series
+    dir: "{root}/final/swirl_kin/plots/series_linear_s1"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+    exploit_explore: "{root}/final/exploit_explore/*swirl_kin_s1_k5/full_exploit_explore.csv"
+    state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s1.npy"
+pairs:
+  - [hiql_kin_k5, swirl_s2_kin_k5]
+  - [hiql_kin_k5, swirl_s1_kin_k5]
+  - [swirl_s2_kin_k5, swirl_s1_kin_k5]

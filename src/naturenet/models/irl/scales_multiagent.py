@@ -149,6 +149,10 @@ class _ScalesMixin:
         return p
 
     def fit_coupled(self, m0, T_env, idx, kern):
+        form = str((kern.get("coupling") or {}).get("coupling", "mixture")).lower()
+        if form != "mixture":
+            raise NotImplementedError(f"decision-scales backends support coupling: mixture only (variant asked for "
+                                      f"{form!r}); run align / matrix with backend hiavi or swirl")
         idx = np.asarray(idx)
         tree = m0["tree"]
         d0 = self._bundle(tree, idx)
