@@ -4,7 +4,8 @@
 #           SWIRL S-2 + kin K = 5 (second)  whales_swirl_scales_kin.yaml (fixed epochs; init = kinematic baseline ARHMM;
 #                                           N1 = S-1 + kin, N2 = order 2 = the S-2 analogue)
 #   sharks  HIQL + kin K = 5 (primary)      sharks_hiql_scales_kin_k5.yaml
-#           HIQL + kin K = 2 (secondary)    sharks_hiql_scales_kin_k2.yaml
+#           SWIRL S-1 + kin K = 5 (second)  sharks_swirl_scales_kin.yaml (init = kinematic baseline ARHMM SWIRL_BASE_pc1T_kin)
+#           HIQL + kin K = 2 (earlier secondary) sharks_hiql_scales_kin_k2.yaml
 #   bash run_scales_kfold.sh               # link the ARHMM init, --check, plan, launch, plots
 #   STAGE=check bash run_scales_kfold.sh   # link + segment / context report only
 #   STAGE=plots bash run_scales_kfold.sh   # figures only
@@ -20,7 +21,7 @@ CPUS="${CPUS:-12}"
 cd "$NN_SRC"
 C=naturenet/config/v2/swirl
 CFGS=("$C/whales_hiql_scales_kin_k5.yaml" "$C/whales_swirl_scales_kin.yaml"
-      "$C/sharks_hiql_scales_kin_k5.yaml" "$C/sharks_hiql_scales_kin_k2.yaml")
+      "$C/sharks_hiql_scales_kin_k5.yaml" "$C/sharks_swirl_scales_kin.yaml" "$C/sharks_hiql_scales_kin_k2.yaml")
 
 if [ "$STAGE" = "plots" ]; then
   for c in "${CFGS[@]}"; do "$PY" -m naturenet.models.irl.plot_swirl_scales -y "$c"; done
@@ -35,6 +36,14 @@ if [ "${DRY:-0}" != "1" ]; then
     src="$W/baselines_kin/WHALE_SWIRL_BASE_kin_loop_0_latent_5_states_5_hidden_12345_seed_arhmm_s_KF_$k.npz"
     [ -f "$src" ] || { echo "missing kinematic ARHMM init: $src" >&2; exit 1; }
     ln -sf "$src" "$W/scales_kin/WHALE_SWIRL_SCALES_KIN_5_hidden_12345_seed_arhmm_s_KF_$k.npz"
+  done
+  # shark SWIRL scales: kinematic baseline ARHMM SWIRL_BASE_pc1T_kin run 0, seed 12345, K = 5
+  H=/data/nlahaye/NatureNet/Hammerhead_Out_v2
+  mkdir -p "$H/scales_kin"
+  for k in 0 1 2 3 4; do
+    src="$H/baselines_kin/SWIRL_BASE_pc1T_kin_loop_0_latent_5_states_5_hidden_12345_seed_arhmm_s_KF_$k.npz"
+    [ -f "$src" ] || { echo "missing kinematic ARHMM init: $src" >&2; exit 1; }
+    ln -sf "$src" "$H/scales_kin/SHARK_SWIRL_SCALES_KIN_5_hidden_12345_seed_arhmm_s_KF_$k.npz"
   done
 fi
 

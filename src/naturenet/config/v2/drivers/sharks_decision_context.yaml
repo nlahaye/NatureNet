@@ -1,0 +1,43 @@
+# Decision-context similarity between the v2 shark tools (final full-data fits; kinematic models).
+#   python -m naturenet.drivers.decision_context_similarity -y config/v2/drivers/sharks_decision_context.yaml
+# Secondary tool: SWIRL S-1 + kin K = 5 (paired 1-SE rule on the kinematic CV; S-1 / S-2 tied at K = 5, S-1 kept);
+# S-2 of the same fit is an extra view. HIQL + kin K = 2 (earlier secondary) is kept as a granularity comparison.
+root: "/data/nlahaye/NatureNet/Hammerhead_Out_v2"
+out_dir: "{root}/final/decision_context"
+n_boot: 1000
+n_null: 50
+seed: 0
+models:
+  hiql_kin_k5:
+    kind: series
+    dir: "{root}/final/hiql_kin/plots/series_hiavi_s1"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+    exploit_explore: "{root}/final/exploit_explore/*hiql_kin_k5/full_exploit_explore.csv"
+    state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy"
+  hiql_kin_k2:
+    kind: series
+    dir: "{root}/final/hiql_kin_k2/plots/series_hiavi_s1"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+    exploit_explore: "{root}/final/exploit_explore/*hiql_kin_k2/full_exploit_explore.csv"
+    state_reward: "{root}/final/hiql_kin_k2/plots/state_reward_hiavi_s1.npy"
+  swirl_kin_s1_k5:
+    kind: series
+    dir: "{root}/final/swirl_kin/plots/series_linear_s1"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+    exploit_explore: "{root}/final/exploit_explore/*swirl_kin_s1_k5/full_exploit_explore.csv"
+    state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s1.npy"
+  swirl_kin_s2_k5:
+    kind: series
+    dir: "{root}/final/swirl_kin/plots/series_linear_s2"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+    exploit_explore: "{root}/final/exploit_explore/*swirl_kin_s2_k5/full_exploit_explore.csv"
+    state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s2.npy"
+pairs:
+  - [hiql_kin_k5, swirl_kin_s1_k5]     # primary vs secondary
+  - [hiql_kin_k5, swirl_kin_s2_k5]
+  - [swirl_kin_s1_k5, swirl_kin_s2_k5]  # S-1 vs S-2 of the same fit
+  - [hiql_kin_k5, hiql_kin_k2]         # granularity comparison (earlier secondary)

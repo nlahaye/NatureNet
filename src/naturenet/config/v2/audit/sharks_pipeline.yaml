@@ -27,13 +27,17 @@ configs:
   sc_hiql: config/v2/swirl/sharks_hiql_scales.yaml
   sc_hiql_kin: config/v2/swirl/sharks_hiql_scales_kin_k5.yaml
   sc_hiql_kin2: config/v2/swirl/sharks_hiql_scales_kin_k2.yaml
+  sc_swirl_kin: config/v2/swirl/sharks_swirl_scales_kin.yaml
   fin_hiql: config/v2/swirl/sharks_hiql_final_kin_k5.yaml
   fin_hiql2: config/v2/swirl/sharks_hiql_final_kin_k2.yaml
+  fin_swirl: config/v2/swirl/sharks_swirl_final_kin_k5.yaml
   fin_swirl_ao: config/v2/swirl/sharks_swirl_final.yaml
   fin_hiql_ao: config/v2/swirl/sharks_hiql_final.yaml
   fin_iavi_ao: config/v2/swirl/sharks_iavi_final.yaml
   ma_kin: config/v2/swirl/sharks_multiagent_kin.yaml
   ma_sc_kin: config/v2/swirl/sharks_scales_multiagent_kin.yaml
+  ma_swirl_kin: config/v2/swirl/sharks_multiagent_swirl_kin.yaml
+  ma_sc_swirl_kin: config/v2/swirl/sharks_scales_multiagent_swirl_kin.yaml
   ts_kin: config/v2/time_series/sharks_correlation_final_kin_v2.yaml
 
 checks:
@@ -154,10 +158,14 @@ steps:
     outputs:
       - path: "{cfg.sc_hiql_kin.out_dir}/{cfg.sc_hiql_kin.run_uid}_scales_cv.csv"
         csv: {per: variant, cover: {fold: "range({cfg.sc_hiql_kin.n_folds})"}}
+      - path: "{cfg.sc_swirl_kin.out_dir}/{cfg.sc_swirl_kin.run_uid}_scales_cv.csv"
+        csv: {per: variant, cover: {fold: "range({cfg.sc_swirl_kin.n_folds})"}}
       - path: "{cfg.sc_hiql_kin2.out_dir}/{cfg.sc_hiql_kin2.run_uid}_scales_cv.csv"
+        optional: true
         csv: {per: variant, cover: {fold: "range({cfg.sc_hiql_kin2.n_folds})"}}
       - {path: "{cfg.sc_hiql_kin.out_dir}/{cfg.sc_hiql_kin.run_uid}_scales_summary.csv"}
-      - {path: "{cfg.sc_hiql_kin2.out_dir}/{cfg.sc_hiql_kin2.run_uid}_scales_summary.csv"}
+      - {path: "{cfg.sc_swirl_kin.out_dir}/{cfg.sc_swirl_kin.run_uid}_scales_summary.csv"}
+      - {path: "{cfg.sc_hiql_kin2.out_dir}/{cfg.sc_hiql_kin2.run_uid}_scales_summary.csv", optional: true}
     note: "summaries come from run_scales_kfold.sh STAGE=plots"
   - id: 7
     title: Final fits (kinematic tools)
@@ -165,7 +173,9 @@ steps:
     outputs:
       - {path: "{cfg.fin_hiql.out_dir}/{cfg.fin_hiql.run_uid}_{cfg.fin_hiql.n_hidden}_{cfg.fin_hiql.seed}_hiavi.npz"}
       - {path: "{cfg.fin_hiql.out_dir}/{cfg.fin_hiql.run_uid}_{cfg.fin_hiql.n_hidden}_{cfg.fin_hiql.seed}_hiavi_kinematics.csv", optional: true}
-      - {path: "{cfg.fin_hiql2.out_dir}/{cfg.fin_hiql2.run_uid}_{cfg.fin_hiql2.n_hidden}_{cfg.fin_hiql2.seed}_hiavi.npz"}
+      - {path: "{cfg.fin_swirl.out_dir}/{cfg.fin_swirl.run_uid}_{cfg.fin_swirl.n_hidden}_{cfg.fin_swirl.seed}_S1_naturenet_iter2*.npz"}
+      - {path: "{cfg.fin_swirl.out_dir}/{cfg.fin_swirl.run_uid}_{cfg.fin_swirl.n_hidden}_{cfg.fin_swirl.seed}_S2_naturenet_iter2.npz", optional: true}
+      - {path: "{cfg.fin_hiql2.out_dir}/{cfg.fin_hiql2.run_uid}_{cfg.fin_hiql2.n_hidden}_{cfg.fin_hiql2.seed}_hiavi.npz", optional: true}
       - {path: "{cfg.fin_hiql2.out_dir}/{cfg.fin_hiql2.run_uid}_{cfg.fin_hiql2.n_hidden}_{cfg.fin_hiql2.seed}_hiavi_kinematics.csv", optional: true}
   - id: 7-ao
     title: Final fits (action-only, comparison figures)
@@ -181,8 +191,11 @@ steps:
     outputs:
       - {path: "{cfg.fin_hiql.plot_dir}/series_hiavi_s1/*_time_series_pd.*", min: "{N_ANIMALS}"}
       - {path: "{cfg.fin_hiql.plot_dir}/state_reward_hiavi_s1.npy"}
-      - {path: "{cfg.fin_hiql2.plot_dir}/series_hiavi_s1/*_time_series_pd.*", min: "{N_ANIMALS}"}
-      - {path: "{cfg.fin_hiql2.plot_dir}/state_reward_hiavi_s1.npy"}
+      - {path: "{cfg.fin_swirl.plot_dir}/series_linear_s1/*_time_series_pd.*", min: "{N_ANIMALS}"}
+      - {path: "{cfg.fin_swirl.plot_dir}/series_linear_s2/*_time_series_pd.*", min: "{N_ANIMALS}", optional: true}
+      - {path: "{cfg.fin_swirl.plot_dir}/state_reward_linear_s1.npy"}
+      - {path: "{cfg.fin_hiql2.plot_dir}/series_hiavi_s1/*_time_series_pd.*", min: "{N_ANIMALS}", optional: true}
+      - {path: "{cfg.fin_hiql2.plot_dir}/state_reward_hiavi_s1.npy", optional: true}
     note: "min = N_ANIMALS series (set --set N_ANIMALS=<n>)"
   - id: 9
     title: SIT-FUSE interpretation (XAI)
@@ -195,20 +208,26 @@ steps:
     after: [8]
     outputs:
       - {path: "{R}/final/exploit_explore/*hiql_kin_k5/*_exploit_explore.csv", min: 2}
-      - {path: "{R}/final/exploit_explore/*hiql_kin_k2/*_exploit_explore.csv", min: 2}
+      - {path: "{R}/final/exploit_explore/*swirl_kin_s1_k5/*_exploit_explore.csv", min: 2}
+      - {path: "{R}/final/exploit_explore/*swirl_kin_s2_k5/*_exploit_explore.csv", optional: true}
+      - {path: "{R}/final/exploit_explore/*hiql_kin_k2/*_exploit_explore.csv", min: 2, optional: true}
     note: "series slice full + the fitted-kinematics file"
   - id: 11
     title: Reward-to-environment projection
     after: [8, 9]
     outputs:
       - {path: "{cfg.fin_hiql.out_dir}/reward_env_projection/reward_projection_coefficients.csv"}
-      - {path: "{cfg.fin_hiql2.out_dir}/reward_env_projection/reward_projection_coefficients.csv"}
+      - {path: "{cfg.fin_swirl.out_dir}/reward_env_projection_s1/reward_projection_coefficients.csv"}
+      - {path: "{cfg.fin_swirl.out_dir}/reward_env_projection_s2/reward_projection_coefficients.csv", optional: true}
+      - {path: "{cfg.fin_hiql2.out_dir}/reward_env_projection/reward_projection_coefficients.csv", optional: true}
   - id: 12
     title: Time-series analysis
     after: [8]
     outputs:
       - {path: "{cfg.ts_kin.out_dir}/hiql_kin/plots/series_hiavi_s1/full/correlation_results.csv"}
-      - {path: "{cfg.ts_kin.out_dir}/hiql_kin_k2/plots/series_hiavi_s1/full/correlation_results.csv"}
+      - {path: "{cfg.ts_kin.out_dir}/swirl_kin/plots/series_linear_s1/full/correlation_results.csv"}
+      - {path: "{cfg.ts_kin.out_dir}/swirl_kin/plots/series_linear_s2/full/correlation_results.csv", optional: true}
+      - {path: "{cfg.ts_kin.out_dir}/hiql_kin_k2/plots/series_hiavi_s1/full/correlation_results.csv", optional: true}
   - id: 13
     title: Manuscript tables
     after: [5, 5b, 6b, 14]
@@ -231,7 +250,11 @@ steps:
       - {path: "{cfg.ma_kin.out_dir}/{cfg.ma_kin.multiagent.ma_subdir}/plots/ma_results_K[25].csv", min: 2}
       - {path: "{cfg.ma_sc_kin.out_dir}/ma_scales_summary.csv"}
       - {path: "{cfg.ma_sc_kin.out_dir}/ma_scales_plots/*", optional: true}
-    note: "ma_cv.csv without null rows = screen only (STAGE=full not run)"
+      - path: "{cfg.ma_swirl_kin.out_dir}/{cfg.ma_swirl_kin.multiagent.ma_subdir}/ma_summary.json"
+        json: {expr: "'5' in d['K']"}
+      - {path: "{cfg.ma_swirl_kin.out_dir}/{cfg.ma_swirl_kin.multiagent.ma_subdir}/ma_final_K5.npz"}
+      - {path: "{cfg.ma_sc_swirl_kin.out_dir}/multiagent_swirl_scales_S1_N1/ma_final_K5.npz", optional: true}
+    note: "ma_cv.csv without null rows = screen only (STAGE=full not run); SWIRL rows = run_shark_swirl_kin.sh STAGE=ma"
   - id: 15
     title: Manuscript update
     manual: true

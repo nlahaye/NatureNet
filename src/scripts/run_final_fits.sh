@@ -4,7 +4,8 @@
 #   whales  HIQL + kin K = 5 (primary)      whales_hiql_final_kin_k5.yaml
 #           SWIRL S-2 + kin K = 5 (second)  whales_swirl_s2_final_kin_k5.yaml (kinematic ARHMM -> S-1 / S-2)
 #   sharks  HIQL + kin K = 5 (primary)      sharks_hiql_final_kin_k5.yaml
-#           HIQL + kin K = 2 (secondary)    sharks_hiql_final_kin_k2.yaml
+#           SWIRL S-1 + kin K = 5 (second)  sharks_swirl_final_kin_k5.yaml (kinematic ARHMM -> S-1 / S-2; replaces HIQL K = 2)
+#           HIQL + kin K = 2 (earlier secondary) sharks_hiql_final_kin_k2.yaml
 #   bash run_final_fits.sh                  # fits (HIQL fits on CPU in parallel, SWIRL on one GPU), then plots
 #   STAGE=fit | plots bash run_final_fits.sh
 #   GPU      GPU for the SWIRL fit (default 6); HIQL_CPUS  CPU threads per HIQL fit (default 4; 3 fits run at once)
@@ -20,6 +21,8 @@ cd "$NN_SRC"
 C=naturenet/config/v2/swirl
 HIQL=("whales_hiql_final_kin_k5:whales:5" "sharks_hiql_final_kin_k5:sharks:5" "sharks_hiql_final_kin_k2:sharks:2")
 SW=whales_swirl_s2_final_kin_k5
+SW_SH=sharks_swirl_final_kin_k5   # shark secondary; GPU_SH (default = GPU)
+GPU_SH="${GPU_SH:-$GPU}"
 LOG="${LOG:-/data/nlahaye/NatureNet/launcher/final_kin_logs}"
 mkdir -p "$LOG"
 
@@ -37,6 +40,9 @@ if [ "$STAGE" = "all" ] || [ "$STAGE" = "fit" ]; then
   done
   echo "fit $SW on GPU $GPU (log $LOG/$SW.log)"
   CUDA_VISIBLE_DEVICES="$GPU" "$PY" -m naturenet.models.irl.run_swirl -y "$C/$SW.yaml" > "$LOG/$SW.log" 2>&1 & pids+=($!)
+  echo "fit $SW_SH on GPU $GPU_SH (log $LOG/$SW_SH.log)"
+  CUDA_VISIBLE_DEVICES="$GPU_SH" XLA_PYTHON_CLIENT_PREALLOCATE=false "$PY" -m naturenet.models.irl.run_swirl -y "$C/$SW_SH.yaml" \
+    > "$LOG/$SW_SH.log" 2>&1 & pids+=($!)
   fail=0; for p in "${pids[@]}"; do wait "$p" || fail=1; done
   [ "$fail" = "0" ] || { echo "a final fit failed; see $LOG" >&2; exit 1; }
 fi
@@ -51,4 +57,9 @@ if [ "$STAGE" = "all" ] || [ "$STAGE" = "plots" ]; then
   CUDA_VISIBLE_DEVICES="$GPU" "$PY" -m naturenet.models.irl.plot_swirl_new -y "$C/$SW.yaml"
   CUDA_VISIBLE_DEVICES="$GPU" "$PY" -m naturenet.models.irl.reward_env_projection -y "$C/$SW.yaml" \
     -p "$C/whales_reward_env_projection_s2_kin.yaml" --n_hidden 5
+  CUDA_VISIBLE_DEVICES="$GPU_SH" "$PY" -m naturenet.models.irl.plot_swirl_new -y "$C/$SW_SH.yaml"
+  for o in s1 s2; do
+    CUDA_VISIBLE_DEVICES="$GPU_SH" "$PY" -m naturenet.models.irl.reward_env_projection -y "$C/$SW_SH.yaml" \
+      -p "$C/sharks_reward_env_projection_${o}_kin.yaml" --n_hidden 5
+  done
 fi

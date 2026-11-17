@@ -8,7 +8,8 @@
 # originals only, __aug copies excluded). Run the plot steps (with plot_inputs: True) first so the 28 input columns exist.
 # Output: <out_dir>/<second_dir>/<slice>/correlation_results.csv + plots.
 main_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/final/
-second_dir: [hiql_kin/plots/series_hiavi_s1, hiql_kin_k2/plots/series_hiavi_s1]   # kinematics-enabled tools (primary, secondary)
+second_dir: [hiql_kin/plots/series_hiavi_s1, swirl_kin/plots/series_linear_s1, swirl_kin/plots/series_linear_s2]   # kinematics-enabled tools (primary HIQL K = 5, secondary SWIRL S-1 K = 5, S-2 of the same fit)
+# earlier secondary (HIQL + kin K = 2; outputs kept, add back to compare): hiql_kin_k2/plots/series_hiavi_s1
 keys: [full]                  # no sex field in the shark tracks; full = every exported series
 out_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/final/time_series_kin/
 data_slices: null              # null -> one slice 'full' = every *_time_series_pd.csv
