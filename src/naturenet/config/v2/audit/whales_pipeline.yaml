@@ -218,6 +218,21 @@ steps:
       - {path: "{cfg.fin_hiql.out_dir}/reward_env_projection/reward_projection_coefficients.csv"}
       - {path: "{cfg.fin_swirl.out_dir}/reward_env_projection_s2/reward_projection_coefficients.csv"}
       - {path: "{cfg.fin_swirl.out_dir}/reward_env_projection_s1/reward_projection_coefficients.csv", optional: true}
+  - id: 11h
+    title: Habitat tests by mode (fronts / eddies, lags, seasons)
+    after: [8, 11]
+    optional: true
+    outputs:
+      - path: "{R}/drivers/habitat_tests/feature_use.csv"
+        csv: {expr: "df['tool'].eq('hiql_kin_k5').any() and df['tool'].eq('swirl_kin_s2_k5').any()"}
+      - path: "{R}/drivers/habitat_tests/lag_mode_association.csv"
+        csv: {expr: "df['tool'].eq('hiql_kin_k5').any() and df['tool'].eq('swirl_kin_s2_k5').any()"}
+      - {path: "{R}/drivers/habitat_tests/lag_reward_joint.csv"}
+      - {path: "{R}/drivers/habitat_tests/lagged_state_profiles.csv"}
+      - {path: "{R}/drivers/habitat_tests/scene_feature_stats.csv"}
+      - {path: "{cfg.fin_hiql.out_dir}/reward_env_projection_lag/reward_projection_coefficients.csv", optional: true}
+      - {path: "{cfg.fin_swirl.out_dir}/reward_env_projection_s2_lag/reward_projection_coefficients.csv", optional: true}
+    note: "analyses 1-2 of the literature comparison (fronts / eddies, wind and Ekman lags); scales-independent"
   - id: 12
     title: Time-series analysis
     after: [8]

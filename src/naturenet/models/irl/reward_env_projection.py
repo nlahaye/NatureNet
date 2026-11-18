@@ -17,6 +17,13 @@ Analyses (written to <reward_env_projection.out_dir>)
   4. use_availability.csv                 per mode: mean variable value of the next state actually entered minus its
      expectation under the available next states (T averaged over actions), with animal-bootstrap CIs.
   5. selection_ratios.csv                 per mode x state: used / available (Manly-type selection ratio).
+  6. use_availability_by_group.csv        optional (month_groups: {wet: [5, ..., 10], dry: [11, ..., 4]}): use vs
+     availability per mode within each month group (e.g. wet / dry season), same columns + group.
+
+Optional extra state profiles (extra_profiles: [{csv, index: state | cluster, variables: null,
+use_in_projection: False}]) are appended to the SIT-FUSE profiles, e.g. naturenet.drivers.habitat_tests
+lagged_state_profiles.csv (lagged wind / Ekman means per state). They always enter use vs availability; they enter
+the reward ridge only with use_in_projection: True. projection_variables (null = all) restricts the ridge columns.
 
 Rewards are identified only up to per-mode shift and scale (and IAVI only up to a per-state shift handled in
 RewardModel), so each mode's reward is z-scored across states before regression; coefficients are comparable in
@@ -38,7 +45,7 @@ from naturenet.models.irl.swirl_track_series import build_track_series, load_rew
 DEFAULTS = dict(model="linear", order="s1", tag="", fold_tags=[], cluster_scale=1000, profile_index="cluster",
                 variables=None, weight_by_use=True, alphas=[0.01, 0.1, 1.0, 10.0, 100.0], n_boot=500, n_bins=5,
                 n_boot_animals=500, availability="uniform_actions", min_state_visits=1, seed=0,
-                splits=["train", "test"])
+                splits=["train", "test"], out_subdir=None, extra_profiles=[], projection_variables=None, month_groups=None)
 
 
 # ============================== MAPPING ===============================
@@ -222,9 +229,11 @@ def transitions_by_mode(series):
             nxt = np.r_[s[1:], np.nan]
             ok = consec & np.isfinite(s) & np.isfinite(nxt) & np.isfinite(z)
             uid = g["uid"].iloc[0]
+            month = g["month"].to_numpy() if "month" in g else np.full(len(g), -1)
             rows.append(pd.DataFrame(dict(uid=uid, mode=z[ok].astype(int), s=s[ok].astype(int),
-                                          s_next=nxt[ok].astype(int))))
-    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["uid", "mode", "s", "s_next"])
+                                          s_next=nxt[ok].astype(int), month=np.asarray(month)[ok].astype(int))))
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["uid", "mode", "s", "s_next",
+                                                                                 "month"])
 
 
 def use_availability(tr, Av, P, names, n_boot=500, seed=0):
@@ -282,9 +291,38 @@ def load_transition(yml_conf, n_states):
                                     fill_unobserved=yml_conf.get("fill_unobserved", "self_loop"))
 
 
-def run(conf, R_state, P, names, series, T, out_dir, fold_rewards=None):
+def extra_state_profiles(conf, n_states, mapper=None):
+    """(P_extra (S, V'), names, in_projection mask) from conf['extra_profiles'] (see the module docstring)."""
+    Ps, names, proj = [], [], []
+    for e in conf.get("extra_profiles") or []:
+        df = pd.read_csv(e["csv"])
+        idx = e.get("index", "state")
+        Pe, ne = state_profiles(df, n_states, mapper if idx == "cluster" else None, conf["cluster_scale"], idx,
+                                e.get("variables"))
+        Ps.append(Pe)
+        names += list(ne)
+        proj += [bool(e.get("use_in_projection", False))] * len(ne)
+    if not Ps:
+        return np.zeros((n_states, 0)), [], np.zeros(0, bool)
+    return np.hstack(Ps), names, np.array(proj)
+
+
+def run(conf, R_state, P, names, series, T, out_dir, fold_rewards=None, extra=None):
+    """extra = (P_extra, names_extra, in_projection mask) from extra_state_profiles (optional)."""
     os.makedirs(out_dir, exist_ok=True)
     S = P.shape[0]
+    P_all, names_all = P, list(names)
+    if extra is not None and len(extra[1]):
+        Pe, ne, pm = extra
+        P_all, names_all = np.hstack([P, Pe]), list(names) + list(ne)
+        P = np.hstack([P, Pe[:, pm]])
+        names = list(names) + [n for n, m in zip(ne, pm) if m]
+    pv = conf.get("projection_variables")
+    if pv:
+        keep = [i for i, n in enumerate(names) if n in set(pv)]
+        if not keep:
+            raise ValueError("projection_variables matches no profile column")
+        P, names = P[:, keep], [names[i] for i in keep]
     assert R_state.shape[1] == S, f"reward has {R_state.shape[1]} states, profiles {S}"
     tr = transitions_by_mode(series)
     use = np.bincount(np.concatenate([df["env"].dropna().astype(int).to_numpy() for df in series.values()]),
@@ -306,8 +344,18 @@ def run(conf, R_state, P, names, series, T, out_dir, fold_rewards=None):
         out["stability"] = stab
     if T is not None and len(tr):
         Av = available_next(T)
-        ua = use_availability(tr, Av, P, names, conf["n_boot_animals"], conf["seed"])
+        ua = use_availability(tr, Av, P_all, names_all, conf["n_boot_animals"], conf["seed"])
         ua.to_csv(os.path.join(out_dir, "use_availability.csv"), index=False)
+        if conf.get("month_groups"):
+            parts = []
+            for gname, months in conf["month_groups"].items():
+                sub = tr[tr["month"].isin([int(m) for m in months])]
+                if len(sub):
+                    parts.append(use_availability(sub, Av, P_all, names_all, conf["n_boot_animals"],
+                                                  conf["seed"]).assign(group=str(gname)))
+            if parts:
+                pd.concat(parts, ignore_index=True).to_csv(os.path.join(out_dir, "use_availability_by_group.csv"),
+                                                           index=False)
         selection_ratios(tr, Av, S).to_csv(os.path.join(out_dir, "selection_ratios.csv"), index=False)
         out["use_availability"] = ua
     plot_coefficients(coefs, os.path.join(out_dir, "reward_projection_coefficients.png"))
@@ -345,16 +393,18 @@ def main(path, proj_path=None, n_hidden=None):
     if proj_path:
         conf.update(read_yaml(proj_path).get("reward_env_projection", {}) or {})
     S = int(yml["n_states"])
-    with open(conf["class_mapper"], "rb") as f:
-        mapper = pickle.load(f)
+    mapper = None
+    if conf["profile_index"] == "cluster" or any(e.get("index") == "cluster" for e in conf["extra_profiles"] or []):
+        with open(conf["class_mapper"], "rb") as f:
+            mapper = pickle.load(f)
     P, names = state_profiles(pd.read_csv(conf["profiles_csv"]), S, mapper, conf["cluster_scale"],
                               conf["profile_index"], conf["variables"])
     rm = load_reward_model(yml, conf["model"], conf["order"], conf["tag"])
     series = build_track_series(yml, conf["model"], conf["order"], tuple(conf["splits"]), conf["tag"], rewards=rm)
     fold = {t: load_reward_model(yml, conf["model"], conf["order"], t).state_reward for t in conf["fold_tags"]}
     T = load_transition(yml, S)
-    out_dir = conf.get("out_dir") or os.path.join(yml["out_dir"], "reward_env_projection")
-    run(conf, rm.state_reward, P, names, series, T, out_dir, fold or None)
+    out_dir = conf.get("out_dir") or os.path.join(yml["out_dir"], conf.get("out_subdir") or "reward_env_projection")
+    run(conf, rm.state_reward, P, names, series, T, out_dir, fold or None, extra_state_profiles(conf, S, mapper))
 
 
 if __name__ == "__main__":

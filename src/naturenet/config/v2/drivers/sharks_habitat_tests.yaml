@@ -1,0 +1,40 @@
+# Habitat tests by behavioural mode, great hammerheads (v2 environments only; literature-comparison analyses 1 and 3).
+#   python -m naturenet.drivers.lagged_env    -y config/v2/drivers/sharks_habitat_tests.yaml --part scene
+#   python -m naturenet.drivers.habitat_tests -y config/v2/drivers/sharks_habitat_tests.yaml [--part features|seasons]
+# Inputs as in whales_habitat_tests.yaml. Wet season May-Oct, dry Nov-Apr (Bahamas; Guttridge et al. 2025); the
+# months are configuration only, so any month grouping (or a whale early / late season) uses the same code.
+habitat_tests:
+  species: sharks
+  out_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/drivers/habitat_tests/
+  sample_inputs_yaml: config/v2/environment/sharks_sample_inputs_v2.yaml
+  availability:
+    sample_inputs_yaml: config/v2/environment/sharks_sample_inputs_v2.yaml
+    avl_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/drivers/availability/
+    n_available: 10
+    seed: 0
+  tools:                              # primary HIQL + kin K = 5, secondary SWIRL S-1 + kin K = 5, HIQL K = 2 (granularity)
+    - {label: hiql_kin_k5,     series_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/final/hiql_kin/plots/series_hiavi_s1}
+    - {label: swirl_kin_s1_k5, series_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/final/swirl_kin/plots/series_linear_s1}
+    - {label: hiql_kin_k2,     series_dir: /data/nlahaye/NatureNet/Hammerhead_Out_v2/final/hiql_kin_k2/plots/series_hiavi_s1}
+  mode_at: step
+  n_boot: 1000
+  seed: 0
+
+  features:                           # analysis 1 for sharks (directed mode vs SST / CHL fronts, upwelling)
+    fronts:
+      sst_front: {channel: grad_mag_sst, percentile: 90}
+      chl_front: {channel: grad_mag_log10_CHL, percentile: 90}
+    eddy: {channel: okubo_weiss_geo, threshold: 0.2, polarity_channel: rossby_geo}
+    threshold_source: scene
+    masks:
+      ekman_upwelling: {channel: ekman_pumping, op: ">", value: 0.0}
+  scene_stats:
+    csv: /data/nlahaye/NatureNet/Hammerhead_Out_v2/drivers/habitat_tests/scene_feature_stats.csv
+    workers: 4
+
+  # Analysis 3: thermal refuge (wet-season fast modes over deeper, cooler bottom water?)
+  seasons:
+    groups: {wet: [5, 6, 7, 8, 9, 10], dry: [11, 12, 1, 2, 3, 4]}
+    contrast: [wet, dry]
+    channels: [depth_m, bottomT, sst_minus_bottomT, sst, dist_200m_isobath_km, slope_deg]
+  lagged: null

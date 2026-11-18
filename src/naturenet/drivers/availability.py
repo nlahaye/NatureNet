@@ -13,7 +13,7 @@ Writes into avl_dir:
   availability_meta.json
 Then: python -m naturenet.environment.sample_env_inputs -y <avl_dir>/sample_inputs_avl.yaml
 
-YAML (or the "availability" block of the geometry spec):
+YAML (or the "availability" block of the geometry spec or of a habitat_tests spec):
   sample_inputs_yaml: config/v2/environment/whales_sample_inputs_v2.yaml   # df_dir, df_run_uid, channels, scenes
   avl_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/drivers/availability/
   n_available: 10
@@ -107,6 +107,7 @@ def _link(src, dst):
 
 
 def build(spec):
+    spec = spec.get("habitat_tests", spec)       # habitat_tests specs carry the same availability block
     av = spec.get("availability", spec)
     sconf = read_yaml(abs_cfg(av["sample_inputs_yaml"]))
     df_dir, uid = sconf["df_dir"], sconf["df_run_uid"]
