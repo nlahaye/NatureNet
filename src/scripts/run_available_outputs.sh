@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Every plot, analysis, animation and still that the runs already on disk support (v2 only; no fits of the finals,
-# no xai). Built for partial decision-scales CV: whatever folds exist are plotted, tabled (T2 rows marked "partial")
+# Every plot, analysis, animation and still that the runs already on disk support (v2 only; finished fits are not
+# redone; no step-9 xai). Also runs steps 17b / 17c (Seascapes xai), 20 (shark secondary switch) and 21 (habitat
+# tests + whale pre-scales rerun) through the species scripts. Built for partial decision-scales CV: whatever folds exist are plotted, tabled (T2 rows marked "partial")
 # and animated; rerunning the script later picks up the folds that finished in the meantime.
 #   Species wrappers: run_available_outputs_whales.sh, run_available_outputs_sharks.sh (SP=whales | sharks).
 #
 #   SP=whales bash run_available_outputs.sh                 # STAGE=all (order below)
 #   SP=whales STAGE=<stage> bash run_available_outputs.sh   # one stage:
+#     pre        steps 20 / 21 sync + final (species script; finished fits are skipped, then that script's plots /
+#                projection / exploit-explore / series / decision context / animations): whales ->
+#                run_whale_prescales.sh STAGE=sync, final; sharks -> run_shark_swirl_kin.sh STAGE=sync, final
 #     outputs    launcher plan (no fits; every job is gated on its inputs existing when the plan is written):
 #                  step 8   plot_hiavi / plot_swirl_new for every final with a fitted npz (kinematic + action-only)
 #                  step 11  reward-to-environment projection (needs the step-9 xai/interpret profiles on disk)
@@ -23,14 +27,24 @@
 #     levels     step 16 (no xai): 16a hierarchy verify/build -> 16b level configs -> 16c env per level ->
 #                16d HIQL / IAVI sweep (plan_jobs) -> level LL plot; 16e SWIRL if LEVELS_SWIRL is set; 16f HIQL
 #                final at LEVEL_FINAL (with NH) -> plot_hiavi -> projection if xai/interpret_<lv> profiles exist
-#     seascape   step 17 (no xai): 17a download / regrid / report -> 17d seascape level (as 16c-16d)
+#     seascape   step 17: 17a download / regrid / report -> 17d seascape level (as 16c-16d)
+#     seascape_xai  17b agreement of the SIT-FUSE clusters with Seascapes (fine, parent and every coarse K of LEVELS;
+#                coarse needs the 16a hierarchy) -> reference_summary; 17c Seascape class profiles (interpret_seascape).
+#                Launcher plan, CPU. Needs the 17a rasters and a sit_fuse whose cluster_interpret has --reference_only
+#     step20_post  sharks only (step 20): run_shark_swirl_kin.sh STAGE=scales, ma, plots, tables (scales / multi-agent
+#                CV of SWIRL S-1 + kin K = 5; same launcher state dirs as run_scales_kfold.sh / run_multiagent_kfold.sh,
+#                so folds already claimed by another launcher are not repeated). STEP20_FITS=0 -> plots, tables only
+#   Step aliases: STAGE=step20 = pre + step20_post (sharks); STAGE=step21 = pre + habitat; STAGE=step17 = seascape +
+#   seascape_xai.
 #     audit      manifest audit (5b, 6b, 7-14, incl. 11h) + launcher status
-#   STAGE=all = outputs, habitat, ll, ma, tables, levels, seascape, audit. levels / seascape fit the level sweeps
-#   (runners skip finished work); SKIP_LEVELS=1 leaves them out of all.
+#   STAGE=all = pre, outputs, habitat, ll, ma, tables, levels, seascape, seascape_xai, step20_post, audit. levels /
+#   seascape fit the level sweeps and step20_post the shark scales / multi-agent CV (runners skip finished work);
+#   SKIP_LEVELS=1 leaves levels / seascape / seascape_xai out of all; SKIP_STEP20=1 leaves step20_post out.
 #   Env: SP, GPUS (default 6; scales use 4,5 and multi-agent 0-3 by default), CPUS (default 16 of 48), S (launcher
 #        root), NN_SRC, PY, HPY (python for the small yaml / glob helpers; default PY), SFC (SIT-FUSE config dir;
 #        default from the installed sit_fuse), LEVELS (default "parent k30 k20 k12"), LEVELS_SWIRL, LEVEL_FINAL, NH,
-#        EXPECTED_FOLDS (default 5), DRY=1 (write plans + launcher dry runs only).
+#        EXPECTED_FOLDS (default 5), DRY=1 (write plans + launcher dry runs only), STEP20_FITS (default 1), MA_STAGE
+#        (step 20 multi-agent: screen | full; default screen), REMAKE_XAI=1 (regenerate the SIT-FUSE xai yaml).
 set -euo pipefail
 SP="${SP:?set SP=whales or SP=sharks (or use run_available_outputs_<sp>.sh)}"
 STAGE="${STAGE:-all}"
@@ -48,7 +62,7 @@ LEVELS="${LEVELS:-parent k30 k20 k12}"
 cd "$NN_SRC"
 # PROJ_DATA / PROJ_LIB without proj.db (pixi / conda activation) breaks rasterio EPSG lookups; point it at a valid
 # proj.db for every stage and launcher job (inherited env). No-op when the current value is fine.
-eval "$("$PY" -m naturenet.environment.proj_env --export 2>/dev/null || true)"
+eval "$("$PY" -m naturenet.environment.proj_env --export 2>/dev/null | grep "^export PROJ_" || true)"
 C=naturenet/config/v2/swirl
 T=naturenet/config/v2/time_series
 D=naturenet/config/v2/drivers
@@ -82,7 +96,7 @@ case "$SP" in
         "multiagent_swirl_kin_coupling:whales_multiagent_swirl_kin_coupling:5:multiagent_swirl_kin_coupling")
     MAS=("whales_scales_multiagent_kin:5" "whales_scales_multiagent_swirl_kin:5")
     T3=("multiagent_kin:HIQL+kin:5")
-    HABITAT_SCRIPT=run_whale_prescales.sh
+    HABITAT_SCRIPT=run_whale_prescales.sh; PRE_STAGES="sync final"; STEP20_POST=""
     ;;
   sharks)
     R=/data/nlahaye/NatureNet/Hammerhead_Out_v2; SG=shark; RUID=hammerhead_v2; LLP=hammerhead_v2_kin_nn
@@ -104,14 +118,21 @@ case "$SP" in
         "multiagent_swirl_kin_coupling:sharks_multiagent_swirl_kin_coupling:5:multiagent_swirl_kin_coupling")
     MAS=("sharks_scales_multiagent_kin:5 2" "sharks_scales_multiagent_swirl_kin:5")
     T3=("multiagent_kin:HIQL+kin:5 2" "multiagent_swirl_kin:SWIRL+kin:5")
-    HABITAT_SCRIPT=run_shark_swirl_kin.sh
+    HABITAT_SCRIPT=run_shark_swirl_kin.sh; PRE_STAGES="sync final"; STEP20_POST="scales ma plots tables"
     ;;
   *) echo "SP must be whales or sharks" >&2; exit 1 ;;
 esac
 SGU=$(echo "$SG" | tr '[:lower:]' '[:upper:]')
 SF_OUT=/data/nlahaye/output/Learnergy/COP_${SGU}_V2
 
-want() { [ "$STAGE" = "all" ] || [ "$STAGE" = "$1" ]; }
+declare -A ALIAS=([step20]="pre step20_post" [step21]="pre habitat" [step17]="seascape seascape_xai")
+want() { [ "$STAGE" = "all" ] || [ "$STAGE" = "$1" ] || [[ " ${ALIAS[$STAGE]:-} " == *" $1 "* ]]; }
+explicit() { [ "$STAGE" = "$1" ] || [[ " ${ALIAS[$STAGE]:-} " == *" $1 "* ]]; }   # asked for by name / alias
+sub() {      # species script stage (steps 20 / 21) with the same GPUs / CPUs / launcher root / python
+  env STAGE="$1" GPUS="$GPUS" CPUS="$CPUS" S="$S" PY="$PY" NN_SRC="$NN_SRC" DRY="${DRY:-0}" MA_STAGE="${MA_STAGE:-screen}" \
+    bash "$SCRIPTS/$HABITAT_SCRIPT" || echo "WARNING: $HABITAT_SCRIPT STAGE=$1 failed (see above)"
+}
+sfc_dir() { echo "${SFC:-$("$HPY" -c 'import os, sit_fuse; print(os.path.join(os.path.dirname(sit_fuse.__file__), "config"))' 2>/dev/null || true)}"; }
 cpu() { env JAX_PLATFORMS=cpu NATURENET_JAX_PLATFORM=cpu CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 \
         OPENBLAS_NUM_THREADS=4 "$@"; }
 launch() {   # plan [extra launcher args]: dry run summary, then run unless DRY=1
@@ -327,12 +348,17 @@ with open(p, "w") as f:
 PYEOF
   echo "wrote $PO"
 }
+# ----------------------------------------------------------------------------- pre (steps 20 / 21: sync + final)
+if want pre; then
+  echo "== pre: $HABITAT_SCRIPT STAGE=$PRE_STAGES (step $([ "$SP" = sharks ] && echo 20 || echo 21) finals; finished fits skipped)"
+  for st in $PRE_STAGES; do sub "$st"; done
+fi
+
 if want outputs; then write_outputs_plan; launch "$PO"; fi
 
 # ----------------------------------------------------------------------------- habitat (step 11h)
 if want habitat; then
-  env STAGE=habitat GPUS="$GPUS" CPUS="$CPUS" S="$S" PY="$PY" NN_SRC="$NN_SRC" DRY="${DRY:-0}" \
-    bash "$SCRIPTS/$HABITAT_SCRIPT" || echo "WARNING: habitat stage failed (see above)"
+  sub habitat
 fi
 
 [ "${DRY:-0}" = "1" ] && [ "$STAGE" = "all" ] && echo "DRY=1: the cheap CPU stages (ll, ma, tables) are only listed"
@@ -477,7 +503,7 @@ level_ready() {      # the level's sync target exists (env_format has run): only
 
 if want levels && [ "${SKIP_LEVELS:-0}" != "1" -o "$STAGE" = "levels" ]; then
   echo "== step 16: environment levels ($LEVELS)"
-  SFC="${SFC:-$("$HPY" -c 'import os, sit_fuse; print(os.path.join(os.path.dirname(sit_fuse.__file__), "config"))' 2>/dev/null || true)}"
+  SFC="$(sfc_dir)"
   HY="$SFC/hierarchy/${SG}_hierarchy_v2.yaml"
   if [ -f "$SF_OUT/hierarchy/cluster_hierarchy.json" ]; then echo "16a: hierarchy exists ($SF_OUT/hierarchy)"
   elif [ -f "$HY" ]; then
@@ -512,7 +538,7 @@ if want levels && [ "${SKIP_LEVELS:-0}" != "1" -o "$STAGE" = "levels" ]; then
 fi
 
 if want seascape && [ "${SKIP_LEVELS:-0}" != "1" -o "$STAGE" = "seascape" ]; then
-  echo "== step 17: Seascapes (17a, 17d; 17b / 17c are xai and are skipped)"
+  echo "== step 17: Seascapes (17a, 17d; 17b / 17c: STAGE=seascape_xai)"
   if [ "${DRY:-0}" = "1" ]; then echo "would run naturenet.environment.seascapes all -y $E/${SP}_seascapes_v2.yaml"
   else cpu "$PY" -m naturenet.environment.seascapes all -y "$E/${SP}_seascapes_v2.yaml"; fi       # 17a (resumable)
   if level_env_plan "$S/available_${SP}_seascape_env.yaml" "seascape_env_${SP}" seascape; then
@@ -521,12 +547,82 @@ if want seascape && [ "${SKIP_LEVELS:-0}" != "1" -o "$STAGE" = "seascape" ]; the
   if level_ready seascape; then level_sweep seascape seascape; else echo "SKIP seascape sweep (level env not built)"; fi
 fi
 
+# ----------------------------------------------------------------------------- seascape_xai (17b, 17c)
+seascape_xai_plan() {   # plan xai_yaml: 17b reference agreement per level + 17c class profiles (one CPU job each)
+  local plan="$1" X="$2" HJ="$SF_OUT/hierarchy/cluster_hierarchy.json" lv cases=()
+  local pat="/data/nlahaye/NatureNet_Env/Seascapes/v2/$SP/seascape_${SP}_t{{t}}.tif"   # {{t}} -> {t} after the launcher format
+  cases+=("      - {lv: fine, args: \"\"}")
+  for lv in $LEVELS; do
+    case "$lv" in
+      parent) cases+=("      - {lv: parent, args: \"--level parent\"}") ;;
+      k[0-9]*) if [ -f "$HJ" ]; then cases+=("      - {lv: $lv, args: \"--level coarse --k ${lv#k} --hierarchy_json $HJ\"}")
+               else echo "SKIP 17b $lv (no $HJ: run the levels stage / 16a first)"; fi ;;
+    esac
+  done
+  cat > "$plan" <<EOF
+# generated by scripts/run_available_outputs.sh (SP=$SP, STAGE=seascape_xai); edit the script, not this file
+launcher: {state_dir: "$S/available_${SP}_seascape_xai", gpus: $GPUS_YAML, cpus: $CPUS, retries: 0}
+vars: {py: "$PY", x: "$X"}
+jobs:
+  - name: reference                 # 17b: agreement tables (NMI, ARI, homogeneity, completeness, Cramer's V) per level
+    cmd: "{py} -m sit_fuse.xai.cluster_interpret -y {x} --reference_only {args}"
+    cases:
+$(printf '%s\n' "${cases[@]}")
+    id_keys: [lv]
+    cpus: 4
+    env: $CPU_ENV
+  - name: seascape_profiles         # 17c: CMEMS channel profiles within each Seascape class -> xai/interpret_seascape/
+    cmd: "{py} -m sit_fuse.xai.cluster_interpret -y {x} --label_pattern '$pat' --label_scale 1 --out_subdir interpret_seascape --no_reference"
+    cpus: 8
+    env: $CPU_ENV
+EOF
+  echo "wrote $plan"
+}
+if { want seascape_xai && [ "${SKIP_LEVELS:-0}" != "1" ]; } || explicit seascape_xai; then
+  echo "== steps 17b / 17c: Seascapes agreement and class profiles (SIT-FUSE xai)"
+  SFC="$(sfc_dir)"
+  XB="$SFC/model/copernicus_${SG}_v2.yaml"; XX="$SFC/xai/${SG}_xai_block_v2.yaml"; X="$SFC/model/copernicus_${SG}_v2_xai.yaml"
+  SEA="/data/nlahaye/NatureNet_Env/Seascapes/v2/$SP"
+  if ! compgen -G "$SEA/seascape_${SP}_t*.tif" > /dev/null; then
+    echo "SKIP 17b / 17c (no Seascapes rasters in $SEA: run STAGE=seascape first)"
+  elif ! "$HPY" -c 'import inspect, sys, sit_fuse.xai.cluster_interpret as m; sys.exit(0 if "reference_only" in inspect.getsource(m) else 1)' 2>/dev/null; then
+    echo "SKIP 17b / 17c: the installed sit_fuse.xai.cluster_interpret has no --reference_only / --label_pattern"
+    echo "     (copy SIT-FUSE/src/sit_fuse/xai/cluster_interpret.py from the 17b / 17c delivery into SIT-FUSE)"
+  else
+    if [ ! -f "$X" ] || [ "${REMAKE_XAI:-0}" = "1" ] || [ -z "$(ykey "$X" xai.interpret.reference)" ]; then
+      if [ "${DRY:-0}" = "1" ]; then echo "would run make_xai_config -b $XB -x $XX -o $X"
+      else "$PY" -m sit_fuse.xai.make_xai_config -b "$XB" -x "$XX" -o "$X"; fi      # adds interpret.reference
+    fi
+    seascape_xai_plan "$S/available_${SP}_seascape_xai.yaml" "$X"
+    launch "$S/available_${SP}_seascape_xai.yaml"
+    XD="$SF_OUT/xai"
+    if [ "${DRY:-0}" = "1" ]; then echo "would run reference_summary -d $XD"
+    elif compgen -G "$XD/interpret*/reference_*_agreement.csv" > /dev/null; then
+      cpu "$PY" -m sit_fuse.xai.reference_summary -d "$XD" || echo "WARNING: reference_summary failed"   # -> reference_agreement_levels.{csv,md}
+    else echo "SKIP reference_summary (no agreement tables yet)"; fi
+  fi
+fi
+
+# ----------------------------------------------------------------------------- step20_post (sharks: scales / ma CV)
+if { want step20_post && [ "${SKIP_STEP20:-0}" != "1" ]; } || explicit step20_post; then
+  if [ -z "$STEP20_POST" ]; then
+    if explicit step20_post; then echo "SKIP step 20 (shark secondary switch; nothing to do for $SP)"; fi
+  else
+    st20="$STEP20_POST"; [ "${STEP20_FITS:-1}" = "0" ] && st20="plots tables"
+    echo "== step 20 (post): $HABITAT_SCRIPT STAGE=$st20 (finished folds skipped; folds claimed by another launcher not repeated)"
+    for st in $st20; do sub "$st"; done
+  fi
+fi
+
 # ----------------------------------------------------------------------------- audit
 if want audit; then
   rc=0
   "$PY" -m naturenet.drivers.manifest_audit -m "naturenet/config/v2/audit/${SP}_pipeline.yaml" --steps 5b,6b,7-14 || rc=1
   for p in "$PO" "$S/available_${SP}_levels_env.yaml" "$S/available_${SP}_levels_sweep.yaml" \
-           "$S/available_${SP}_seascape_env.yaml" "$S/available_${SP}_seascape_sweep.yaml"; do
+           "$S/available_${SP}_seascape_env.yaml" "$S/available_${SP}_seascape_sweep.yaml" \
+           "$S/available_${SP}_seascape_xai.yaml" "$S/whale_prescales_final.yaml" "$S/whale_prescales_habitat.yaml" \
+           "$S/shark_swirl_kin_final.yaml" "$S/shark_habitat_tests.yaml" "$S/shark_swirl_kin_scales.yaml" \
+           "$S/shark_swirl_kin_ma_${MA_STAGE:-screen}.yaml"; do
     [ -f "$p" ] && "$PY" -m sit_fuse.local_launcher status "$p" | tail -n 5
   done
   [ "$STAGE" = "audit" ] && exit $rc
