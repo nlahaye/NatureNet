@@ -40,4 +40,17 @@ assert s["matched_agreement"] > 0.85 and s["AMI"] > 0.6 and s["AMI"] > s["AMI_nu
 ma = pd.read_csv(os.path.join(conf["out_dir"], "mode_alignment_A__B.csv"))
 assert dict(zip(ma[ma.model == "A"]["mode"], ma[ma.model == "A"]["matched_mode"])) == {0: 2, 1: 0, 2: 1}
 assert os.path.exists(os.path.join(conf["out_dir"], "per_fold.csv"))
+# ambiguous glob: the newest match is used (glob_multiple: error raises)
+import time
+from naturenet.drivers.decision_context_similarity import _resolve
+for lab in ("hiql_kin_k5", "whales_hiql_kin_k5"):
+    os.makedirs(os.path.join(d, "eex", lab), exist_ok=True)
+    open(os.path.join(d, "eex", lab, "full_exploit_explore.csv"), "w").write("state,class\n")
+    time.sleep(0.05)
+gc = dict(out_dir=d, models=dict(M=dict(exploit_explore=os.path.join(d, "eex", "*hiql_kin_k5", "full_exploit_explore.csv"))))
+assert _resolve(gc)["models"]["M"]["exploit_explore"].endswith("whales_hiql_kin_k5/full_exploit_explore.csv")
+try:
+    _resolve(dict(gc, glob_multiple="error")); raise AssertionError("no error")
+except FileNotFoundError:
+    pass
 print("OK")

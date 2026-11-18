@@ -330,9 +330,16 @@ def _resolve(conf):
         for k in ("dir", "exploit_explore", "state_reward"):
             if isinstance(m.get(k), str) and any(c in m[k] for c in "*?["):
                 g = sorted(glob.glob(m[k]))
-                if len(g) != 1:
-                    raise FileNotFoundError(f"{n}.{k}: {m[k]} matched {len(g)} paths ({g[:4]}); make it specific")
-                m[k] = g[0]
+                if not g:
+                    raise FileNotFoundError(f"{n}.{k}: {m[k]} matched no paths")
+                if len(g) > 1:
+                    # same table written under two labels (e.g. run_kin_downstream <tool> and run_available_outputs
+                    # <species>_<tool>): newest wins unless glob_multiple: error
+                    if str(conf.get("glob_multiple", "newest")) == "error":
+                        raise FileNotFoundError(f"{n}.{k}: {m[k]} matched {len(g)} paths ({g[:4]}); make it specific")
+                    g = sorted(g, key=os.path.getmtime)
+                    print(f"WARNING {n}.{k}: {m[k]} matched {len(g)} paths; using the newest {g[-1]}")
+                m[k] = g[-1]
         models[n] = m
     conf["models"] = models
     return conf

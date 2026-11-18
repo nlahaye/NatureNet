@@ -8,6 +8,7 @@ out_dir: "{root}/final/decision_context"
 n_boot: 1000
 n_null: 50
 seed: 0
+glob_multiple: newest   # a glob matching several paths (same table under two labels): newest | error
 models:
   hiql_kin_k5:
     kind: series
