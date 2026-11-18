@@ -69,11 +69,23 @@ Figure-oriented options (all optional; defaults reproduce the earlier behaviour)
                 or timestamps ("2023-04-01" -> nearest frame; skipped outside the window). Written as <file>_still_<frame>.png at still_dpi (200);
                 still_panels: True also writes one crop per panel (<file>_still_<frame>_p<j>.png).
   animate       False: write only the stills (fast re-render for figures).
+  mode_names    panel (or job) {k: name}: a short behaviour name appended to the legend / heatmap row, e.g.
+                {3: transit}, so modes of one class stay identifiable under colour_by: class.
+  reward_scale  shared (default: one colour range over all panels) | panel (own 2-98 percentile range and
+                colour bar per panel; use when panels come from models with different reward scales, e.g. SWIRL
+                S-2 vs HIQL) | mode (range of the decoded mode's map, updated each frame: shows spatial contrast
+                within a mode even when modes differ mainly by an offset; values are not comparable across frames). reward_label: colour-bar label (panel or job key).
+  clip_to_env   True (default): the track view is clipped to the env grid bounds. False: pad beyond the grid so
+                animals at the grid edge are not cut off (the background just ends).
 Season jobs (mode: season): all fixes of the selected animals (select.uids, default all) are pooled by calendar
   month (season.bins: month | [[12, 1, 2], [3, 4, 5], ...]; season.bin_names), one frame per bin, coloured by mode or
   class over the faint full track set, with mode shares per bin below. Also writes <job>_<panel>_grid.png (one small
   map per bin plus a bin x mode share heatmap) and <job>_<panel>_shares.csv; stills may name bins ("Apr").
   Background: none (pooled days have no single env map). Every panel of a season job is rendered separately.
+  season.min_animals (3): bins with fewer animals are hatched in the bar / heatmap and flagged in the csv.
+  season.class_rows (True with labels): adds 'all <class>' rows (summed shares per class) to the heatmap and
+  share_<class> columns to the csv. Also writes <job>_<panel>_heatmap.png (heatmap only, for composite figures).
+  Grid / heatmap labels show n animals and n fixes per bin.
 """
 import argparse
 import glob
@@ -348,7 +360,10 @@ def load_panel(p, c):
         else:
             print(f"NOTE: {p['state_reward']} not found (only needed for background: reward)")
     K = int(p.get("K", max(int(d["latent"].max()) + 1, sr.shape[0] if sr is not None else 0)))
-    return dict(name=p.get("name", kind), data=d, labels=labels, state_reward=sr, K=K,
+    names = {int(k): str(v) for k, v in (c.get("mode_names") or {}).items()} if len(c.get("panels") or []) <= 1 else {}
+    names.update({int(k): str(v) for k, v in (p.get("mode_names") or {}).items()})
+    return dict(name=p.get("name", kind), data=d, labels=labels, state_reward=sr, K=K, names=names,
+                reward_label=p.get("reward_label", c.get("reward_label")),
                 regime=bool(p.get("regime", True)) and "regime" in d)
 
 
@@ -587,6 +602,7 @@ def align_modes(ref, p):
     d = p["data"].copy()
     d["latent"] = d["latent"].map(lambda k: perm.get(int(k), int(k))).astype(int)
     labels = {perm.get(int(k), int(k)): v for k, v in p["labels"].items()}
+    names = {perm.get(int(k), int(k)): v for k, v in (p.get("names") or {}).items()}
     agree = float(np.trace(C[rows][:, cols]) / C.sum()) if C.sum() else np.nan
     print(f"align_modes: {p['name']} -> {ref['name']} map {perm} (matched agreement {agree:.2f})")
     K_new = max(Kp, max(perm.values()) + 1)
@@ -597,11 +613,12 @@ def align_modes(ref, p):
             if k_old < len(sr):
                 sr_new[k_new] = sr[k_old]
         sr = sr_new
-    return dict(p, data=d, labels=labels, state_reward=sr, K=K_new)
+    return dict(p, data=d, labels=labels, names=names, state_reward=sr, K=K_new)
 
 
-def _legend_text(k, labels):
-    return f"mode {k}" + (f" ({labels[k]})" if labels.get(k) else "")
+def _legend_text(k, labels, names=None):
+    bits = [str(x) for x in ((labels or {}).get(k), (names or {}).get(k)) if x]
+    return f"mode {k}" + (f" ({', '.join(bits)})" if bits else "")
 
 
 def _extent(c, tracks, envm):
@@ -613,7 +630,7 @@ def _extent(c, tracks, envm):
     lat = np.concatenate([t["latitude"].to_numpy() for t in tracks])
     pad = float(c.get("pad_deg", 1.0))
     v = [np.nanmin(lon) - pad, np.nanmax(lon) + pad, np.nanmin(lat) - pad, np.nanmax(lat) + pad]
-    if env_ext is not None:
+    if env_ext is not None and c.get("clip_to_env", True):
         v = [max(v[0], env_ext[0]), min(v[1], env_ext[1]), max(v[2], env_ext[2]), min(v[3], env_ext[3])]
     return v, env_ext
 
@@ -712,7 +729,17 @@ def render(c, panels, row, multi, out_file):
     arts = []
     marker_cycle = ["o", "s", "^", "D", "v", "P", "X", "*", "h", "<", ">", "p"]
     vlim = None
-    if bg == "reward":
+    rscale = str(c.get("reward_scale", "shared")).lower()
+    per_panel = rscale in ("panel", "mode")
+
+    def _mode_lim(sr_k):
+        v = np.asarray(sr_k, float)
+        v = v[np.isfinite(v)]
+        if not len(v):
+            return None
+        lo, hi = np.nanpercentile(v, [2, 98])
+        return (lo, hi) if hi > lo else (lo - 1e-6, lo + 1e-6)
+    if bg == "reward" and not per_panel:
         allr = np.concatenate([p["state_reward"].ravel() for p in panels if p["state_reward"] is not None])
         vlim = np.nanpercentile(allr, [2, 98]) if len(allr) else None
     for j, (p, s) in enumerate(zip(panels, sub)):
@@ -729,11 +756,20 @@ def render(c, panels, row, multi, out_file):
                                interpolation="nearest", zorder=0)
             elif p["state_reward"] is not None:
                 k0 = int(s["latent"].iloc[0]) if len(s) else 0
+                if per_panel:
+                    v = p["state_reward"][np.isfinite(p["state_reward"])]
+                    vlim = np.nanpercentile(v, [2, 98]) if len(v) else None
+                    if vlim is not None and vlim[1] <= vlim[0]:
+                        vlim = [vlim[0] - 1e-6, vlim[0] + 1e-6]
+                    if rscale == "mode":
+                        vlim = _mode_lim(p["state_reward"][k0])
+                    print(f"  {p['name']}: reward colour range {vlim}" + (" (first mode; re-scaled per mode)"
+                                                                          if rscale == "mode" else ""))
                 im = ax.imshow(reward_image(p["state_reward"][k0], m0) if m0 is not None else np.full((2, 2), np.nan),
                                extent=env_ext, origin="upper", cmap="viridis",
                                vmin=None if vlim is None else vlim[0], vmax=None if vlim is None else vlim[1],
                                interpolation="nearest", zorder=0)
-                cb = fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02, label="state reward (decoded mode)")
+                cb = fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02, label=p.get("reward_label") or "state reward (decoded mode)")
         ax.set_xlim(view[0], view[1])
         ax.set_ylim(view[2], view[3])
         ax.set_aspect("equal")
@@ -752,7 +788,7 @@ def render(c, panels, row, multi, out_file):
             xl, yl, li = _line_with_breaks(tt, xx, yy, c.get("break_gap_h"))
             tr.append(dict(t=tt, x=xx, y=yy, xl=xl, yl=yl, li=li,
                            z=g["latent"].to_numpy(), line=line, dots=dots, head=head, uid=u))
-        handles = [plt.Line2D([], [], marker="o", ls="", color=cols[k], label=_legend_text(k, p["labels"]))
+        handles = [plt.Line2D([], [], marker="o", ls="", color=cols[k], label=_legend_text(k, p["labels"], p.get("names")))
                    for k in range(p["K"])]
         ax.legend(handles=handles, fontsize=6.5, loc=c.get("legend_loc", "lower left"), framealpha=0.85).set_zorder(10)
         # timeline
@@ -818,8 +854,12 @@ def render(c, panels, row, multi, out_file):
                     a["im"].set_data(env_image(m))
                 elif last_k is not None:
                     a["im"].set_data(reward_image(a["p"]["state_reward"][last_k], m))
+                    if rscale == "mode":
+                        lim = _mode_lim(a["p"]["state_reward"][last_k])
+                        if lim is not None:
+                            a["im"].set_clim(*lim)
             if not multi and last_k is not None:
-                a["title"].set_text(f"{a['p']['name']}: {_legend_text(last_k, a['p']['labels'])}")
+                a["title"].set_text(f"{a['p']['name']}: {_legend_text(last_k, a['p']['labels'], a['p'].get('names'))}")
             a["cur"].set_xdata([now, now])
         sup.set_text(f"{who}   {pd.Timestamp(now):%Y-%m-%d %H:%M}")
         return out
@@ -881,19 +921,32 @@ def render_season(c, p, sel, dry_run=False):
         b_of = np.where(b_of >= 0, remap[np.maximum(b_of, 0)], -1)
         bins, names, cnt = [bins[i] for i in keep], [names[i] for i in keep], cnt[keep]
     share = cnt / np.maximum(cnt.sum(1, keepdims=True), 1)
+    sc = c.get("season") or {}
+    n_an = np.array([d[b_of == i]["uid"].nunique() for i in range(len(bins))])
+    n_fx = cnt.sum(1).astype(int)
+    low = n_an < int(sc.get("min_animals", 3))
+    # class rows: summed shares per class (e.g. all explore = transit + reversal)
+    cls_of = {k: str(p["labels"].get(k, "")).lower() for k in range(K)}
+    classes = [x for x in ("exploit", "explore", "ambiguous") if x in cls_of.values()]
+    use_cls = bool(sc.get("class_rows", True)) and len(classes) > 1
+    cshare = np.stack([share[:, [k for k in range(K) if cls_of[k] == x]].sum(1) for x in classes], 1) \
+        if use_cls else np.zeros((len(bins), 0))
     od = os.path.join(c["out_dir"], name)
     os.makedirs(od, exist_ok=True)
     tag = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in p["name"])
     base = os.path.join(od, f"{name}_{tag}")
     tab = pd.DataFrame(share, columns=[f"share_{k}" for k in range(K)]).assign(
-        bin=names, n_fixes=cnt.sum(1).astype(int), n_animals=[d[b_of == i]["uid"].nunique() for i in range(len(bins))])
-    tab[["bin", "n_fixes", "n_animals"] + [f"share_{k}" for k in range(K)]].to_csv(base + "_shares.csv", index=False)
+        bin=names, n_fixes=n_fx, n_animals=n_an, low_n=low)
+    for j, x in enumerate(classes if use_cls else []):
+        tab[f"share_{x}"] = cshare[:, j]
+    tab[["bin", "n_fixes", "n_animals", "low_n"] + [f"share_{k}" for k in range(K)] +
+        [f"share_{x}" for x in (classes if use_cls else [])]].to_csv(base + "_shares.csv", index=False)
     print(f"[{name}] {p['name']}: {d['uid'].nunique()} animals, {len(d)} fixes")
-    print(tab[["bin", "n_fixes", "n_animals"]].to_string(index=False))
+    print(tab[["bin", "n_fixes", "n_animals", "low_n"]].to_string(index=False))
     if dry_run:
         return []
     view, env_ext = _extent(c, [d], None)
-    handles = [plt.Line2D([], [], marker="o", ls="", color=cols[k], label=_legend_text(k, p["labels"]))
+    handles = [plt.Line2D([], [], marker="o", ls="", color=cols[k], label=_legend_text(k, p["labels"], p.get("names")))
                for k in range(K)]
     x, y, z = d["longitude"].to_numpy(), d["latitude"].to_numpy(), d["latent"].to_numpy(int)
 
@@ -911,8 +964,10 @@ def render_season(c, p, sel, dry_run=False):
         for k in range(K):
             axb.bar(range(len(bins)), share[:, k], bottom=bottom, color=cols[k], width=0.85, linewidth=0)
             bottom += share[:, k]
+        for i in np.flatnonzero(low):
+            axb.bar(i, 1, color="none", edgecolor="0.3", hatch="///", width=0.85, linewidth=0)
         axb.set_xticks(range(len(bins)))
-        axb.set_xticklabels(names, fontsize=7)
+        axb.set_xticklabels([f"{names[i]}\n{n_an[i]}" for i in range(len(bins))], fontsize=6.5)
         axb.set_ylim(0, 1)
         axb.set_ylabel("mode share", fontsize=7)
         axb.tick_params(labelsize=6)
@@ -964,31 +1019,49 @@ def render_season(c, p, sel, dry_run=False):
         out.append(fs)
     plt.close(fig)
     # facet grid of every bin + share heatmap
+    rows_lab = [_legend_text(k, p["labels"], p.get("names")) for k in range(K)] + [f"all {x}" for x in
+                                                                                 (classes if use_cls else [])]
+    H = np.concatenate([share, cshare], 1).T                     # (rows, bins)
+    min_an = int(sc.get("min_animals", 3))
+
+    def heat(ah, fig):
+        im = ah.imshow(H, aspect="auto", cmap="magma_r", vmin=0, vmax=1 if use_cls else max(float(share.max()), 1e-6))
+        ah.set_xticks(range(nb))
+        ah.set_xticklabels([f"{names[i]}\n{n_an[i]} an. / {n_fx[i]}" for i in range(nb)], fontsize=6)
+        ah.set_yticks(range(len(rows_lab)))
+        ah.set_yticklabels(rows_lab, fontsize=6.5)
+        if use_cls:
+            ah.axhline(K - 0.5, color="w", lw=2)
+        vm = 1 if use_cls else share.max()
+        for i in range(nb):
+            for r in range(len(rows_lab)):
+                ah.text(i, r, f"{H[r, i]:.2f}", ha="center", va="center", fontsize=5.5,
+                        color="w" if H[r, i] > 0.5 * vm else "k")
+            if low[i]:
+                ah.add_patch(matplotlib.patches.Rectangle((i - 0.5, -0.5), 1, len(rows_lab), fill=False,
+                                                          hatch="///", edgecolor="0.5", lw=0))
+        if low.any():
+            ah.set_xlabel(f"hatched: fewer than {min_an} animals", fontsize=6)
+        fig.colorbar(im, ax=ah, fraction=0.03, pad=0.01, label="share of fixes")
+        return im
+
     nb = len(bins)
     ncol = int((c.get("season") or {}).get("grid_cols", 4 if nb > 4 else nb))
     nrow = int(np.ceil(nb / ncol))
     aspect = (view[3] - view[2]) / max(view[1] - view[0], 1e-6)
     fig = plt.figure(figsize=(2.3 * ncol, 2.3 * nrow * min(max(aspect, 0.5), 1.6) + 2.0))
-    gs = fig.add_gridspec(nrow + 1, ncol, height_ratios=[1] * nrow + [0.9], hspace=0.3, wspace=0.08)
+    gs = fig.add_gridspec(nrow + 1, ncol, height_ratios=[1] * nrow + [0.9 + 0.15 * cshare.shape[1]], hspace=0.3, wspace=0.08)
     for i in range(nb):
         a = fig.add_subplot(gs[i // ncol, i % ncol])
         faint(a)
         m = b_of == i
         a.scatter(x[m], y[m], c=cols[z[m]], s=3, linewidths=0, zorder=3)
-        a.set_title(f"{names[i]} (n={int(m.sum())})", fontsize=7)
+        a.set_title(f"{names[i]} ({n_an[i]} animals, {int(m.sum())} fixes)" + (" *" if low[i] else ""),
+                    fontsize=6.5)
         a.set_xticks([])
         a.set_yticks([])
     ah = fig.add_subplot(gs[nrow, :])
-    im = ah.imshow(share.T, aspect="auto", cmap="magma_r", vmin=0, vmax=max(float(share.max()), 1e-6))
-    ah.set_xticks(range(nb))
-    ah.set_xticklabels(names, fontsize=7)
-    ah.set_yticks(range(K))
-    ah.set_yticklabels([_legend_text(k, p["labels"]) for k in range(K)], fontsize=6.5)
-    for i in range(nb):
-        for k in range(K):
-            ah.text(i, k, f"{share[i, k]:.2f}", ha="center", va="center", fontsize=5.5,
-                    color="w" if share[i, k] > 0.5 * share.max() else "k")
-    fig.colorbar(im, ax=ah, fraction=0.03, pad=0.01, label="share of fixes")
+    heat(ah, fig)
     unit = "month" if all(len(b) == 1 for b in bins) else "season"
     fig.suptitle(f"{p['name']}: mode by {unit} ({d['uid'].nunique()} animals)", fontsize=10, y=1.0)
     fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.975), ncol=min(K, 5), fontsize=7,
@@ -997,7 +1070,14 @@ def render_season(c, p, sel, dry_run=False):
     fig.savefig(fg, dpi=int(c.get("still_dpi", 200)), bbox_inches="tight")
     plt.close(fig)
     print("wrote", fg)
-    return out + [fg]
+    fig, ah = plt.subplots(figsize=(max(3.2, 0.75 * nb + 2.4), 0.32 * len(rows_lab) + 1.2))
+    heat(ah, fig)
+    ah.set_title(f"{p['name']}: mode share by {unit} ({d['uid'].nunique()} animals)", fontsize=8)
+    fhm = base + "_heatmap.png"
+    fig.savefig(fhm, dpi=int(c.get("still_dpi", 200)), bbox_inches="tight")
+    plt.close(fig)
+    print("wrote", fhm)
+    return out + [fg, fhm]
 
 
 def run_job(c, uids=None, dry_run=False):

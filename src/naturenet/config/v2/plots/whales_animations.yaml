@@ -113,6 +113,7 @@ animations:
   - name: reward_whale_class
     background: reward
     colour_by: class
+    reward_scale: panel        # S-2 and HIQL rewards differ in scale; 'mode' if the S-2 map is still flat
     jump_filter: {max_speed_kmh: 20}
     break_gap_h: 48
     select: {uids: ["2015_5640"], windows: {"2015_5640": ["2015-07-16", "2015-10-15"]}}
@@ -120,31 +121,40 @@ animations:
     panels:
       - {name: "SWIRL S-2+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s2",
          state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s2.npy",
-         labels_csv: "{root}/final/exploit_explore/swirl_kin_s2_k5/full_exploit_explore.csv"}
+         reward_label: "state reward (mean over previous state)",
+         labels_csv: "{root}/final/exploit_explore/swirl_kin_s2_k5/full_exploit_explore.csv",
+         mode_names: {0: reversal, 1: transit, 4: stationary}}
       - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
          state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy",
-         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv",
+         mode_names: {1: reversal, 2: stationary, 3: transit}}
   # pooled seasonality / migration: one frame per month (all 44 whales; Jul-Dec only, empty months dropped),
-  # facet grid and month x mode heatmap. colour_by: mode keeps transit (HIQL 3 / S-2 1) distinct from the other
-  # explore mode (reversal / location-error mode).
+  # facet grid and month x mode heatmap (+ heatmap-only PNG for the composite seasonal figure). Class colours as in
+  # the other figures; mode_names keep transit (HIQL 3 / S-2 1) identifiable next to the reversal (location-error)
+  # mode. Months with < 5 whales (Dec: 4) are hatched.
   - name: season_whale
     mode: season
     background: none
-    zoom: env
-    colour_by: mode
+    zoom: track
+    pad_deg: 0.5
+    colour_by: class
     jump_filter: {max_speed_kmh: 20}
     break_gap_h: 48
-    season: {bins: month, fps: 1, grid_cols: 3}
+    season: {bins: month, fps: 1, grid_cols: 3, min_animals: 5, class_rows: true}
     stills: ["Aug", "Oct", "Nov"]
     panels:
       - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
-         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv",
+         mode_names: {1: reversal, 2: stationary, 3: transit}}
       - {name: "SWIRL S-2+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s2",
-         labels_csv: "{root}/final/exploit_explore/swirl_kin_s2_k5/full_exploit_explore.csv"}
+         labels_csv: "{root}/final/exploit_explore/swirl_kin_s2_k5/full_exploit_explore.csv",
+         mode_names: {0: reversal, 1: transit, 4: stationary}}
   # QC (supplement / Limitations): the repeated-position stretch that forms HIQL mode 2 / S-2 mode 4.
   # No jump filter, so the record is shown as exported.
   - name: qc_whale_stationary
     colour_by: mode
+    clip_to_env: false         # 2015_5678 sits at the northern edge of the env grid (~40 N)
+    pad_deg: 1.5
     break_gap_h: 48
     select: {uids: ["2015_5678"], windows: {"2015_5678": ["2015-08-01", "2015-11-20"]}}
     stills: ["2015-09-15", "2015-11-15"]

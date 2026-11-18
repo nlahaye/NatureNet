@@ -1,0 +1,30 @@
+# Re-render only the four animation jobs changed in this delivery (CPU only, 2 cores each, 8 of 48 in total).
+# Run from the NatureNet src directory (config paths are relative):
+#   cd /home/nlahaye/NatureNet/src
+#   python -m sit_fuse.local_launcher run naturenet/config/v2/plots/animation_rerender_plan.yaml --dry-run
+#   python -m sit_fuse.local_launcher run naturenet/config/v2/plots/animation_rerender_plan.yaml
+#   python -m sit_fuse.local_launcher status naturenet/config/v2/plots/animation_rerender_plan.yaml
+# Outputs overwrite <root>/animations/<job>/ (whales: Blue_Whale_v2, sharks: Hammerhead_Out_v2).
+launcher:
+  state_dir: /data/nlahaye/NatureNet/launcher/animation_rerender
+  gpus: 0
+  cpus: '8'
+  retries: 0
+  poll_sec: 5
+  env:
+    PYTHONUNBUFFERED: '1'
+    MPLBACKEND: Agg
+vars:
+  py: python
+  plots: naturenet/config/v2/plots
+jobs:
+- name: anim
+  cpus: 2
+  gpu: 0
+  cmd: '{py} -m naturenet.models.irl.animate_tracks -y {plots}/{species}_animations.yaml --only {job}'
+  id_keys: [job]
+  cases:
+  - {species: whales, job: reward_whale_class}   # longest (about 180 frames x 2 panels); listed first
+  - {species: whales, job: season_whale}
+  - {species: whales, job: qc_whale_stationary}
+  - {species: sharks, job: season_hiql}

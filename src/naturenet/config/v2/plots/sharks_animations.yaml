@@ -164,11 +164,12 @@ animations:
   - name: season_hiql
     mode: season
     background: none
-    zoom: env
+    zoom: track                # env zoom made the shark tracks too small to read
+    pad_deg: 0.3
     colour_by: class
     jump_filter: {max_speed_kmh: 15}
     break_gap_h: 48
-    season: {bins: month, fps: 1, grid_cols: 4}
+    season: {bins: month, fps: 1, grid_cols: 4, min_animals: 3, class_rows: true}
     stills: ["Apr", "May", "Jan"]
     panels:
       - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
