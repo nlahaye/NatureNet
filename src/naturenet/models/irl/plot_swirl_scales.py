@@ -208,9 +208,6 @@ def plot_history(conf, tags, n_folds, path):
                 kl.append(got[1]["history_kl"])
         if not sh:
             continue
-        print(sh, kl)
-        if len(sh) == 0 or len(kl) == 0:
-            continue
         sh, kl = np.nanmean(sh, 0), np.nanmean(kl, 0)
         K, N = sh.shape
         bottom = np.zeros(K)
@@ -244,19 +241,18 @@ def plot_switch_weights(conf, tags, n_folds, path):
     fig, axes = plt.subplots(1, len(tags), figsize=(4.5 * len(tags), 3.8), squeeze=False)
     for j, t in enumerate(tags):
         blocks = {}
-        for k in range(n_folds):
-            got = _load(conf, t, k)
-            if got is None:
-                continue
+        got_all = [g for g in (_load(conf, t, k) for k in range(n_folds)) if g is not None]
+        nf = max(len(got_all), 1)                 # mean over the folds present (partial runs)
+        for got in got_all:
             r, z, _ = got
             names = list(z["phi_names"])
             W = np.abs(np.asarray(r["params"]["W1f"])).sum(1)
             u = np.abs(np.asarray(r["params"].get("hz", {}).get("u", np.zeros((1, 0))))).sum(0)
             for i, nm in enumerate(names):
                 b = blocks.setdefault(_block(nm), [0.0, 0.0])
-                b[0] += W[i] / n_folds
+                b[0] += W[i] / nf
                 if len(u):
-                    b[1] += u[i] / n_folds
+                    b[1] += u[i] / nf
         keys = list(blocks)
         x = np.arange(len(keys))
         axes[0, j].bar(x - 0.2, [blocks[b][0] for b in keys], 0.4, label="switch MLP |W|")

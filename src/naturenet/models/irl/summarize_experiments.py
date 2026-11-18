@@ -15,7 +15,8 @@ Inputs are the CSVs the per-block tools already write (any subset):
 Writes <out>_T1_baselines.csv, <out>_T2_scales.csv, <out>_T3_multiagent.csv, <out>_tables.md (all three as
 Markdown) and <out>_overview.png (test LL vs K; decision-scale gains; multi-agent gains).
 Decision rules (the test plan):
-  T2 keep    gain > 2 SE and folds_won >= 0.8 x n_folds (4 of 5)
+  T2 keep    gain > 2 SE and folds_won >= 0.8 x n_folds (4 of 5); variants with fewer folds than --expected_folds
+             (default: the most folds of any variant in the file) are "partial" (paired gain over the folds done)
   T3 effect  gain_per_step > 0, animals improved > half, and p_gain (and p_alpha / p_beta when present) < alpha;
              rows without a null are marked "screen" (positive gain) or "-" instead.
 """
@@ -63,13 +64,16 @@ def t1_baselines(path):
     return out, te
 
 
-def t2_scales(paths):
+def t2_scales(paths, expected_folds=None):
+    """expected_folds: variants with fewer folds (scales CV still running) are marked keep = "partial"."""
     rows = []
     for lab, p in paths:
         s = pd.read_csv(p).assign(dataset=lab)
         if {"gain", "gain_se", "folds_won", "n_folds"} <= set(s.columns):
-            k = (s["gain"] > 2 * s["gain_se"]) & (s["folds_won"] >= np.ceil(0.8 * s["n_folds"]))
+            nf = int(expected_folds) if expected_folds else int(s["n_folds"].max())
+            k = (s["gain"] > 2 * s["gain_se"]) & (s["folds_won"] >= np.ceil(0.8 * nf))
             s["keep"] = np.where(s["variant"] == "N1", "ref", np.where(k, "yes", "no"))
+            s.loc[(s["n_folds"] < nf) & (s["variant"] != "N1"), "keep"] = "partial"
         rows.append(s)
     if not rows:
         return pd.DataFrame()
@@ -170,11 +174,12 @@ def main():
     ap.add_argument("--ma_compare", nargs="*", default=[])
     ap.add_argument("--ma_scales", nargs="*", default=[])
     ap.add_argument("--alpha", type=float, default=0.05)
+    ap.add_argument("--expected_folds", type=int, default=None, help="T2: folds of a complete variant (e.g. 5)")
     a = ap.parse_args()
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     t1, te = t1_baselines(a.ll_summary) if a.ll_summary else (pd.DataFrame(), None)
     sp = [tuple(s.split("=", 1)) if "=" in s else (os.path.basename(s).split("_")[0], s) for s in a.scales_summary]
-    t2 = t2_scales(sp)
+    t2 = t2_scales(sp, a.expected_folds)
     t3 = t3_multiagent(a.ma_compare, a.ma_scales, a.alpha)
     md = []
     for name, t, title in (("T1_baselines", t1, "T1. Single-agent baselines: held-out LL per step"),
