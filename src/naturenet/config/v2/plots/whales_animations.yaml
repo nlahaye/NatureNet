@@ -1,0 +1,72 @@
+# Track animations for representative whales (v2, kinematic tools). Run from src/naturenet (P=config/v2/plots):
+#   python -m naturenet.models.irl.animate_tracks -y $P/whales_animations.yaml --dry-run
+#   python -m naturenet.models.irl.animate_tracks -y $P/whales_animations.yaml [--only kin_finals]
+# Jobs whose inputs do not exist yet (unfinished scales / multi-agent runs) are skipped with a message.
+# Every panel of a job shows the same animal(s) and time window (chosen on the first panel).
+root: "/data/nlahaye/NatureNet/Blue_Whale_v2"
+out_dir: "{root}/animations/"
+dfs_pkl: "{root}/SWIRL_WHALE_1517_dfs.pkl"
+df_run_uid: "SWIRL_WHALE_1517"
+env_maps: "{root}/env_clusters/final_env_maps_SWIRL_WHALE_1517.pkl"
+env_meta_json: "/data/nlahaye/NatureNet_Env/Copernicus/v2/whales/whales_env_meta.json"
+background: env            # env | reward | none
+zoom: track
+pad_deg: 1.0
+fps: 4
+dpi: 110
+format: gif                # gif | mp4 (ffmpeg)
+select: {n: 3, strategy: coverage, max_frames: 240, window: best, min_fixes: 60}
+
+animations:
+  # 1. single-animal kinematic finals: HIQL K=5 (primary) next to SWIRL S-2 K=5 (secondary)
+  - name: kin_finals
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy"}
+      - {name: "SWIRL S-2+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s2",
+         state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s2.npy"}
+  # 1b. one whale per HIQL mode, reward of the decoded mode as background
+  - name: kin_hiql_by_mode
+    background: reward
+    select: {strategy: by_mode, max_frames: 160}
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy"}
+  # 2. decision scales (out-of-fold decoding, 5 test folds): N1 vs the scale layers that gained
+  - name: scales_hiql
+    panels:
+      - {name: "HIQL N1", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "HIQL N1+R2", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_R2_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "HIQL N1+dur", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_dur-logi12_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+  # kept for the decision-environment analysis: history (destination) and transition-scale (order 2) views
+  - name: scales_hiql_context
+    panels:
+      - {name: "HIQL N1", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "HIQL N1+hist+dur", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_hist-lags+decay_dur-logi12_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "HIQL N2", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N2_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+  - name: scales_swirl
+    panels:
+      - {name: "SWIRL N1", kind: latents, path: "{root}/scales_kin/WHALE_SWIRL_SCALES_KIN_SC_N1_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "SWIRL N1+hist", kind: latents, path: "{root}/scales_kin/WHALE_SWIRL_SCALES_KIN_SC_N1_hist-lags+decay_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "SWIRL N2 (S-2 analogue)", kind: latents, path: "{root}/scales_kin/WHALE_SWIRL_SCALES_KIN_SC_N2_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+  # 3. multi-agent (full-data fits written by the multi-agent K-fold run): independent vs coupled intentions
+  - name: ma_hiql
+    mode: multi
+    select: {window_days: 45, frame_days: 1, max_animals: 12, max_gap_days: 3}
+    panels:
+      - {name: "HIQL K=5 independent", kind: multiagent, path: "{root}/multiagent/multiagent_kin/ma_final_K5.npz", fit: indep}
+      - {name: "HIQL K=5 coupled (temporal)", kind: multiagent, path: "{root}/multiagent/multiagent_kin/ma_final_K5.npz", fit: temporal}
+      - {name: "HIQL K=5 coupled (proximity)", kind: multiagent, path: "{root}/multiagent/multiagent_kin/ma_final_K5.npz", fit: proximity}
+  - name: ma_scales_hiql
+    mode: multi
+    select: {window_days: 45, frame_days: 1, max_animals: 12}
+    panels:
+      - {name: "S1_N1 independent", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_hiql_scales_S1_N1/ma_final_K5.npz", fit: indep}
+      - {name: "S1_N1 coupled", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_hiql_scales_S1_N1/ma_final_K5.npz", fit: temporal}
+      - {name: "S2_N1_R2 coupled", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_hiql_scales_S2_N1_R2/ma_final_K5.npz", fit: temporal}
+  - name: ma_scales_swirl
+    mode: multi
+    select: {window_days: 45, frame_days: 1, max_animals: 12}
+    panels:
+      - {name: "SWIRL S1_N2 independent", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_swirl_scales_S1_N2/ma_final_K5.npz", fit: indep}
+      - {name: "SWIRL S1_N2 coupled", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_swirl_scales_S1_N2/ma_final_K5.npz", fit: temporal}
