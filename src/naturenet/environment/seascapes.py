@@ -38,6 +38,7 @@ import pandas as pd
 import yaml
 
 from naturenet.environment.cmems_env.grid import Grid
+from naturenet.environment.proj_env import ensure_proj_data
 
 CLASS_NAMES = [
     "NORTH_ATLANTIC_SPRING_ACC_TRANSITION", "SUBPOLAR_TRANSITION", "TROPICAL_SUBTROPICAL_TRANSITION",
@@ -284,6 +285,7 @@ def coast_fill(arr, n_cells):
 
 
 def write_tif(path, arr, grid):
+    ensure_proj_data(verbose=True)     # a PROJ_DATA without proj.db breaks EPSG lookups
     import rasterio
     from rasterio.transform import Affine
     prof = dict(driver="GTiff", height=grid.ny, width=grid.nx, count=1, dtype="int16", nodata=NODATA,
@@ -329,6 +331,7 @@ def regrid(conf):
 # ---------------------------------------------------------------------------
 
 def _read_tif(path):
+    ensure_proj_data()
     import rasterio
     with rasterio.open(path) as ds:
         return ds.read(1)

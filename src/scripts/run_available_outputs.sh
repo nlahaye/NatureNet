@@ -46,6 +46,9 @@ GPUS_YAML="[${GPUS%,}]"; case "$GPUS" in auto|none) GPUS_YAML="$GPUS" ;; esac
 EXPECTED_FOLDS="${EXPECTED_FOLDS:-5}"
 LEVELS="${LEVELS:-parent k30 k20 k12}"
 cd "$NN_SRC"
+# PROJ_DATA / PROJ_LIB without proj.db (pixi / conda activation) breaks rasterio EPSG lookups; point it at a valid
+# proj.db for every stage and launcher job (inherited env). No-op when the current value is fine.
+eval "$("$PY" -m naturenet.environment.proj_env --export 2>/dev/null || true)"
 C=naturenet/config/v2/swirl
 T=naturenet/config/v2/time_series
 D=naturenet/config/v2/drivers
