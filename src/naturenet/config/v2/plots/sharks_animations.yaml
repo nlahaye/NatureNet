@@ -97,3 +97,103 @@ animations:
     panels:
       - {name: "SWIRL S1_N1 coupled", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_swirl_scales_S1_N1/ma_final_K5.npz", fit: temporal}
       - {name: "SWIRL S1_N2 coupled", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_swirl_scales_S1_N2/ma_final_K5.npz", fit: temporal}
+
+  # ---------------------------------------------------------------------------------------------------------------
+  # 4. Figure renders (manuscript Figure 2 / Appendix G). Same behaviour = same colour family in every panel:
+  #    exploit = blues, explore = reds, ambiguous = greys (colour_by: class); labels from the series-based
+  #    exploit_explore_init tables (labels_csv), Argos jumps > 15 km/h dropped from the drawing, lines broken at
+  #    gaps > 48 h, PNG stills at fixed dates. Quick figure re-render without gifs: add --stills-only.
+  - name: fig2_hiql_class
+    colour_by: class
+    jump_filter: {max_speed_kmh: 15}
+    break_gap_h: 48
+    p_exploit: "off"
+    select: {uids: ["222133", "200368"],
+             windows: {"222133": ["2022-12-28", "2023-05-01"], "200368": ["2021-04-22", "2021-06-04"]}}
+    stills: ["2023-04-01", "2021-05-20", -1]
+    still_dpi: 220
+    still_panels: true
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+  - name: kin_finals_class
+    colour_by: class
+    jump_filter: {max_speed_kmh: 15}
+    break_gap_h: 48
+    align_modes: true          # S-1 / S-2 mode numbers relabelled to the matching HIQL modes (shared steps)
+    select: {uids: ["222133", "200368", "183623"],
+             windows: {"222133": ["2022-12-28", "2023-05-01"], "200368": ["2021-04-22", "2021-06-04"]}}
+    stills: [-1]
+    still_panels: true
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+      - {name: "SWIRL S-1+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s1",
+         state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s1.npy",
+         labels_csv: "{root}/final/exploit_explore/sharks_swirl_kin_s1_k5/full_exploit_explore.csv"}
+      - {name: "SWIRL S-2+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s2",
+         state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s2.npy",
+         labels_csv: "{root}/final/exploit_explore/sharks_swirl_kin_s2_k5/full_exploit_explore.csv"}
+  - name: kin_hiql_k2_vs_k5
+    colour_by: class
+    jump_filter: {max_speed_kmh: 15}
+    break_gap_h: 48
+    select: {uids: ["222133", "200368"]}
+    stills: [-1]
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+      # K=2 labels: the fitted-parameter labeller called both modes ambiguous (speed / persistence cancel at K=2);
+      # the series-based table (or a rerun with the new speed fallback) gives explore / exploit
+      - {name: "HIQL+kin K=2", kind: series, path: "{root}/final/hiql_kin_k2/plots/series_hiavi_s1",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k2/full_exploit_explore.csv"}
+  - name: hiql_reward_class
+    background: reward
+    colour_by: class
+    jump_filter: {max_speed_kmh: 15}
+    break_gap_h: 48
+    select: {uids: ["222133"], windows: {"222133": ["2022-12-28", "2023-05-01"]}}
+    stills: ["2023-04-01", -1]
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+  # pooled seasonality: one frame per calendar month (all 9 sharks) + facet grid and month x mode heatmap
+  - name: season_hiql
+    mode: season
+    background: none
+    zoom: env
+    colour_by: class
+    jump_filter: {max_speed_kmh: 15}
+    break_gap_h: 48
+    season: {bins: month, fps: 1, grid_cols: 4}
+    stills: ["Apr", "May", "Jan"]
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+      - {name: "SWIRL S-1+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s1",
+         labels_csv: "{root}/final/exploit_explore/sharks_swirl_kin_s1_k5/full_exploit_explore.csv"}
+  # decision-scale variants with mode numbers aligned to N1 (Appendix Figure G1)
+  - name: scales_hiql_k5_aligned
+    align_modes: true
+    jump_filter: {max_speed_kmh: 15}
+    break_gap_h: 48
+    select: {uids: ["183623"]}
+    stills: [-1]
+    panels:
+      - {name: "HIQL K=5 N1", kind: latents, path: "{root}/scales_kin/HIQL_SCALES_KIN_K5_SC_N1_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "HIQL K=5 N1+R2", kind: latents, regime: true, path: "{root}/scales_kin/HIQL_SCALES_KIN_K5_SC_N1_R2_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "HIQL K=5 N1+dur", kind: latents, path: "{root}/scales_kin/HIQL_SCALES_KIN_K5_SC_N1_dur-logi12_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+  - name: scales_swirl_aligned
+    align_modes: true
+    jump_filter: {max_speed_kmh: 15}
+    break_gap_h: 48
+    select: {uids: ["183623"]}
+    stills: [-1]
+    panels:
+      - {name: "SWIRL N1", kind: latents, path: "{root}/scales_kin/SHARK_SWIRL_SCALES_KIN_SC_N1_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "SWIRL N1+dur", kind: latents, path: "{root}/scales_kin/SHARK_SWIRL_SCALES_KIN_SC_N1_dur-logi12_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "SWIRL N1+hist", kind: latents, path: "{root}/scales_kin/SHARK_SWIRL_SCALES_KIN_SC_N1_hist-lags+decay_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "SWIRL N2 (order test)", kind: latents, path: "{root}/scales_kin/SHARK_SWIRL_SCALES_KIN_SC_N2_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}

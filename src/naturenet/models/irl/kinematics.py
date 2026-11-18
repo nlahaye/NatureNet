@@ -473,7 +473,8 @@ def intention_table(km, step_feature="speed_kmh"):
                              persistence=km.persistence(), step_feature=step_feature))
 
 
-def kinematic_labels(km, step_feature="speed_kmh", speed_threshold=None, persistence_threshold=None, margin=0.5):
+def kinematic_labels(km, step_feature="speed_kmh", speed_threshold=None, persistence_threshold=None, margin=0.5,
+                     fallback="speed"):
     """
     exploit / explore / ambiguous per intention from the fitted kinematics. Uses the same rule as
     exploit_explore_init.classify_exploit_explore with speed_median := fitted median step feature and
@@ -486,13 +487,14 @@ def kinematic_labels(km, step_feature="speed_kmh", speed_threshold=None, persist
     st = speed_threshold if step_feature == "speed_kmh" else None
     if speed_threshold is not None and st is None:
         print("NOTE: label_speed_threshold is in km/h; ignored for step_feature", step_feature)
-    m = classify_exploit_explore(m, st, persistence_threshold if st is not None else None, margin)
+    m = classify_exploit_explore(m, st, persistence_threshold if st is not None else None, margin, fallback=fallback)
     return m.drop(columns=["speed_median"]).rename(columns={"class": "label"})
 
 
 def labels_from_conf(km, cfg):
     return kinematic_labels(km, cfg["step_feature"], cfg.get("label_speed_threshold"),
-                            cfg.get("label_persistence_threshold"), float(cfg.get("label_margin", 0.5)))
+                            cfg.get("label_persistence_threshold"), float(cfg.get("label_margin", 0.5)),
+                            fallback=cfg.get("label_fallback", "speed"))
 
 
 def p_exploit(gamma, labels):

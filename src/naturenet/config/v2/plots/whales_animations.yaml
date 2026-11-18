@@ -70,3 +70,109 @@ animations:
     panels:
       - {name: "SWIRL S1_N2 independent", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_swirl_scales_S1_N2/ma_final_K5.npz", fit: indep}
       - {name: "SWIRL S1_N2 coupled", kind: multiagent, path: "{root}/multiagent_scales_kin/multiagent_swirl_scales_S1_N2/ma_final_K5.npz", fit: temporal}
+
+  # ---------------------------------------------------------------------------------------------------------------
+  # 4. Figure renders (manuscript Figure 2 whale panels / Appendix G). Same conventions as sharks_animations.yaml:
+  #    colour_by: class (exploit = blues, explore = reds, ambiguous = greys), labels from the series-based
+  #    exploit_explore_init tables (the exported series latent_class / p_exploit are degenerate for whales: HIQL modes
+  #    0, 1, 4 'ambiguous', p_exploit 0), Argos jumps > 20 km/h dropped from the drawing (about 15% of whale fixes),
+  #    lines broken at gaps > 48 h. Quick re-render without gifs: --stills-only.
+  #    2015_5640: longest track (Jul-Dec 2015, 36.8 -> 22.8 N); 2017_841: Jul-Dec 2017 to 22 N.
+  - name: fig2_whale_class
+    colour_by: class
+    jump_filter: {max_speed_kmh: 20}
+    break_gap_h: 48
+    p_exploit: "off"
+    select: {uids: ["2015_5640", "2017_841"],
+             windows: {"2015_5640": ["2015-07-16", "2015-12-22"], "2017_841": ["2017-07-11", "2017-12-07"]}}
+    stills: ["2015-08-20", "2015-11-10", "2017-08-20", "2017-11-10", -1]
+    still_dpi: 220
+    still_panels: true
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+  - name: kin_finals_whale_class
+    colour_by: class
+    jump_filter: {max_speed_kmh: 20}
+    break_gap_h: 48
+    p_exploit: "off"
+    align_modes: true          # S-2 / S-1 mode numbers relabelled to the matching HIQL modes (shared steps)
+    select: {uids: ["2015_5640", "2017_841"],
+             windows: {"2015_5640": ["2015-07-16", "2015-12-22"], "2017_841": ["2017-07-11", "2017-12-07"]}}
+    stills: [0.5, -1]
+    still_panels: true
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+      - {name: "SWIRL S-2+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s2",
+         labels_csv: "{root}/final/exploit_explore/swirl_kin_s2_k5/full_exploit_explore.csv"}
+      - {name: "SWIRL S-1+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s1",
+         labels_csv: "{root}/final/exploit_explore/swirl_kin_s1_k5/full_exploit_explore.csv"}
+  # reward backgrounds: S-2 is the whale tool whose rewards are predictable from the environment (Figure 4)
+  - name: reward_whale_class
+    background: reward
+    colour_by: class
+    jump_filter: {max_speed_kmh: 20}
+    break_gap_h: 48
+    select: {uids: ["2015_5640"], windows: {"2015_5640": ["2015-07-16", "2015-10-15"]}}
+    stills: ["2015-08-20", -1]
+    panels:
+      - {name: "SWIRL S-2+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s2",
+         state_reward: "{root}/final/swirl_kin/plots/state_reward_linear_s2.npy",
+         labels_csv: "{root}/final/exploit_explore/swirl_kin_s2_k5/full_exploit_explore.csv"}
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         state_reward: "{root}/final/hiql_kin/plots/state_reward_hiavi_s1.npy",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+  # pooled seasonality / migration: one frame per month (all 44 whales; Jul-Dec only, empty months dropped),
+  # facet grid and month x mode heatmap. colour_by: mode keeps transit (HIQL 3 / S-2 1) distinct from the other
+  # explore mode (reversal / location-error mode).
+  - name: season_whale
+    mode: season
+    background: none
+    zoom: env
+    colour_by: mode
+    jump_filter: {max_speed_kmh: 20}
+    break_gap_h: 48
+    season: {bins: month, fps: 1, grid_cols: 3}
+    stills: ["Aug", "Oct", "Nov"]
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+      - {name: "SWIRL S-2+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s2",
+         labels_csv: "{root}/final/exploit_explore/swirl_kin_s2_k5/full_exploit_explore.csv"}
+  # QC (supplement / Limitations): the repeated-position stretch that forms HIQL mode 2 / S-2 mode 4.
+  # No jump filter, so the record is shown as exported.
+  - name: qc_whale_stationary
+    colour_by: mode
+    break_gap_h: 48
+    select: {uids: ["2015_5678"], windows: {"2015_5678": ["2015-08-01", "2015-11-20"]}}
+    stills: ["2015-09-15", "2015-11-15"]
+    panels:
+      - {name: "HIQL+kin K=5", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1",
+         labels_csv: "{root}/final/exploit_explore/hiql_kin_k5/full_exploit_explore.csv"}
+      - {name: "SWIRL S-2+kin K=5", kind: series, path: "{root}/final/swirl_kin/plots/series_linear_s2",
+         labels_csv: "{root}/final/exploit_explore/swirl_kin_s2_k5/full_exploit_explore.csv"}
+  # decision-scale variants with mode numbers aligned to N1 (Appendix G). The SWIRL order effect (N2 / N3 gain
+  # +0.08 / +0.09 in 5/5 folds) is the main new whale scale result.
+  - name: scales_swirl_order_aligned
+    align_modes: true
+    jump_filter: {max_speed_kmh: 20}
+    break_gap_h: 48
+    select: {uids: ["2015_5640"]}
+    stills: [-1]
+    panels:
+      - {name: "SWIRL S-1 N1", kind: latents, path: "{root}/scales_kin/WHALE_SWIRL_SCALES_KIN_SC_N1_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "SWIRL S-1 N2", kind: latents, path: "{root}/scales_kin/WHALE_SWIRL_SCALES_KIN_SC_N2_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "SWIRL S-1 N3", kind: latents, path: "{root}/scales_kin/WHALE_SWIRL_SCALES_KIN_SC_N3_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "SWIRL S-1 N1+hist+dur", kind: latents, path: "{root}/scales_kin/WHALE_SWIRL_SCALES_KIN_SC_N1_hist-lags+decay_dur-logi12_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+  - name: scales_hiql_whale_aligned
+    align_modes: true
+    jump_filter: {max_speed_kmh: 20}
+    break_gap_h: 48
+    select: {uids: ["2015_5640"]}
+    stills: [-1]
+    panels:
+      - {name: "HIQL K=5 N1", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "HIQL K=5 N1+R2", kind: latents, regime: true, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_R2_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+      - {name: "HIQL K=5 N1+dur", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_dur-logi12_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
