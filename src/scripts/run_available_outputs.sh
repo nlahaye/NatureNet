@@ -44,7 +44,9 @@
 #        root), NN_SRC, PY, HPY (python for the small yaml / glob helpers; default PY), SFC (SIT-FUSE config dir;
 #        default from the installed sit_fuse), LEVELS (default "parent k30 k20 k12"), LEVELS_SWIRL, LEVEL_FINAL, NH,
 #        EXPECTED_FOLDS (default 5), DRY=1 (write plans + launcher dry runs only), STEP20_FITS (default 1), MA_STAGE
-#        (step 20 multi-agent: screen | full; default screen), REMAKE_XAI=1 (regenerate the SIT-FUSE xai yaml).
+#        (step 20 multi-agent: screen | full; default screen), REMAKE_XAI=1 (regenerate the SIT-FUSE xai yaml),
+#        RERUN_FAILED=1 (retry launcher jobs marked failed by an earlier run; otherwise they and their dependents
+#        are skipped, e.g. a level whose env_format failed never gets its class mapper).
 set -euo pipefail
 SP="${SP:?set SP=whales or SP=sharks (or use run_available_outputs_<sp>.sh)}"
 STAGE="${STAGE:-all}"
@@ -59,6 +61,7 @@ case "$GPUS" in *,*|auto|none) ;; *) GPUS="$GPUS," ;; esac   # one id needs a tr
 GPUS_YAML="[${GPUS%,}]"; case "$GPUS" in auto|none) GPUS_YAML="$GPUS" ;; esac
 EXPECTED_FOLDS="${EXPECTED_FOLDS:-5}"
 LEVELS="${LEVELS:-parent k30 k20 k12}"
+RERUN=""; [ "${RERUN_FAILED:-0}" = "1" ] && RERUN="--rerun-failed"   # retry jobs a previous launcher run marked failed
 cd "$NN_SRC"
 # PROJ_DATA / PROJ_LIB without proj.db (pixi / conda activation) breaks rasterio EPSG lookups; point it at a valid
 # proj.db for every stage and launcher job (inherited env). No-op when the current value is fine.
@@ -140,7 +143,8 @@ launch() {   # plan [extra launcher args]: dry run summary, then run unless DRY=
   "$PY" -m sit_fuse.local_launcher run "$plan" --dry-run --gpus "$GPUS" --cpus "$CPUS" "$@" \
     | awk '/WARNING/ && w++ < 5; /^\[/ {n++} END {print n " jobs in the launcher dry run"}'
   [ "${DRY:-0}" = "1" ] && return 0
-  "$PY" -m sit_fuse.local_launcher run "$plan" --gpus "$GPUS" --cpus "$CPUS" "$@"
+  "$PY" -m sit_fuse.local_launcher run "$plan" --gpus "$GPUS" --cpus "$CPUS" $RERUN "$@" \
+    || echo "WARNING: $(basename "$plan"): some jobs failed or were blocked (status: python -m sit_fuse.local_launcher status $plan)"
 }
 ykey() {     # yaml dotted.key -> value ("" if missing)
   "$HPY" -c 'import sys, yaml
@@ -435,10 +439,16 @@ fi
 
 # ----------------------------------------------------------------------------- levels (step 16) / seascape (17)
 # one plan per species and level set: per level link -> env_format -> sync -> abstract_env, then the HIQL / IAVI sweep
+level_mapper() { ykey "$L/$SP/$1/sync.yaml" class_mapper 2>/dev/null || true; }
 level_env_plan() {   # plan state_name levels...
   local plan="$1" st="$2"; shift 2
   local cases=() lv
+  local m j
   for lv in "$@"; do
+    m=$(level_mapper "$lv")
+    if [ -n "$m" ] && [ ! -f "$m" ] && [ "${DRY:-0}" != "1" ]; then   # done-marked but no mapper: stale, redo
+      for j in env_format sync abstract_env; do rm -f "$S/$st/markers/$j.lv$lv.done"; done
+    fi
     if [ -f "$L/$SP/$lv/link.yaml" ]; then cases+=("      - {lv: $lv}")
     else echo "SKIP level $lv (no $L/$SP/$lv/link.yaml; rerun make_level_configs after editing the spec)"; fi
   done
@@ -496,9 +506,37 @@ level_sweep() {      # tag levels...: HIQL / IAVI sweep (plan_jobs; runners skip
   if [ "${DRY:-0}" = "1" ]; then echo "would run plot_ll_comparison -y $L/$SP/ll_comparison_levels.yaml"
   else cpu $N.irl.plot_ll_comparison -y "$L/$SP/ll_comparison_levels.yaml" || echo "SKIP level LL plot"; fi
 }
-level_ready() {      # the level's sync target exists (env_format has run): only then the sweep is planned
-  local m; m=$(ykey "$L/$SP/$1/sync.yaml" class_mapper 2>/dev/null || true)
-  [ -z "$m" ] || [ -f "$m" ]
+level_synced() {     # every generated run config of the level has n_states filled
+  local f n
+  for f in "$L/$SP/$1"/*.yaml; do
+    case "$(basename "$f")" in link.yaml|env_format.yaml|abstract_env.yaml|sync.yaml|null.yaml) continue ;; esac
+    grep -q '^n_states:' "$f" || continue
+    n=$(ykey "$f" n_states); [ -n "$n" ] || return 1
+  done
+}
+sync_levels() {      # state_name levels...: sync every level whose class mapper exists. make_level_configs rewrites
+  # n_states: null on every run and the launcher's sync job stays done-marked, so this always runs (cheap, idempotent)
+  local st="$1" lv m f; shift
+  for lv in "$@"; do
+    [ -f "$L/$SP/$lv/sync.yaml" ] || continue
+    m=$(level_mapper "$lv")
+    if [ -n "$m" ] && [ -f "$m" ]; then
+      if [ "${DRY:-0}" = "1" ]; then echo "would sync $lv"
+      else "$PY" -m naturenet.environment.sync_v2_configs patch -y "$L/$SP/$lv/sync.yaml" > /dev/null \
+             && echo "synced $lv" || echo "WARNING: sync failed for $lv"; fi
+    else
+      echo "NOT BUILT $lv: no $m (env_format has not finished for this level)"
+      for f in "$S/$st/markers/link.lv$lv.failed" "$S/$st/markers/env_format.lv$lv.failed"; do
+        [ -e "$f" ] || continue
+        echo "     $(basename "${f%%.*}") failed earlier: $S/$st/logs/$(basename "${f%.failed}").log"
+        echo "     fix the cause, then rerun with RERUN_FAILED=1 (failed jobs are otherwise skipped)"
+      done
+    fi
+  done
+}
+level_ready() {      # class mapper exists and the level's run configs are synced: only then the sweep is planned
+  local m; m=$(level_mapper "$1")
+  { [ -z "$m" ] || [ -f "$m" ]; } && level_synced "$1"
 }
 
 if want levels && [ "${SKIP_LEVELS:-0}" != "1" -o "$STAGE" = "levels" ]; then
@@ -516,10 +554,14 @@ if want levels && [ "${SKIP_LEVELS:-0}" != "1" -o "$STAGE" = "levels" ]; then
   if [ "${DRY:-0}" = "1" ]; then "$PY" -m naturenet.environment.make_level_configs -y "$L/${SP}_levels_v2.yaml" --dry_run
   else "$PY" -m naturenet.environment.make_level_configs -y "$L/${SP}_levels_v2.yaml"; fi       # 16b
   # shellcheck disable=SC2086
+  sync_levels "levels_env_${SP}" $LEVELS > /dev/null      # restore n_states of built levels (16b reset them)
+  # shellcheck disable=SC2086
   if level_env_plan "$S/available_${SP}_levels_env.yaml" "levels_env_${SP}" $LEVELS; then
     launch "$S/available_${SP}_levels_env.yaml"                                                    # 16c
   fi
-  ready=(); for lv in $LEVELS; do level_ready "$lv" && ready+=("$lv") || echo "SKIP sweep $lv (level env not built)"; done
+  # shellcheck disable=SC2086
+  sync_levels "levels_env_${SP}" $LEVELS                  # levels built just now + report the ones that are not
+  ready=(); for lv in $LEVELS; do level_ready "$lv" && ready+=("$lv") || echo "SKIP sweep $lv (level env not built or not synced)"; done
   [ ${#ready[@]} -gt 0 ] && level_sweep levels "${ready[@]}"                                       # 16d / 16e
   if [ -n "${LEVEL_FINAL:-}" ]; then                                                               # 16f (no xai)
     lv=$LEVEL_FINAL; F="$L/$SP/$lv/hiql_final.yaml"; PJ="$L/$SP/$lv/reward_env_projection_hiql.yaml"
@@ -544,6 +586,7 @@ if want seascape && [ "${SKIP_LEVELS:-0}" != "1" -o "$STAGE" = "seascape" ]; the
   if level_env_plan "$S/available_${SP}_seascape_env.yaml" "seascape_env_${SP}" seascape; then
     launch "$S/available_${SP}_seascape_env.yaml"
   fi
+  sync_levels "seascape_env_${SP}" seascape
   if level_ready seascape; then level_sweep seascape seascape; else echo "SKIP seascape sweep (level env not built)"; fi
 fi
 

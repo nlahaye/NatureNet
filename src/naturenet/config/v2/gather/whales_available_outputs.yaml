@@ -1,0 +1,77 @@
+# Whales: gather everything scripts/run_available_outputs_whales.sh produces (outputs, habitat, ll, ma, tables, levels,
+# seascape, audit) plus launcher logs and the configs, as per-group zips + MANIFEST.csv + SUMMARY.md.
+#   python -m naturenet.misc.gather_outputs -y config/v2/gather/whales_available_outputs.yaml [--dry_run] [--only g1,g2]
+# or scripts/gather_available_outputs_whales.sh. Missing roots (stages not run yet) are reported, not errors.
+vars:
+  SP: whales
+  R: "/data/nlahaye/NatureNet/Blue_Whale_v2"
+  S: "/data/nlahaye/NatureNet/launcher"          # run_available_outputs.sh S
+  PRE: whale_prescales                         # steps 20 / 21 final plan name
+  HAB: whale_prescales_habitat                                     # habitat launcher plan / state name
+  SF: "/data/nlahaye/output/Learnergy/COP_WHALE_V2"
+  SEA: "/data/nlahaye/NatureNet_Env/Seascapes/v2/whales"
+  NN: "."                                        # NatureNet src dir (the shell wrapper passes NN=$NN_SRC)
+out_dir: "/data/nlahaye/NatureNet/gathered/"     # outside the run roots, so a rerun never gathers earlier zips
+name: "{SP}_available_outputs"
+split_mb: 1900                                   # parts stay under 2 GB for upload; 0 = one zip per group
+defaults:
+  max_file_mb: 200                               # bigger files are listed as skipped in MANIFEST.csv
+  follow_symlinks: false                         # level runs symlink the fine movement files; those are inputs
+  # exts default: png pdf svg jpg gif mp4 webm html csv tsv json md txt yaml log (no npz / npy / pkl / pt / tif)
+groups:
+  # outputs stage ------------------------------------------------------------------------------------------------
+  - name: finals                                 # step 8 plots + step 11 projection, per final (kin + action-only)
+    roots: ["{R}/final"]
+    include: ["*/plots/**", "*/reward_env_projection/**", "*/*"]
+    exclude: ["*/plots/series_*/**", "exploit_explore/**", "time_series*/**", "decision_context/**"]
+  - name: final_series                           # per-animal exported series (inputs to 10 / 12 / 14b.4; can be large)
+    roots: ["{R}/final"]
+    include: ["*/plots/series_*/**"]
+  - name: exploit_explore                        # step 10
+    roots: ["{R}/final/exploit_explore"]
+  - name: time_series                            # step 12 (kinematic tools; action-only dir if present)
+    roots: ["{R}/final/time_series_kin", "{R}/final/time_series"]
+  - name: decision_context                       # step 14b.4
+    roots: ["{R}/final/decision_context"]
+  - name: scales                                 # step 6b: <run_uid>_scales_* figures + summaries, cv tables
+    roots: ["{R}/scales_kin", "{R}/scales"]
+  - name: animations                             # step 8b: base + auto jobs (mp4 / gif / stills, auto_animations.yaml)
+    roots: ["{R}/animations"]
+  # habitat / ll / ma / tables stages ------------------------------------------------------------------------------
+  - name: habitat                                # step 11h
+    roots: ["{R}/drivers/habitat_tests"]
+    exclude: ["lagged_inputs*/**"]               # lagged env inputs, not results
+  - name: ll                                     # steps 5 / 5b
+    roots: ["{R}/ll_comparison", "{R}/ll_comparison_kin_nn"]
+  - name: multiagent                             # 14, 14b compare, multi-agent scales
+    roots: ["{R}/multiagent", "{R}/multiagent_scales_kin"]
+  - name: tables                                 # step 13: T1-T3 (+ ma_compare csvs)
+    roots: ["{R}/manuscript_kin"]
+  # levels / seascape stages ---------------------------------------------------------------------------------------
+  - name: levels                                 # step 16: level LL plot, per-level CV tables, 16f plots / projection
+    roots: ["{R}/levels"]
+  - name: seascape                               # step 17a report / regrid summaries (tifs left out by exts)
+    roots: ["{SEA}"]
+  - name: seascape_xai                           # 17b agreement tables per level + summary, 17c class profiles
+    roots: ["{SF}/xai"]
+    include: ["reference_agreement_levels.*", "interpret*/reference_*", "interpret_seascape/**"]
+  - name: sitfuse_hierarchy                      # step 16a cut summary / hierarchy json
+    roots: ["{SF}/hierarchy"]
+  # audit + launcher -----------------------------------------------------------------------------------------------
+  - name: audit
+    roots: ["{R}/audit_pipeline"]
+  - name: launcher                               # plans, status.csv, job logs and done / failed markers
+    roots: ["{S}/available_outputs_{SP}.yaml", "{S}/available_outputs_{SP}", "{S}/{HAB}.yaml", "{S}/{HAB}",
+            "{S}/available_{SP}_levels_env.yaml", "{S}/levels_env_{SP}", "{S}/available_{SP}_levels_sweep.yaml",
+            "{S}/levels_{SP}", "{S}/available_{SP}_seascape_env.yaml", "{S}/seascape_env_{SP}",
+            "{S}/available_{SP}_seascape_sweep.yaml", "{S}/available_{SP}_seascape_xai.yaml",
+            "{S}/available_{SP}_seascape_xai", "{S}/gather_status_{SP}.txt",
+            # steps 20 / 21 (species scripts; whales: whale_prescales_*, sharks: shark_swirl_kin_*; shared CV state dirs)
+            "{S}/{PRE}_final.yaml", "{S}/{PRE}_final", "{S}/scales_kin_tools",
+            "{S}/ma_kin_tools"]
+    include: ["*.yaml", "status.csv", "logs/*", "markers/*"]
+    exts: []                                     # markers have no extension
+  - name: configs                                # the v2 configs these outputs came from (reproducibility)
+    roots: ["{NN}/naturenet/config/v2"]
+    include: ["*/{SP}_*", "levels/{SP}/**", "levels/{SP}_*"]
+    exts: [yaml, yml, json]
