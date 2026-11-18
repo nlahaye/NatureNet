@@ -23,6 +23,9 @@ Environment levels (sit_fuse_output: True; SIT-FUSE sit_fuse.postprocessing.clus
                  parent    first-stage cluster = fine // num_child (label_input: fine), or the no_heir rasters as
                            they are (label_input: parent, scene_file_template -> <scene>.no_heir.clust.data_*)
                  coarse    parent -> agglomerated cluster from hierarchy_json cut level_k
+                 categorical  any integer class raster as it is, e.g. MBON Seascapes from
+                           naturenet.environment.seascapes (cluster_scale: 1, zero_label_valid: False since class
+                           0 / -1 = no class); exclude_classes: [..] are set invalid (absorbing)
   num_child (5 = SIT-FUSE cluster.heir.num_classes), label_input (fine | parent), hierarchy_json, level_k,
   unmapped_parent (error | invalid). The class mapper keys are the level ids; <output_uid>_level.json records
   the level settings. Use one out_dir / output_uid per level.
@@ -405,7 +408,7 @@ def _quantise(arr, scale, zero_valid=False):
     return q
 
 
-LEVELS = ("fine", "parent", "coarse")
+LEVELS = ("fine", "parent", "coarse", "categorical")
 
 
 def level_spec(yml_conf):
@@ -415,11 +418,14 @@ def level_spec(yml_conf):
         raise ValueError(f"cluster_level must be one of {LEVELS}, got {lv}")
     spec = dict(level=lv, num_child=int(yml_conf.get("num_child", 5)), label_input=yml_conf.get("label_input", "fine"),
                 scale=yml_conf.get("cluster_scale", 1000), zero_valid=bool(yml_conf.get("zero_label_valid", False)),
-                unmapped=yml_conf.get("unmapped_parent", "error"), level_k=None, hierarchy_json=None, keys=None)
+                unmapped=yml_conf.get("unmapped_parent", "error"), level_k=None, hierarchy_json=None, keys=None,
+                exclude=[int(c) for c in (yml_conf.get("exclude_classes") or [])])
     if spec["label_input"] not in ("fine", "parent"):
         raise ValueError("label_input must be fine | parent")
-    if lv == "fine" and spec["label_input"] != "fine":
-        raise ValueError("cluster_level fine needs fine (heir) rasters (label_input: fine)")
+    if lv in ("fine", "categorical") and spec["label_input"] != "fine":
+        raise ValueError(f"cluster_level {lv} reads the rasters as they are (label_input: fine)")
+    if spec["exclude"] and lv != "categorical":
+        raise ValueError("exclude_classes is for cluster_level: categorical")
     if lv == "coarse":
         spec["hierarchy_json"], spec["level_k"] = yml_conf["hierarchy_json"], int(yml_conf["level_k"])
         with open(spec["hierarchy_json"]) as f:
@@ -440,6 +446,10 @@ def level_ids(arr, spec):
     """Raster -> int64 ids at the configured level, -1 = invalid."""
     q = _quantise(arr, spec["scale"], spec["zero_valid"])
     if spec["level"] == "fine":
+        return q
+    if spec["level"] == "categorical":
+        if spec.get("exclude"):
+            q[np.isin(q, spec["exclude"])] = -1
         return q
     par = q if spec["label_input"] == "parent" else np.where(q >= 0, q // spec["num_child"], -1)
     if spec["level"] == "parent":
@@ -508,7 +518,7 @@ def compress_clusters(yml_conf):
     with open(os.path.join(out_dir, output_uid + "_class_mapper.pkl"), "wb") as f:
         pickle.dump(mapper, f, protocol=pickle.HIGHEST_PROTOCOL)
     info = {k: scale[k] for k in ("level", "num_child", "label_input", "scale", "zero_valid", "level_k",
-                                  "hierarchy_json", "unmapped")}
+                                  "hierarchy_json", "unmapped", "exclude")}
     info.update(n_clusters=int(len(keys)), level_ids=[int(k) for k in keys])
     with open(os.path.join(out_dir, output_uid + "_level.json"), "w") as f:
         json.dump(info, f, indent=1)
@@ -579,7 +589,7 @@ def merge_compressed_maps(yml_conf):
 def run(yml_conf):
     """Full step: match tracks to scenes, (sit_fuse_output) relabel cluster ids 0..K-1, merge per-key pickles."""
     if (yml_conf.get("cluster_level") or "fine") != "fine" and not yml_conf.get("sit_fuse_output", False):
-        raise ValueError("cluster_level parent / coarse needs sit_fuse_output: True")
+        raise ValueError("cluster_level parent / coarse / categorical needs sit_fuse_output: True (id relabelling)")
     level_spec(yml_conf)             # fail early on a bad level / hierarchy before matching tracks
     gen_scene_list(yml_conf)
     if yml_conf.get("sit_fuse_output", False) and not yml_conf.get("store_paths", False):
