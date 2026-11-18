@@ -1,0 +1,27 @@
+# MBON / NOAA Seascapes (8-day, 5 km) on the sharks cmems_env scene grid, one class raster per scene.
+#   python -m naturenet.environment.seascapes all -y config/v2/environment/sharks_seascapes_v2.yaml
+# Used as the "seascape" environment level (config/v2/levels/sharks_levels_v2.yaml) and as the SIT-FUSE
+# cluster_interpret reference (xai block: interpret.reference.seascapes).
+tag: sharks
+erddap: "https://cwcgom.aoml.noaa.gov/erddap"
+dataset_id: noaa_aoml_seascapes_8day      # monthly: noaa_aoml_4729_9ee6_ab54 with period_days: 31, time_stamp: centre (stamps on the 15th)
+variables: [CLASS, P]
+period_days: 8
+time_stamp: start                         # 8-day stamps fall on day-of-year 8k + 1 (composite start dates)
+env_meta_json: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_env_meta.json"      # scene grid
+scene_index_csv: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_scene_index.csv"  # t, date
+complete_scenes_only: True                # same scenes as the SIT-FUSE clusters
+raw_dir: "/data/nlahaye/NatureNet_Env/Seascapes/raw/"
+out_dir: "/data/nlahaye/NatureNet_Env/Seascapes/v2/sharks/"
+out_template: "{out_dir}/seascape_{tag}_t{t}.tif"
+margin_deg: 0.1
+lookback_days: 40                         # composite covering the first scene day
+regrid: mode                              # majority of the 5 km cells in each 1/12 deg cell | nearest
+min_support: 0.5                          # classified share of the source cells needed for a class
+min_prob: null                            # e.g. 0.5 masks low-probability Seascape pixels (P)
+coast_fill_cells: 0                       # e.g. 2 fills coastal gaps from the nearest class (sensitivity run)
+mask_path: "/data/nlahaye/NatureNet_Env/Copernicus/v2/sharks/sharks_water_mask.tif"        # report only
+land_value: 0
+cmems_config: config/environment/cmems_env_sharks.yaml   # track files for the report (time.tracks)
+timeout_s: 600
+retries: 4
