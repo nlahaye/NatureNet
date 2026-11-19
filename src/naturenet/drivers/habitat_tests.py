@@ -71,7 +71,7 @@ def load_series(series_dir):
     files = sorted(glob.glob(os.path.join(series_dir, "*_time_series_pd.csv")))
     if not files:
         raise FileNotFoundError(f"no *_time_series_pd.csv in {series_dir} (run plot_hiavi / plot_swirl_new first)")
-    d = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+    d = pd.concat([pd.read_csv(f, dtype={"uid": str}) for f in files], ignore_index=True)   # numeric tag ids stay str keys
     d["timestamp"] = pd.to_datetime(d["timestamp"], utc=True, format="mixed").dt.tz_convert(None)
     d = d[np.isfinite(d["latent"])].copy()
     d["latent"] = d["latent"].astype(int)
@@ -136,7 +136,13 @@ class Design:
         if at not in ("step", "fix"):
             raise ValueError("mode_at must be step or fix")
         s = series.rename(columns={"uid": "animal", "segment": "seg", "seg_pos": "pos"})
-        s = s[s["animal"].isin(self.dfs.keys())].copy()
+        keymap = {str(k): k for k in self.dfs.keys()}          # series ids (str) -> dfs keys (str or int tag ids)
+        s["animal"] = s["animal"].astype(str).map(keymap)
+        s = s[s["animal"].notna()].copy()
+        if s.empty:
+            raise ValueError(f"habitat_tests: no series animal id matches the keys of {self.uid}_dfs.pkl "
+                             f"(series ids e.g. {list(series['uid'].astype(str).unique()[:3])}, "
+                             f"dfs keys e.g. {list(self.dfs.keys())[:3]})")
         s["tpos"] = s["pos"] + 1 if at == "step" else s["pos"]
         n = np.array([len(self.dfs[a][g]) if g < len(self.dfs[a]) else 0 for a, g in zip(s["animal"], s["seg"])])
         s = s[(s["tpos"] >= 1) & (s["tpos"] < n)].reset_index(drop=True)
