@@ -41,6 +41,9 @@ runs:                         # generated for every level; which ones to run: se
   # kinematics-enabled tools (environmental-driver tests, config/v2/drivers/sharks_drivers.yaml)
   hiavi_kfold_kin: config/v2/swirl/sharks_hiavi_kfold_kin.yaml        # HIQL + kin, K = 5 at every level / null
   hiql_scales_kin_k5: config/v2/swirl/sharks_hiql_scales_kin_k5.yaml  # decision-scale grid x environment level
+  # multi-agent coupling at the better-fitting levels (scripts/run_multiagent_v2.sh STAGE=levels; screen first,
+  # nulls only for the level(s) kept). Mixture + align / matrix forms, K = 5 kin, outputs <level dir>/multiagent/.
+  multiagent_kin_coupling: config/v2/swirl/sharks_multiagent_kin_coupling.yaml
 null_runs: [hiavi_kfold_kin, hiql_scales_kin_k5, reward_env_projection_hiql]   # runs generated for null levels
 overrides:
   hiavi_kfold: {run_hiavi_final: False}   # level sweep = CV only; holdout fit via hiql_final at the chosen level

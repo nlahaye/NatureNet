@@ -1,0 +1,61 @@
+# Multi-agent copy of whales_habitat_tests.yaml (same availability, thresholds, lagged inputs, seasons; only out_dir
+# and tools differ). Written for scripts/run_multiagent_v2.sh STAGE=downstream; missing tools are skipped.
+# Multi-agent series carry no per-step reward (reward_likelihood NaN), so the lags part reports the mode
+# association and use vs availability only. Do not run --part lag_profiles here (tool-independent; habitat_tests/).
+# Habitat tests by behavioural mode, blue whales (v2 environments only; literature-comparison analyses 1-2).
+#   python -m naturenet.drivers.lagged_env    -y config/v2/drivers/whales_habitat_tests.yaml --part scene
+#   python -m naturenet.drivers.lagged_env    -y config/v2/drivers/whales_habitat_tests.yaml --part lagged [--avl]
+#   python -m naturenet.drivers.habitat_tests -y config/v2/drivers/whales_habitat_tests.yaml [--part features|lags|lag_profiles]
+# Run by scripts/run_whale_prescales.sh STAGE=habitat (launcher plan). Inputs:
+#   final-run series (plot_hiavi / plot_swirl_new), the movement-run states_input files (sample_env_inputs), the
+#   step-selection available points (naturenet.drivers.availability + sample_env_inputs on avl_dir; same files as the
+#   driver-study geometry stage) and the cmems_env v2 scenes (scene thresholds, lagged means).
+habitat_tests:
+  species: whales
+  out_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/drivers/habitat_tests_ma/      # multi-agent tools; thresholds / lagged inputs shared with habitat_tests/
+  sample_inputs_yaml: config/v2/environment/whales_sample_inputs_v2.yaml
+  availability:                       # identical to the driver-study geometry block -> the same avl files
+    sample_inputs_yaml: config/v2/environment/whales_sample_inputs_v2.yaml
+    avl_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/drivers/availability/
+    n_available: 10
+    seed: 0
+  tools:                              # multi-agent full-data fits (export_ma_series), HIQL + kin K = 5 and SWIRL S-1 + kin K = 5
+    - {label: ma_hiql_k5_indep, series_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/multiagent/multiagent_kin/series_K5/indep}
+    - {label: ma_hiql_k5_temporal, series_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/multiagent/multiagent_kin/series_K5/temporal}
+    - {label: ma_hiql_k5_best, series_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/multiagent/multiagent_kin_coupling/series_K5/best}
+    - {label: ma_swirl_k5_indep, series_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/multiagent/multiagent_swirl_kin/series_K5/indep}
+    - {label: ma_swirl_k5_best, series_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/multiagent/multiagent_swirl_kin_coupling/series_K5/best}
+  mode_at: step                       # the step p -> p + 1 carries the mode decoded at p
+  n_boot: 1000                        # animal bootstrap
+  seed: 0
+
+  # Analysis 1: fronts and eddies (per-scene thresholds, as SIT-FUSE cluster_interpret)
+  features:
+    fronts:
+      sst_front: {channel: grad_mag_sst, percentile: 90}           # upper decile of |grad SST| per scene
+      chl_front: {channel: grad_mag_log10_CHL, percentile: 90}
+    eddy: {channel: okubo_weiss_geo, threshold: 0.2, polarity_channel: rossby_geo}   # W < -0.2 sd(W); Ro > 0 cyclonic
+    threshold_source: scene           # scene (scene_feature_stats.csv) | pooled (no scene reads)
+    masks:
+      ekman_upwelling: {channel: ekman_pumping, op: ">", value: 0.0}   # same-day upwelling-favourable curl
+  scene_stats:
+    csv: /data/nlahaye/NatureNet/Blue_Whale_v2/drivers/habitat_tests/scene_feature_stats.csv
+    workers: 4
+
+  # Analysis 2: wind / Ekman lags (days before the fix date; [a, b] = mean over D-b .. D-a)
+  lagged:
+    channels: [wind_speed, ekman_pumping, VHM0]
+    windows: {d0: [0, 0], m8: [0, 7], m30: [0, 29], lag1w: [7, 13], lag2w: [14, 20], lag3w: [21, 27]}
+    min_frac: 0.5
+    out_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/drivers/habitat_tests/lagged_inputs/
+    avl_out_dir: /data/nlahaye/NatureNet/Blue_Whale_v2/drivers/habitat_tests/lagged_inputs_avl/
+    workers: 4
+  lags: {base: d0, channels: null}
+  lag_profiles:                       # state-level lagged profiles for reward_env_projection (extra_profiles)
+    csv: /data/nlahaye/NatureNet/Blue_Whale_v2/drivers/habitat_tests/lagged_state_profiles.csv
+    min_fixes: 5
+
+  # Analysis 3 is a shark test; a whale analogue (early vs late season) can be enabled here, e.g.
+  # seasons: {groups: {early: [6, 7, 8], late: [9, 10, 11]}, contrast: [early, late],
+  #           channels: [sst, grad_mag_sst, strat_0_100m, log10_CHL, depth_m, dist_200m_isobath_km]}
+  seasons: null

@@ -45,6 +45,7 @@ groups:
     roots: ["{R}/ll_comparison", "{R}/ll_comparison_kin_nn"]
   - name: multiagent                             # 14, 14b compare, multi-agent scales
     roots: ["{R}/multiagent", "{R}/multiagent_scales_kin"]
+    exclude: ["**/series_K*/**"]                   # exported per-animal series (export_ma_series) are intermediates
   - name: tables                                 # step 13: T1-T3 (+ ma_compare csvs)
     roots: ["{R}/manuscript_kin"]
   # levels / seascape stages ---------------------------------------------------------------------------------------

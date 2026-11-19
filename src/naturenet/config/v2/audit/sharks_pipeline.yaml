@@ -37,6 +37,8 @@ configs:
   fin_iavi_ao: config/v2/swirl/sharks_iavi_final.yaml
   ma_kin: config/v2/swirl/sharks_multiagent_kin.yaml
   ma_sc_kin: config/v2/swirl/sharks_scales_multiagent_kin.yaml
+  ma_kin_cpl: config/v2/swirl/sharks_multiagent_kin_coupling.yaml
+  ma_swirl_cpl: config/v2/swirl/sharks_multiagent_swirl_kin_coupling.yaml
   ma_swirl_kin: config/v2/swirl/sharks_multiagent_swirl_kin.yaml
   ma_sc_swirl_kin: config/v2/swirl/sharks_scales_multiagent_swirl_kin.yaml
   ts_kin: config/v2/time_series/sharks_correlation_final_kin_v2.yaml
@@ -255,7 +257,7 @@ steps:
   - id: 14
     title: Multi-agent (kinematic tools)
     after: [5b]
-    plan: {path: "{LS}/ma_kin_tools_full.yaml", jobs: ["*sharks*"], optional: false}
+    plan: {path: "{LS}/ma_v2_full.yaml", jobs: ["*sharks*"], optional: false}   # scripts/run_multiagent_v2.sh full
     outputs:
       - path: "{cfg.ma_kin.out_dir}/{cfg.ma_kin.multiagent.ma_subdir}/ma_summary.json"
         json: {expr: "{'5', '2'} <= set(d['K'])"}
@@ -269,7 +271,32 @@ steps:
         json: {expr: "'5' in d['K']"}
       - {path: "{cfg.ma_swirl_kin.out_dir}/{cfg.ma_swirl_kin.multiagent.ma_subdir}/ma_final_K5.npz"}
       - {path: "{cfg.ma_sc_swirl_kin.out_dir}/multiagent_swirl_scales_S1_N1/ma_final_K5.npz", optional: true}
+      - path: "{cfg.ma_kin_cpl.out_dir}/{cfg.ma_kin_cpl.multiagent.ma_subdir}/ma_summary.json"
+        json: {expr: "'5' in d['K']"}
+      - {path: "{cfg.ma_kin_cpl.out_dir}/{cfg.ma_kin_cpl.multiagent.ma_subdir}/ma_final_K5.npz"}
+      - {path: "{cfg.ma_kin_cpl.out_dir}/{cfg.ma_kin_cpl.multiagent.ma_subdir}/compare_initial/*", optional: true}
+      - {path: "{cfg.ma_swirl_cpl.out_dir}/{cfg.ma_swirl_cpl.multiagent.ma_subdir}/ma_final_K5.npz"}
     note: "ma_cv.csv without null rows = screen only (STAGE=full not run); SWIRL rows = run_shark_swirl_kin.sh STAGE=ma"
+  - id: 14m
+    title: Multi-agent downstream (series export, decision context, habitat tests, animations)
+    after: [14]
+    plan: {path: "{LS}/ma_v2_downstream_sharks.yaml", optional: true}   # scripts/run_multiagent_v2.sh downstream
+    outputs:
+      - {path: "{cfg.ma_kin.out_dir}/{cfg.ma_kin.multiagent.ma_subdir}/series_K5/export_summary.csv"}
+      - {path: "{cfg.ma_kin_cpl.out_dir}/{cfg.ma_kin_cpl.multiagent.ma_subdir}/series_K5/export_summary.csv"}
+      - path: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/multiagent/decision_context/pair_summary.csv"
+        csv: {expr: "len(df) >= 4"}
+      - {path: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/drivers/habitat_tests_ma/feature_use.csv"}
+      - {path: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/animations/ma_coupling_class/*", optional: true}
+    note: "multi-agent fits read through the single-animal tools (export_ma_series); compare with 14b.4 / 11h"
+  - id: 14l
+    title: Multi-agent coupling at the better-fitting environment levels
+    after: [14]
+    optional: true
+    outputs:
+      - {path: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/levels/*/multiagent/multiagent_kin_coupling/ma_summary.json", optional: true}
+      - {path: "/data/nlahaye/NatureNet/Hammerhead_Out_v2/levels/ma_compare_levels/*", optional: true}
+    note: "screen first (scripts/run_multiagent_v2.sh levels); coarse / Seascape levels as the main lens, fine as the sub-narrative"
   - id: 15
     title: Manuscript update
     manual: true

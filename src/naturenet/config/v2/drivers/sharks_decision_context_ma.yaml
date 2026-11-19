@@ -1,0 +1,87 @@
+# Decision-context similarity: multi-agent fits vs the single-animal tools (sharks, v2 kinematic models).
+#   python -m naturenet.models.irl.export_ma_series ...   (scripts/run_multiagent_v2.sh STAGE=export writes the series)
+#   python -m naturenet.drivers.decision_context_similarity -y config/v2/drivers/sharks_decision_context_ma.yaml
+# Questions: (1) does fitting all animals jointly (independent multi-agent fit) carve the tracks like the single-animal
+# fit of the same tool? (2) does partner coupling change the decision contexts, or only the switching timing?
+# (3) do HIQL and SWIRL agree under coupling? Classes use the per-step exported labels (class_col) of every model, so
+# all models are compared on the same footing; the step-10 reward-based tables are not used here.
+# Models whose series do not exist yet are skipped with their pairs (missing_models: skip).
+root: "/data/nlahaye/NatureNet/Hammerhead_Out_v2"
+out_dir: "{root}/multiagent/decision_context"
+n_boot: 1000
+n_null: 50
+seed: 0
+missing_models: skip
+models:
+  hiql_kin_k5:   # single-animal primary
+    kind: series
+    dir: "{root}/final/hiql_kin/plots/series_hiavi_s1"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  swirl_kin_s1_k5:   # single-animal SWIRL S-1 (multi-agent SWIRL is S-1)
+    kind: series
+    dir: "{root}/final/swirl_kin/plots/series_linear_s1"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_hiql_k5_indep:
+    kind: series
+    dir: "{root}/multiagent/multiagent_kin/series_K5/indep"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_hiql_k5_temporal:
+    kind: series
+    dir: "{root}/multiagent/multiagent_kin/series_K5/temporal"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_hiql_k5_proximity:
+    kind: series
+    dir: "{root}/multiagent/multiagent_kin/series_K5/proximity"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_hiql_k5_best:   # best coupled form (mixture / align / matrix)
+    kind: series
+    dir: "{root}/multiagent/multiagent_kin_coupling/series_K5/best"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_swirl_k5_indep:
+    kind: series
+    dir: "{root}/multiagent/multiagent_swirl_kin/series_K5/indep"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_swirl_k5_temporal:
+    kind: series
+    dir: "{root}/multiagent/multiagent_swirl_kin/series_K5/temporal"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_swirl_k5_best:
+    kind: series
+    dir: "{root}/multiagent/multiagent_swirl_kin_coupling/series_K5/best"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  hiql_kin_k2:   # earlier secondary (granularity)
+    kind: series
+    dir: "{root}/final/hiql_kin_k2/plots/series_hiavi_s1"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_hiql_k2_indep:
+    kind: series
+    dir: "{root}/multiagent/multiagent_kin/series_K2/indep"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+  ma_hiql_k2_temporal:
+    kind: series
+    dir: "{root}/multiagent/multiagent_kin/series_K2/temporal"
+    class_col: latent_class
+    p_exploit_col: p_exploit
+pairs:
+  - [hiql_kin_k5, ma_hiql_k5_indep]   # joint vs single-animal fit, same tool
+  - [ma_hiql_k5_indep, ma_hiql_k5_temporal]   # coupling: co-timing
+  - [ma_hiql_k5_indep, ma_hiql_k5_proximity]   # coupling: co-timing x closeness
+  - [ma_hiql_k5_indep, ma_hiql_k5_best]   # coupling: best form
+  - [hiql_kin_k5, ma_hiql_k5_best]
+  - [swirl_kin_s1_k5, ma_swirl_k5_indep]   # joint vs single-animal fit, SWIRL
+  - [ma_swirl_k5_indep, ma_swirl_k5_temporal]
+  - [ma_swirl_k5_indep, ma_swirl_k5_best]
+  - [ma_hiql_k5_best, ma_swirl_k5_best]   # HIQL vs SWIRL under coupling
+  - [hiql_kin_k2, ma_hiql_k2_indep]
+  - [ma_hiql_k2_indep, ma_hiql_k2_temporal]

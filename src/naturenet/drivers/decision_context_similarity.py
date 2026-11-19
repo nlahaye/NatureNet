@@ -34,6 +34,7 @@ YAML ("{root}" in any path is replaced by `root`; a path with * / ? is globbed a
     n_boot: 1000                                # animal bootstrap
     n_null: 50                                  # within-animal circular-shift null of the second model's labels
     seed: 0
+    missing_models: error                       # skip: drop models whose inputs do not exist yet (and their pairs)
 
 Steps are joined on (uid, segment, seg_pos). Per pair (pair_summary.csv):
   n_steps, n_animals, K_a, K_b, AMI, ARI, matched_agreement (Hungarian one-to-one mode matching), purity_a_in_b /
@@ -325,8 +326,12 @@ def _resolve(conf):
     fx = lambda p: p.replace("{root}", root) if isinstance(p, str) else p
     conf = dict(conf, out_dir=fx(conf["out_dir"]))
     models = {}
+    skip = str(conf.get("missing_models", "error")).lower() == "skip"
     for n, m in conf["models"].items():
         m = {k: fx(v) for k, v in m.items()}
+        if skip and not _model_present(m):
+            print(f"SKIP model {n} (inputs not found; missing_models: skip)")
+            continue
         for k in ("dir", "exploit_explore", "state_reward"):
             if isinstance(m.get(k), str) and any(c in m[k] for c in "*?["):
                 g = sorted(glob.glob(m[k]))
@@ -342,7 +347,24 @@ def _resolve(conf):
                 m[k] = g[-1]
         models[n] = m
     conf["models"] = models
+    if skip and conf.get("pairs"):
+        keep = [p for p in conf["pairs"] if p[0] in models and p[1] in models]
+        for p in conf["pairs"]:
+            if p not in keep:
+                print(f"SKIP pair {p[0]} vs {p[1]} (model skipped)")
+        if not keep:
+            raise FileNotFoundError("missing_models: skip left no pair to compare")
+        conf["pairs"] = keep
     return conf
+
+
+def _model_present(m):
+    """True when the main input of a model exists (series dir with files, or the first fold's npz)."""
+    if m.get("kind", "series") == "series":
+        return bool(glob.glob(os.path.join(m.get("dir", ""), "*_time_series_pd.csv")))
+    npz = str(m.get("npz", ""))
+    folds = m.get("folds") or [0]
+    return bool(glob.glob(npz.replace("{fold}", str(folds[0]))))
 
 
 def run(conf):

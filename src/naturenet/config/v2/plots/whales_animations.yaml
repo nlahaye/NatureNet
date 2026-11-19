@@ -186,3 +186,17 @@ animations:
       - {name: "HIQL K=5 N1", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
       - {name: "HIQL K=5 N1+R2", kind: latents, regime: true, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_R2_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
       - {name: "HIQL K=5 N1+dur", kind: latents, path: "{root}/scales_kin/WHALE_HIQL_SCALES_KIN_K5_SC_N1_dur-logi12_5_12345_naturenet_S1_iter2_LL1_test_KF_*.npz"}
+
+  # ---------------------------------------------------------------------------------------------------------------
+  # Multi-agent decision contexts in behaviour colours (exported by naturenet.models.irl.export_ma_series; run
+  # scripts/run_multiagent_v2.sh STAGE=export first). Same colour = same exploit / explore class in every panel
+  # (kinematic labels), so a coupled fit that re-labels steps shows as a colour change against the single-animal tool.
+  # "best" = the coupled variant with the largest pooled held-out gain (ma_summary.json selection.best_variant).
+  - name: ma_coupling_class
+    mode: multi
+    colour_by: class
+    select: {window_days: 45, frame_days: 1, max_animals: 12, max_gap_days: 3}
+    panels:
+      - {name: "HIQL K=5 single-animal", kind: series, path: "{root}/final/hiql_kin/plots/series_hiavi_s1"}
+      - {name: "HIQL K=5 multi-agent independent", kind: series, path: "{root}/multiagent/multiagent_kin_coupling/series_K5/indep"}
+      - {name: "HIQL K=5 multi-agent best coupled", kind: series, path: "{root}/multiagent/multiagent_kin_coupling/series_K5/best"}
