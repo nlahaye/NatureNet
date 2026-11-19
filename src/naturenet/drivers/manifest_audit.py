@@ -14,7 +14,7 @@ Manifest
     name: whales v2 pipeline
     out: /data/me/audit/whales                 # report dir (--out overrides)
     vars:  {R: /data/me/run, UID: run1}        # {R} in any string; --set R=... overrides
-    configs: {final: config/v2/swirl/x.yaml}   # {cfg.final.out_dir}, {cfg.final.multiagent.ma_subdir}
+    configs: {final: config/v2/swirl/x.yaml}   # {cfg.final.out_dir}, {cfg.final.multiagent.ma_subdir}, {cfg.env.layers.0.path}
                                                # relative paths are taken from the package dir (or --root)
     checks:  [<check>, ...]                    # config checks run once (see below)
     steps:
@@ -90,10 +90,13 @@ class Resolver:
         if name.startswith("cfg."):
             alias, *keys = name[4:].split(".")
             v = self.cfg(alias)
-            for k in keys:
-                if not isinstance(v, dict) or k not in v:
+            for k in keys:                                       # dict keys, or list indices (ship_density.0.path)
+                if isinstance(v, list) and k.lstrip("-").isdigit() and -len(v) <= int(k) < len(v):
+                    v = v[int(k)]
+                elif isinstance(v, dict) and k in v:
+                    v = v[k]
+                else:
                     raise KeyError(f"{alias}: key {'.'.join(keys)} not in {self.cfg_paths[alias]}")
-                v = v[k]
             return "" if v is None else str(v)
         if name in self.vars:
             return self.sub(self.vars[name])
@@ -215,7 +218,7 @@ def _csv_check(spec, files, R):
     for f in files:
         df = pd.read_csv(f)
         if spec.get("where"):
-            df = df.query(R.sub(spec["where"]))
+            df = df.query(R.sub(spec["where"]), engine="python")   # python engine: .str.startswith(...) etc.
         tag = os.path.basename(f) if len(files) > 1 else ""
         cover = {k: list(R.value(v)) for k, v in (spec.get("cover") or {}).items()}
         if cover:

@@ -22,7 +22,7 @@ groups:
   # outputs stage ------------------------------------------------------------------------------------------------
   - name: finals                                 # step 8 plots + step 11 projection, per final (kin + action-only)
     roots: ["{R}/final"]
-    include: ["*/plots/**", "*/reward_env_projection/**", "*/*"]
+    include: ["*/plots/**", "*/reward_env_projection*/**", "*/*"]   # incl. _s1 / _s2 / _lag / _season variants
     exclude: ["*/plots/series_*/**", "exploit_explore/**", "time_series*/**", "decision_context/**"]
   - name: final_series                           # per-animal exported series (inputs to 10 / 12 / 14b.4; can be large)
     roots: ["{R}/final"]
@@ -55,11 +55,23 @@ groups:
   - name: seascape_xai                           # 17b agreement tables per level + summary, 17c class profiles
     roots: ["{SF}/xai"]
     include: ["reference_agreement_levels.*", "interpret*/reference_*", "interpret_seascape/**"]
+  - name: level_xai                              # 16f: cluster profiles / surrogates per environment level
+    roots: ["{SF}/xai"]
+    include: ["interpret_k*/**", "interpret_parent/**"]
+    exclude: ["interpret*/reference_*"]
+  - name: xai_faithfulness                       # step 9: SHAP faithfulness + rank stability (group-level)
+    roots: ["{SF}/xai"]
+    include: ["faithfulness_*", "shap_rank_stability*", "mean_abs_shap_by_cluster_*", "shap_*settings.json"]
+  - name: cluster_stability                      # step 9: seed-variant cluster stability
+    roots: ["{SF}_STABILITY"]
   - name: sitfuse_hierarchy                      # step 16a cut summary / hierarchy json
     roots: ["{SF}/hierarchy"]
   # audit + launcher -----------------------------------------------------------------------------------------------
-  - name: audit
-    roots: ["{R}/audit_pipeline"]
+  - name: drivers                                # step 18 tests 1-5, 7, geometry, synthesis, availability summaries
+    roots: ["{R}/drivers", "{R}/folds_year"]
+    exclude: ["habitat_tests/**", "coupling_env/**", "audit/**", "availability/*_states_input*", "**/lagged_inputs*/**"]
+  - name: audit                                  # manifest audit (steps 1-15) + driver auditor (step 19)
+    roots: ["{R}/audit_pipeline", "{R}/drivers/audit"]
   - name: launcher                               # plans, status.csv, job logs and done / failed markers
     roots: ["{S}/available_outputs_{SP}.yaml", "{S}/available_outputs_{SP}", "{S}/{HAB}.yaml", "{S}/{HAB}",
             "{S}/available_{SP}_levels_env.yaml", "{S}/levels_env_{SP}", "{S}/available_{SP}_levels_sweep.yaml",

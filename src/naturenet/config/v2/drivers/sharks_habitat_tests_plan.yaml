@@ -1,0 +1,46 @@
+# Step 11h / 21 for sharks as a standalone launcher plan (same jobs as run_shark_swirl_kin.sh STAGE=habitat).
+# CPU only; needs the step-7 finals and step-8 series (final/{hiql_kin,hiql_kin_k2,swirl_kin}/plots/series_*).
+# Run from NatureNet/src:
+#   python -m sit_fuse.local_launcher run naturenet/config/v2/drivers/sharks_habitat_tests_plan.yaml --dry-run
+#   python -m sit_fuse.local_launcher run naturenet/config/v2/drivers/sharks_habitat_tests_plan.yaml --cpus 8
+#   python -m sit_fuse.local_launcher status naturenet/config/v2/drivers/sharks_habitat_tests_plan.yaml
+# For another species / use case: copy, change {hab}, the root paths in `creates` and the project_season cases.
+launcher: {state_dir: /data/nlahaye/NatureNet/launcher/shark_habitat_tests, gpus: none, cpus: 8, retries: 0}
+vars:
+  py: python
+  hab: naturenet/config/v2/drivers/sharks_habitat_tests.yaml
+  C: naturenet/config/v2/swirl
+  AVL: /data/nlahaye/NatureNet/Hammerhead_Out_v2/drivers/availability
+  HT: /data/nlahaye/NatureNet/Hammerhead_Out_v2/drivers/habitat_tests
+jobs:
+  - name: availability              # matched available points (shared with the driver geometry stage; skipped when present)
+    cmd: "{py} -m naturenet.drivers.availability -y {hab}"
+    cpus: 2
+    env: {JAX_PLATFORMS: cpu, NATURENET_JAX_PLATFORM: cpu}
+    creates: ["{AVL}/hammerhead_v2_dfs.pkl", "{AVL}/sample_inputs_avl.yaml"]
+  - name: sample_avl                # environment at the available points
+    cmd: "{py} -m naturenet.environment.sample_env_inputs -y {AVL}/sample_inputs_avl.yaml"
+    cpus: 4
+    env: {JAX_PLATFORMS: cpu, NATURENET_JAX_PLATFORM: cpu}
+    after: [availability]
+    creates: ["{AVL}/hammerhead_v2_states_input_channels.json"]
+  - name: scene                     # per-scene front / eddy thresholds
+    cmd: "{py} -m naturenet.drivers.lagged_env -y {hab} --part scene"
+    cpus: 4
+    env: {JAX_PLATFORMS: cpu, NATURENET_JAX_PLATFORM: cpu}
+    creates: ["{HT}/scene_feature_stats.csv"]
+  - name: tests                     # analysis 1 (fronts / eddies by mode) and 3 (wet vs dry season)
+    cmd: "{py} -m naturenet.drivers.habitat_tests -y {hab} --part {part}"
+    cases: [{part: features}, {part: seasons}]
+    cpus: 2
+    env: {JAX_PLATFORMS: cpu, NATURENET_JAX_PLATFORM: cpu}
+    after: [{name: sample_avl, on: []}, {name: scene, on: []}]
+  - name: project_season            # reward projection + use-availability by season (own out_dirs)
+    cmd: "{py} -m naturenet.models.irl.reward_env_projection -y {C}/{yml} -p {C}/{p} --n_hidden {k}"
+    cases:
+      - {tool: hiql_k5, yml: sharks_hiql_final_kin_k5.yaml, p: sharks_reward_env_projection_hiql_season.yaml, k: 5}
+      - {tool: hiql_k2, yml: sharks_hiql_final_kin_k2.yaml, p: sharks_reward_env_projection_hiql_season.yaml, k: 2}
+      - {tool: swirl_s1, yml: sharks_swirl_final_kin_k5.yaml, p: sharks_reward_env_projection_s1_kin_season.yaml, k: 5}
+    id_keys: [tool]
+    cpus: 2
+    env: {JAX_PLATFORMS: cpu, NATURENET_JAX_PLATFORM: cpu}

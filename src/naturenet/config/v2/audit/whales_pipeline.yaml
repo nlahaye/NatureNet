@@ -13,9 +13,10 @@ vars:
   SF: /data/nlahaye/output/Learnergy/COP_WHALE_V2
   WI: /data/nlahaye/NatureNet/Blue_Whale_In
   LS: /data/nlahaye/NatureNet/launcher
-  SHIP: /data/nlahaye/NatureNet_Env/Copernicus/copernicus-data/shipdensity_global.tif
+  SHIP: "{cfg.cmems.ship_density.0.path}"   # read from the CMEMS build config that made the static layers (--set SHIP=... overrides)
   MS_DOCX: /data/nlahaye/NatureNet/manuscript/Movement_Paper_MEE_updated_v6.docx
 configs:
+  cmems: config/environment/cmems_env_whales.yaml
   swirl_kfold: config/v2/swirl/whales_swirl_kfold.yaml
   hiavi_kfold: config/v2/swirl/whales_hiavi_kfold.yaml
   iavi_kfold: config/v2/swirl/whales_iavi_kfold.yaml
@@ -50,6 +51,7 @@ steps:
     title: Static inputs (ship density)
     outputs:
       - {path: "{SHIP}", ref: false}
+      - {path: "{cfg.cmems.work_dir}/static.zarr", ref: false}   # ship density as assembled into the static layers
   - id: 1a-w
     title: Merge 2015 + 2017 tracks
     outputs:
@@ -129,11 +131,11 @@ steps:
       - path: "{cfg.swirl_kfold.out_dir}/{cfg.swirl_kfold.run_uid}_loop_0_latent_*_states_*_{cfg.swirl_kfold.seed}_naturenet_S2_iter2_LL2_test_KF_*.npz"
         min: "({cfg.swirl_kfold.max_latent} - {cfg.swirl_kfold.min_latent} + 1) * {cfg.swirl_kfold.n_folds}"
       - path: "{cfg.hiavi_kfold.out_dir}/ll_hiavi.csv"
-        csv: {where: "run_uid == '{cfg.hiavi_kfold.run_uid}'",
+        csv: {where: "run_uid == '{cfg.hiavi_kfold.run_uid}' or run_uid.str.startswith('{cfg.hiavi_kfold.run_uid}_loop_')",
               cover: {K: "range({cfg.hiavi_kfold.min_latent}, {cfg.hiavi_kfold.max_latent} + 1)",
                       fold: "range({cfg.hiavi_kfold.n_folds})"}}
       - path: "{cfg.iavi_kfold.out_dir}/ll_hiavi.csv"
-        csv: {where: "run_uid == '{cfg.iavi_kfold.run_uid}'", cover: {fold: "range({cfg.iavi_kfold.n_folds})"}}
+        csv: {where: "run_uid == '{cfg.iavi_kfold.run_uid}' or run_uid.str.startswith('{cfg.iavi_kfold.run_uid}_loop_')", cover: {fold: "range({cfg.iavi_kfold.n_folds})"}}
       - {path: "{cfg.ll_cmp.out_dir}/{cfg.ll_cmp.out_prefix}_ll_summary.csv"}
   - id: 5b
     title: Kinematic baselines
@@ -146,7 +148,7 @@ steps:
         min: "{cfg.swirl_kin.n_folds}"
         ref: false
       - path: "{cfg.hiavi_kin.out_dir}/ll_hiavi.csv"
-        csv: {where: "run_uid == '{cfg.hiavi_kin.run_uid}'",
+        csv: {where: "run_uid == '{cfg.hiavi_kin.run_uid}' or run_uid.str.startswith('{cfg.hiavi_kin.run_uid}_loop_')",
               cover: {K: "range({cfg.hiavi_kin.min_latent}, {cfg.hiavi_kin.max_latent} + 1)",
                       fold: "range({cfg.hiavi_kin.n_folds})"}}
       - {path: "{cfg.ll_kin.out_dir}/{cfg.ll_kin.out_prefix}_ll_summary.csv"}
