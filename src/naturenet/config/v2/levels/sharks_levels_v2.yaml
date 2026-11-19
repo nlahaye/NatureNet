@@ -41,6 +41,14 @@ runs:                         # generated for every level; which ones to run: se
   # kinematics-enabled tools (environmental-driver tests, config/v2/drivers/sharks_drivers.yaml)
   hiavi_kfold_kin: config/v2/swirl/sharks_hiavi_kfold_kin.yaml        # HIQL + kin, K = 5 at every level / null
   hiql_scales_kin_k5: config/v2/swirl/sharks_hiql_scales_kin_k5.yaml  # decision-scale grid x environment level
+  # kinematic levels analysis (scripts/run_levels_kin_v2.sh): HIQL + kin K sweep, SWIRL + kin CV, finals at the
+  # best CV K, reward projections. hiql_kfold_kin shares run_uid / out_dir with hiavi_kfold_kin, so its K = 5 folds
+  # are reused (the runners skip finished folds); the script sets the K ranges.
+  hiql_kfold_kin: config/v2/swirl/sharks_hiavi_kfold_kin.yaml           # HIQL + kin K sweep (min_latent 1)
+  swirl_kfold_kin: config/v2/swirl/sharks_swirl_kfold_kin.yaml          # SWIRL + kin CV (S-1)
+  hiql_final_kin: config/v2/swirl/sharks_hiql_final_kin_k5.yaml         # final fit, n_hidden set by the script
+  swirl_final_kin: config/v2/swirl/sharks_swirl_final_kin_k5.yaml
+  reward_env_projection_swirl_kin: config/v2/swirl/sharks_reward_env_projection_s1_kin.yaml
   # multi-agent coupling at the better-fitting levels (scripts/run_multiagent_v2.sh STAGE=levels; screen first,
   # nulls only for the level(s) kept). Mixture + align / matrix forms, K = 5 kin, outputs <level dir>/multiagent/.
   multiagent_kin_coupling: config/v2/swirl/sharks_multiagent_kin_coupling.yaml
@@ -49,6 +57,9 @@ overrides:
   hiavi_kfold: {run_hiavi_final: False}   # level sweep = CV only; holdout fit via hiql_final at the chosen level
   # K = 5 only across levels (the K sweep with min_latent = 1 stays at the fine level, config/v2/swirl)
   hiavi_kfold_kin: {run_hiavi_final: False, n_hidden: 5, min_latent: 5, max_latent: 5}
+  # kinematic levels analysis (CV only; finals via *_final_kin). K ranges are re-set by run_levels_kin_v2.sh.
+  hiql_kfold_kin: {run_hiavi_final: False, n_hidden: 5, min_latent: 1, max_latent: 5}
+  swirl_kfold_kin: {n_hidden: 5, n_hidden_init: 5, min_latent: 5, max_latent: 5, run_s2: False}
 ll_comparison:
   out_prefix: "hammerhead_v2_levels"
   title: "Hammerhead K-fold log-likelihood by environment level"
@@ -61,4 +72,16 @@ ll_comparison:
     - {name: hiavi, alias: "hiql_{lv}", label: "HIQL {lv}", run: hiavi_kfold}
     - {name: hiavi, alias: "iavi_{lv}", label: "IAVI {lv} (K=1)", run: iavi_kfold}
     - {name: swirl_s1, alias: "swirl_s1_{lv}", label: "SWIRL S-1 {lv}", run: swirl_kfold}
-    - {name: hiavi, alias: "hiql_kin_{lv}", label: "HIQL+kin {lv}", run: hiavi_kfold_kin}
+    - {name: hiavi, alias: "hiql_kin_{lv}", label: "HIQL+kin {lv}", run: hiql_kfold_kin}   # K sweep (K = 5 shared with hiavi_kfold_kin)
+ll_comparisons:               # extra comparison files: <out_config_dir>/ll_comparison_<name>.yaml
+  kin:                        # kinematic tools across levels; reference = fine HIQL + kin (same LL scale and family)
+    out_prefix: "hammerhead_v2_levels_kin"
+    title: "Hammerhead K-fold log-likelihood by environment level (kinematic HIQL and SWIRL)"
+    reference: hiql_kin
+    levels: [parent, k30, k20, k12, seascape]
+    fine:
+      - {name: hiavi, alias: hiql_kin, label: "HIQL+kin fine", yaml: "../../swirl/sharks_hiavi_kfold_kin.yaml", color: "#000000"}
+      - {name: swirl_s1, alias: swirl_s1_kin, label: "SWIRL S-1+kin fine", yaml: "../../swirl/sharks_swirl_kfold_kin.yaml", color: "#555555"}
+    per_level:
+      - {name: hiavi, alias: "hiql_kin_{lv}", label: "HIQL+kin {lv}", run: hiql_kfold_kin}
+      - {name: swirl_s1, alias: "swirl_s1_kin_{lv}", label: "SWIRL S-1+kin {lv}", run: swirl_kfold_kin}
